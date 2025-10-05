@@ -1,20 +1,30 @@
-# understat_dump.py
-# Usage examples:
-#   python understat_dump.py --root data/understat
-#   python understat_dump.py --root data/understat --leagues EPL La_Liga --seasons 2019 2020
-#   python understat_dump.py --root data/understat --leagues "La Liga" --seasons 2017 --only-failed
+# understat_dump_prod.py
+# Purpose:
+#   Collect ONLY the current (latest) season for each configured league.
 #
-# It writes per-match shards:
-#   data/understat/<league>/<season>/{shots,matches,rosters}/<match_id>.parquet
-# and consolidates to:
-#   data/understat/<league>/<season>/shots.parquet
-#   data/understat/<league>/<season>/matches.parquet
-#   data/understat/<league>/<season>/rosters.parquet
+# What it writes (identical layout to the historical script):
+#   <ROOT>/<league>/<season>/{shots,matches,rosters}/<match_id>.parquet
+#   <ROOT>/<league>/<season>/{shots,matches,rosters}.parquet
+#
+# How to use:
+#   - Import and call run() from your pipeline, OR
+#   - Run directly: python understat_dump_prod.py
+#
+# Configuration via environment variables (optional):
+#   UNDERSTAT_ROOT       (default: "data/prod/understat")
+#   UNDERSTAT_LEAGUES    (default: "EPL,La Liga,Bundesliga,Serie A,Ligue 1,RFPL")
+#                         Comma-separated; names must match ScraperFC/Understat.
+#   UNDERSTAT_SLEEP_S    (default: "0.6")
+#
+# Notes:
+#   - No CLI args by design.
+#   - Keeps robust retry/backoff.
+#   - Idempotent per-match: skips matches already written.
+#   - If bulk fails, retries previously failed links individually and consolidates.
 
-import argparse
-import json
 import os
 import re
+import json
 import time
 from pathlib import Path
 from typing import Dict, Any, Tuple, Iterable, List, Optional
@@ -26,7 +36,7 @@ import pyarrow.parquet as pq
 import ScraperFC as sfc
 from tqdm import tqdm
 
-# Transient network exceptions to catch
+# -------- transient network exceptions to catch (safe imports) ----------
 try:
     from http.client import RemoteDisconnected
 except Exception:
@@ -40,8 +50,13 @@ try:
 except Exception:
     class RequestsConnectionError(Exception): ...
 
+# --------------------- config ---------------------
 LEAGUES_DEFAULT = ["EPL", "La Liga", "Bundesliga", "Serie A", "Ligue 1", "RFPL"]
 PER_MATCH_DIRS = ["shots", "matches", "rosters"]
+
+ROOT = Path(os.getenv("UNDERSTAT_ROOT", "data/prod/understat"))
+LEAGUES = [s.strip() for s in os.getenv("UNDERSTAT_LEAGUES", ",".join(LEAGUES_DEFAULT)).split(",") if s.strip()]
+SLEEP_S = float(os.getenv("UNDERSTAT_SLEEP_S", "0.6"))
 
 
 # --------------------- helpers ---------------------
@@ -54,7 +69,6 @@ def sanitize_season(season: str) -> str:
 
 
 def match_id_from_link(link: str) -> str:
-    # Typical understat match links end with /match/<id>
     m = re.search(r"/match/(\d+)", link)
     return m.group(1) if m else re.sub(r"\W+", "_", link)
 
@@ -64,7 +78,6 @@ def ensure_dir(p: Path) -> None:
 
 
 def coerce_df(x) -> pd.DataFrame:
-    """Be permissive: convert dict/list/None to DataFrame safely."""
     if isinstance(x, pd.DataFrame):
         return x
     if x is None:
@@ -81,9 +94,7 @@ def coerce_df(x) -> pd.DataFrame:
 
 def normalize_match_value(val: Any) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    ScraperFC.Understat.scrape_matches returns a dict:
-      link -> {"shots_data": df|list|dict, "match_info": df|..., "rosters_data": df|...}
-    Also support a 3-tuple (shots, match_info, rosters).
+    Understat.scrape_match / scrape_matches values -> (shots, match_info, rosters)
     """
     if isinstance(val, dict):
         shots = coerce_df(val.get("shots_data"))
@@ -96,6 +107,15 @@ def normalize_match_value(val: Any) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Data
         match_info = pd.DataFrame()
         rosters = pd.DataFrame()
     return shots, match_info, rosters
+
+def _season_key(s) -> tuple[int, int]:
+    s = str(s)
+    years = [int(x) for x in re.findall(r"\d{4}", s)]
+    if len(years) >= 2:
+        return (years[0], years[1])           # e.g., 2015/2016 -> (2015, 2016)
+    if len(years) == 1:
+        return (years[0], years[0] + 1)       # e.g., "2015" -> (2015, 2016)
+    return (-1, -1)                            # unknown -> sorts to the bottom
 
 
 def add_partition_cols(df: pd.DataFrame, league: str, season: str, link: str) -> pd.DataFrame:
@@ -114,17 +134,10 @@ def concat_and_sort(dfs: Iterable[pd.DataFrame]) -> pd.DataFrame:
     if not dfs:
         return pd.DataFrame()
     out = pd.concat(dfs, ignore_index=True)
-    # Try to sort by a sensible time-like column if present
-    # for col in ["datetime", "date", "kickoff_time", "match_date", "time"]:
-    #     if col in out.columns:
-    #         # out[col] = pd.to_datetime(out[col], format="%Y-%m-%d", errors="coerce", utc=True).dt.date
-    #         out = out.sort_values(col, kind="mergesort")
-    #         break
     return out
 
 
 def retry(fn, max_tries=5, base_sleep=1.0, exceptions=(Exception,), ctx=""):
-    """Retry helper with exponential backoff and light jitter."""
     last_exc = None
     for attempt in range(1, max_tries + 1):
         try:
@@ -164,9 +177,7 @@ def read_failed_links(out_dir: Path) -> List[str]:
                 out.append(obj.get("match_link") or "")
             except Exception:
                 continue
-    # de-dup while preserving order
-    seen = set()
-    uniq = []
+    seen, uniq = set(), []
     for l in out:
         if l and l not in seen:
             uniq.append(l)
@@ -221,21 +232,16 @@ def consolidate_dir_to_file(out_dir: Path, kind: str, season_file: str):
     shard_dir = out_dir / kind
     files = sorted([p for p in shard_dir.glob("*.parquet") if p.is_file()])
     if not files:
-        # still write empty parquet with schema-less table
         pq.write_table(pa.Table.from_pandas(pd.DataFrame(), preserve_index=False), out_dir / season_file)
         return
-    # streaming concat to limit memory
     dfs: List[pd.DataFrame] = []
-    batch = 0
-    for fp in files:
+    for idx, fp in enumerate(files, 1):
         try:
             dfs.append(pd.read_parquet(fp))
         except Exception:
             continue
         if len(dfs) >= 64:
-            batch_df = concat_and_sort(dfs)
-            dfs = [batch_df]
-            batch += 1
+            dfs = [concat_and_sort(dfs)]
     final_df = concat_and_sort(dfs)
     pq.write_table(pa.Table.from_pandas(final_df, preserve_index=False), out_dir / season_file)
 
@@ -248,7 +254,6 @@ def consolidate_season(out_dir: Path):
 
 # --------------------- scraping core ---------------------
 def fetch_all_matches(us: sfc.Understat, league: str, season: str) -> Dict[str, Any]:
-    """Fetch whole season (mapping link -> {shots_data, match_info, rosters_data})."""
     def _f():
         return us.scrape_matches(year=season, league=league, as_df=True)
     return retry(
@@ -261,13 +266,10 @@ def fetch_all_matches(us: sfc.Understat, league: str, season: str) -> Dict[str, 
 
 
 def fetch_single_match(us: sfc.Understat, link: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Fetch one match by link using Understat.scrape_match, normalized to (shots, match_info, rosters)."""
     def _f():
-        # Prefer the dedicated single-match scraper if available
         if hasattr(us, "scrape_match"):
             val = us.scrape_match(link=link, as_df=True)
         else:
-            # Fallback: scrape generic URL (ScraperFC supports this)
             val = us.scrape(link=link, as_df=True)
         return normalize_match_value(val)
     return retry(
@@ -286,15 +288,9 @@ def process_one(
     link: str,
     value_from_bulk: Optional[Any],
 ) -> bool:
-    """
-    Process a single match link.
-    If value_from_bulk is provided (from scrape_matches), use it; else fetch single.
-    Returns True if a new write occurred (or already done), False if failed this time.
-    """
     mid = match_id_from_link(link)
     if match_already_done(out_dir, mid):
         return True
-
     try:
         if value_from_bulk is None:
             shots, match_info, rosters = fetch_single_match(sfc.Understat(), link)
@@ -305,64 +301,41 @@ def process_one(
         match_info = add_partition_cols(match_info, league, season, link)
         rosters = add_partition_cols(rosters, league, season, link)
 
-        # It’s valid for a match to have 0 shots; still write empty dfs so resume knows it's done
+        # Write even if empty to mark done
         write_single(out_dir, "shots", shots, mid)
         write_single(out_dir, "matches", match_info, mid)
         write_single(out_dir, "rosters", rosters, mid)
         return True
-
     except Exception as e:
         save_failed(out_dir, league, season, link, e)
         return False
 
 
-def scrape_league_season(
-    us: sfc.Understat,
-    league: str,
-    season: str,
-    out_root: Path,
-    sleep_s: float = 0.8,
-    only_failed: bool = False,
-) -> None:
+def scrape_league_current_season(us: sfc.Understat, league: str, out_root: Path, sleep_s: float = 0.6) -> None:
+    # Determine current/latest season from Understat
+    try:
+        seasons = us.get_valid_seasons(league=league)
+        current_season = str(max(seasons, key=_season_key))
+    except Exception as e:
+        raise RuntimeError(f"Could not determine current season for {league}: {e}")
+
     league_norm = sanitize_league(league)
-    season_norm = sanitize_season(season)
+    season_norm = sanitize_season(current_season)
     out_dir = out_root / league_norm / season_norm
     ensure_dir(out_dir)
     for sub in PER_MATCH_DIRS:
         ensure_dir(out_dir / sub)
 
-    if only_failed:
-        failed_links = read_failed_links(out_dir)
-        if not failed_links:
-            print(f"[INFO] No failed_matches.jsonl entries for {league} {season}. Nothing to do.")
-            # still consolidate whatever exists
-            consolidate_season(out_dir)
-            return
-        print(f"[INFO] Retrying {len(failed_links)} failed matches for {league} {season}")
-        completed_now: List[str] = []
-        for link in tqdm(failed_links, desc=f"{league} {season} (only-failed)"):
-            mid = match_id_from_link(link)
-            ok = process_one(out_dir, league, season_norm, link, value_from_bulk=None)
-            if ok:
-                completed_now.append(mid)
-            time.sleep(sleep_s)
-        # remove successes from failed list
-        if completed_now:
-            rewrite_failed_excluding(out_dir, completed_now)
-        consolidate_season(out_dir)
-        return
-
-    # Normal bulk run
+    # Try bulk, then fall back to retrying failed links if any
     try:
-        matches: Dict[str, Any] = fetch_all_matches(us, league, season)
+        matches: Dict[str, Any] = fetch_all_matches(us, league, current_season)
     except Exception as e:
-        print(f"[WARN] {league} {season} failed to fetch matches: {e}")
-        # If bulk fails, try to at least retry previously failed links
+        print(f"[WARN] {league} {current_season} failed bulk fetch: {e}")
         failed_links = read_failed_links(out_dir)
         if failed_links:
-            print(f"[INFO] Bulk failed. Retrying {len(failed_links)} previously failed matches individually...")
+            print(f"[INFO] Retrying {len(failed_links)} previously failed matches individually...")
             completed_now: List[str] = []
-            for link in tqdm(failed_links, desc=f"{league} {season} (recover-failed)"):
+            for link in tqdm(failed_links, desc=f"{league} {current_season} (recover-failed)"):
                 mid = match_id_from_link(link)
                 ok = process_one(out_dir, league, season_norm, link, value_from_bulk=None)
                 if ok:
@@ -373,9 +346,8 @@ def scrape_league_season(
         consolidate_season(out_dir)
         return
 
-    # Iterate all matches
     completed_now: List[str] = []
-    for link, match_val in tqdm(matches.items(), desc=f"{league} {season}"):
+    for link, match_val in tqdm(matches.items(), desc=f"{league} {current_season}"):
         mid = match_id_from_link(link)
         ok = process_one(out_dir, league, season_norm, link, value_from_bulk=match_val)
         if ok:
@@ -383,41 +355,20 @@ def scrape_league_season(
         time.sleep(sleep_s)
 
     if completed_now:
-        # If any of these were previously logged as failures and now succeeded, drop them from the log
         rewrite_failed_excluding(out_dir, completed_now)
-
     consolidate_season(out_dir)
 
 
-# --------------------- CLI ---------------------
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=str, default="data/understat")
-    parser.add_argument("--leagues", nargs="*", default=LEAGUES_DEFAULT)
-    parser.add_argument("--seasons", nargs="*", default=None,
-                        help="Optional season filter. If omitted, uses Understat.get_valid_seasons(league).")
-    parser.add_argument("--sleep", type=float, default=0.8, help="Sleep between matches to be gentle.")
-    parser.add_argument("--only-failed", action="store_true",
-                        help="Retry only matches listed in failed_matches.jsonl for each league/season.")
-    args = parser.parse_args()
-
-    out_root = Path(args.root)
-    ensure_dir(out_root)
-
+# --------------------- entry points ---------------------
+def run(root: Path = ROOT, leagues: List[str] = LEAGUES, sleep_s: float = SLEEP_S) -> None:
+    ensure_dir(root)
     us = sfc.Understat()
-
-    for league in args.leagues:
-        seasons = args.seasons or us.get_valid_seasons(league=league)
-        for season in seasons:
-            try:
-                scrape_league_season(
-                    us, league, season, out_root,
-                    sleep_s=args.sleep,
-                    only_failed=args.only_failed,
-                )
-            except Exception as e:
-                print(f"[WARN] {league} {season} failed: {e}")
+    for league in leagues:
+        try:
+            scrape_league_current_season(us, league, root, sleep_s=sleep_s)
+        except Exception as e:
+            print(f"[WARN] {league} current season failed: {e}")
 
 
 if __name__ == "__main__":
-    main()
+    run()
