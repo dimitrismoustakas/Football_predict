@@ -1,6 +1,6 @@
 [project]
 name = "football-predict"
-version = "0.0.1"
+version = "0.0.3"
 description = "Machine learning model for predicting football outcomes"
 readme = "README.md"
 requires-python = ">=3.11"
