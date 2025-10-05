@@ -13,7 +13,6 @@ wheels/
 # Folders
 data/
 training/
-preprocessing/
 
 # Files
 main.py

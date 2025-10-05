@@ -19,14 +19,15 @@ Example:
     )
     print(paths)
 """
+
 from __future__ import annotations
-from pathlib import Path
+
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 import pandas as pd
 from soccerdata import ClubElo
-
 
 # --------------------------
 # Paths / Defaults
@@ -102,7 +103,9 @@ def _select_top_division_like(
 
         # Primary: rank asc
         if "rank" in block.columns and block["rank"].notna().any():
-            block = block.sort_values(["rank", "elo"], ascending=[True, False], na_position="last")
+            block = block.sort_values(
+                ["rank", "elo"], ascending=[True, False], na_position="last"
+            )
         # Secondary: elo desc
         elif "elo" in block.columns and block["elo"].notna().any():
             block = block.sort_values(["elo"], ascending=[False], na_position="last")
@@ -114,7 +117,9 @@ def _select_top_division_like(
         out_parts.append(block.head(n))
 
     if not out_parts:
-        raise RuntimeError("Could not form any country blocks under top-division fallback.")
+        raise RuntimeError(
+            "Could not form any country blocks under top-division fallback."
+        )
 
     return pd.concat(out_parts, ignore_index=True)
 
@@ -129,7 +134,9 @@ def _pick_top_division(
     """
     # Basic guard
     if "country" not in table.columns:
-        raise RuntimeError("ClubElo table lacks 'country' column—unexpected for ClubElo.")
+        raise RuntimeError(
+            "ClubElo table lacks 'country' column—unexpected for ClubElo."
+        )
     if "team" not in table.columns:
         # read_by_date puts name in index in some versions; reset_index in caller should handle this.
         raise RuntimeError("ClubElo table lacks 'team' column after reset_index().")
@@ -152,7 +159,9 @@ def _pick_top_division(
 
 def _prepare_asof_df(sel: pd.DataFrame, as_of_dt: datetime) -> pd.DataFrame:
     # Lean schema and consistent names
-    cols = [c for c in ["team", "country", "rank", "elo", "from", "to"] if c in sel.columns]
+    cols = [
+        c for c in ["team", "country", "rank", "elo", "from", "to"] if c in sel.columns
+    ]
     out = sel[cols].copy()
     out = out.rename(columns={"team": "team_clubelo"})
     # Datetime columns may be object; coerce
@@ -202,7 +211,9 @@ def build_prod_elo(
     ce = ClubElo()
     table = ce.read_by_date(as_of_dt).reset_index()  # ensure 'team' exists
     if "team" not in table.columns:
-        raise RuntimeError("ClubElo.read_by_date(...).reset_index() did not expose 'team' column.")
+        raise RuntimeError(
+            "ClubElo.read_by_date(...).reset_index() did not expose 'team' column."
+        )
 
     # Selection (robust to missing 'league')
     top_counts = dict(DEFAULT_TOP_COUNTS)
@@ -211,7 +222,9 @@ def build_prod_elo(
 
     sel = _pick_top_division(table, target_countries, top_counts)
     if sel.empty:
-        raise RuntimeError("Selection produced an empty set; check countries and counts.")
+        raise RuntimeError(
+            "Selection produced an empty set; check countries and counts."
+        )
 
     # Prepare stable as-of dataset
     asof_df = _prepare_asof_df(sel, as_of_dt)
@@ -248,7 +261,9 @@ def build_prod_elo(
         if parts:
             elo_hist = pd.concat(parts, ignore_index=True)
             elo_hist = elo_hist[["team_clubelo", "country", "from", "to", "elo"]]
-            hist_path = out_dir / f"elo_history_selected_{as_of_dt.date().isoformat()}.parquet"
+            hist_path = (
+                out_dir / f"elo_history_selected_{as_of_dt.date().isoformat()}.parquet"
+            )
             paths["elo_history"] = _write_parquet(elo_hist, hist_path)
 
     return paths
