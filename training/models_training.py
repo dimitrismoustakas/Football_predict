@@ -172,7 +172,7 @@ def main(parquet_path: Path):
     print("Confusion Matrix:")
     print(confusion_matrix(y_res_val, res_val_pred, labels=rf.classes_))
 
-    # -------- Model 2: Logistic Regression for Over --------
+    # -------- Model 2: Logistic Regression for Over ---------
     lr = LogisticRegression(max_iter=2000, solver="lbfgs")
     lr.fit(X_train, y_over_train)
     over_val_proba = lr.predict_proba(X_val)[:, 1]
