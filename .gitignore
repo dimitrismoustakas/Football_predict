@@ -12,7 +12,7 @@ wheels/
 
 # Folders
 data/
-training/
+test_scripts/
 
 # Files
 main.py
