@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 import sys
 import os
+import json
 
 # Add project root to path
 sys.path.append(os.getcwd())
@@ -15,6 +16,9 @@ from preprocessing.feature_engineering import (
     compute_rolling_features,
     build_match_level,
 )
+from preprocessing.odds_integration import load_match_history_and_map, join_odds
+from preprocessing.elo_integration import merge_elo_features
+from prod_run.elo_scrap import build_prod_elo
 
 LEAGUES = ["ENG-Premier League", "ESP-La Liga", "GER-Bundesliga", "ITA-Serie A", "FRA-Ligue 1"]
 OUTPUT_DIR = Path("data/prod")
@@ -95,18 +99,83 @@ def main():
     pl.enable_string_cache()
     
     # 1. Fetch data
-    # lf = fetch_current_data().lazy() # Removed double call
-    
     df = fetch_current_data()
     if df.is_empty():
-        print("No data found.")
+        print("No data fetched.")
         return
-    lf = df.lazy()
 
-    # 2. Preprocess
+    lf = df.lazy()
     lf = rename_and_cast(lf)
     
-    # Base match columns needed
+    # Apply Canonical Mapping to Production Data
+    UNDERSTAT_MAPPING_PATH = Path("data/mappings/understat_to_canonical.json")
+    if UNDERSTAT_MAPPING_PATH.exists():
+        with open(UNDERSTAT_MAPPING_PATH, "r") as f:
+            u_mapping = json.load(f)
+        
+        lf = lf.with_columns([
+            pl.col("home_team").replace(u_mapping).alias("home_team"),
+            pl.col("away_team").replace(u_mapping).alias("away_team")
+        ])
+
+    # 2. Join Odds (Match History)
+    mh = load_match_history_and_map()
+    if mh is not None:
+        print("Joining Match History data (Odds)...")
+        lf = join_odds(lf, mh)
+
+    # --- Elo Integration ---
+    print("Merging Elo ratings...")
+    df_temp = lf.collect()
+    df_temp = merge_elo_features(df_temp)
+    
+    # Fill missing Elo with current Elo (for upcoming games)
+    missing_mask = df_temp["home_elo"].is_null() | df_temp["away_elo"].is_null()
+    if missing_mask.any():
+        print("Fetching current Elo for missing values...")
+        try:
+            elo_paths = build_prod_elo(write_histories=False)
+            elo_asof_path = elo_paths["elo_asof"]
+            elo_current = pl.read_parquet(elo_asof_path)
+            
+            with open("data/mappings/clubelo_to_canonical.json", "r") as f:
+                mapping = json.load(f)
+            
+            mapping_df = pl.DataFrame([{"team_clubelo": k, "team_canonical": v} for k, v in mapping.items()])
+            
+            elo_mapped = elo_current.join(
+                mapping_df,
+                left_on="team_clubelo",
+                right_on="team_clubelo",
+                how="inner"
+            ).select([pl.col("team_canonical"), pl.col("elo")])
+            
+            # Join and fill
+            df_temp = df_temp.join(
+                elo_mapped.rename({"team_canonical": "home_team", "elo": "home_elo_curr"}),
+                on="home_team",
+                how="left"
+            ).join(
+                elo_mapped.rename({"team_canonical": "away_team", "elo": "away_elo_curr"}),
+                on="away_team",
+                how="left"
+            ).with_columns([
+                pl.col("home_elo").fill_null(pl.col("home_elo_curr")),
+                pl.col("away_elo").fill_null(pl.col("away_elo_curr"))
+            ]).drop(["home_elo_curr", "away_elo_curr"])
+            
+            # Recompute features
+            df_temp = df_temp.with_columns([
+                (pl.col("home_elo") - pl.col("away_elo")).alias("elo_diff"),
+                (pl.col("home_elo") + pl.col("away_elo")).alias("elo_sum"),
+                ((pl.col("home_elo") + pl.col("away_elo")) / 2).alias("elo_mean")
+            ])
+        except Exception as e:
+            print(f"Error filling current Elo: {e}")
+
+    lf = df_temp.lazy()
+
+    # Base match columns we need
     base_needed = [
         "match_id",
         "league_id",
@@ -121,42 +190,42 @@ def main():
         "away_xg",
         "home_npxg",
         "away_npxg",
-        # "home_shots",
-        # "away_shots",
-        # "home_sot",
-        # "away_sot",
+        "home_shots",
+        "away_shots",
+        "home_sot",
+        "away_sot",
         "home_deep",
         "away_deep",
         "home_ppda",
         "away_ppda",
+        "odds_h",
+        "odds_d",
+        "odds_a",
+        "odds_over",
+        "odds_under",
+        "home_elo",
+        "away_elo",
+        "elo_diff",
+        "elo_sum",
+        "elo_mean"
     ]
     
     schema = lf.collect_schema()
     have = set(schema.names())
     base_cols = [c for c in base_needed if c in have]
     base_matches = lf.select(base_cols)
-    
-    # 3. Feature Engineering
+
+    # Long spine
     long_df = build_long(base_matches)
+
+    # Rolling features (within league+season; shift(1) prevents leakage)
     long_feats = compute_rolling_features(long_df)
+
+    # Rejoin to match level and write
     final_df = build_match_level(base_matches, long_feats)
-    
-    # 4. Filter for upcoming matches
-    # We want matches in the future.
-    # We can filter by date >= today.
-    
-    now = datetime.now()
-    # We might want to include today's matches even if time passed?
-    # Let's say date >= today at 00:00
-    today = datetime(now.year, now.month, now.day)
-    
-    final_df = final_df.filter(
-        pl.col("date") >= today
-    )
-    
-    # Write
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    final_df.collect().write_parquet(OUTPUT_PARQUET)
+    final_df.collect().write_parquet(OUTPUT_PARQUET, compression="zstd")
     print(f"Wrote: {OUTPUT_PARQUET}")
 
 if __name__ == "__main__":

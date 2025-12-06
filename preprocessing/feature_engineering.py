@@ -9,8 +9,8 @@ ROLL_WINDOWS = [3, 5, 10]
 BASE_STATS_FOR = [
     "xg_for", 
     "npxg_for",
-    # "shots_for", 
-    # "sot_for", 
+    "shots_for", 
+    "sot_for", 
     "deep_for", 
     "ppda_for", 
     "gf"
@@ -18,8 +18,8 @@ BASE_STATS_FOR = [
 BASE_STATS_AGAINST = [
     "xg_against",
     "npxg_against",
-    # "shots_against",
-    # "sot_against",
+    "shots_against",
+    "sot_against",
     "deep_against",
     "ppda_against",
     "ga",

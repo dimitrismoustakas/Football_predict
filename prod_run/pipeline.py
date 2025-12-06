@@ -26,8 +26,8 @@ PROD_DIR = DATA_DIR / "prod"
 PREDICTIONS_DIR = DATA_DIR / "predictions"
 
 FEATURES_META_PATH = MODELS_DIR / "features_and_meta.json"
-RF_MODEL_PATH = MODELS_DIR / "rf_result_model.joblib"
-LR_MODEL_PATH = MODELS_DIR / "lr_over_model.joblib"
+RESULT_MODEL_PATH = MODELS_DIR / "result_model.joblib"
+OVER_MODEL_PATH = MODELS_DIR / "over_model.joblib"
 PROD_FEATURES_PATH = PROD_DIR / "features_season.parquet"
 OUTPUT_CSV_PATH = PREDICTIONS_DIR / "upcoming_predictions.csv"
 
@@ -39,12 +39,12 @@ def load_models_and_meta():
     with open(FEATURES_META_PATH, "r") as f:
         meta = json.load(f)
     
-    rf_model = joblib.load(RF_MODEL_PATH)
-    lr_model = joblib.load(LR_MODEL_PATH)
+    result_model = joblib.load(RESULT_MODEL_PATH)
+    over_model = joblib.load(OVER_MODEL_PATH)
     
-    return rf_model, lr_model, meta["feature_cols"]
+    return result_model, over_model, meta["feature_cols"]
 
-def predict_upcoming_games(rf_model, lr_model, feature_cols):
+def predict_upcoming_games(result_model, over_model, feature_cols):
     print(f"Loading production features from {PROD_FEATURES_PATH}...")
     if not PROD_FEATURES_PATH.exists():
         raise FileNotFoundError(f"Features file not found at {PROD_FEATURES_PATH}. Did build_prod_features.py run successfully?")
@@ -94,17 +94,26 @@ def predict_upcoming_games(rf_model, lr_model, feature_cols):
     
     # Predict Result (RF)
     print("Predicting Match Results...")
-    res_probs = rf_model.predict_proba(X)
-    res_preds = rf_model.predict(X)
+    res_probs = result_model.predict_proba(X)
+    res_preds = result_model.predict(X)
     
     # Predict Over/Under (LR)
     print("Predicting Over/Under 2.5...")
-    over_probs = lr_model.predict_proba(X)[:, 1] # Probability of class 1 (Over)
+    over_probs = over_model.predict_proba(X)[:, 1] # Probability of class 1 (Over)
     
     # Construct Output DataFrame
     # We need: Home, Away, Date, Time, Prediction, Probabilities
     
-    output_df = df.select(["date", "home_team", "away_team", "league"]).to_pandas()
+    # Select basic info plus bookie odds
+    cols_to_select = ["date", "home_team", "away_team", "league"]
+    odds_cols = ["odds_h", "odds_d", "odds_a", "odds_over", "odds_under"]
+    
+    # Only select odds columns if they exist in the dataframe
+    for col in odds_cols:
+        if col in df.columns:
+            cols_to_select.append(col)
+            
+    output_df = df.select(cols_to_select).to_pandas()
     
     # Format Date and Time
     # Assuming 'date' is datetime64[ns]
@@ -128,7 +137,7 @@ def predict_upcoming_games(rf_model, lr_model, feature_cols):
     output_df["Result_Pred"] = res_preds
     
     # Add Probabilities (RF classes are usually sorted, but let's check model.classes_)
-    classes = rf_model.classes_ # e.g. ['A', 'D', 'H']
+    classes = result_model.classes_ # e.g. ['A', 'D', 'H']
     for i, cls in enumerate(classes):
         prob = res_probs[:, i]
         output_df[f"Prob_{cls}"] = prob.round(3)
@@ -143,12 +152,25 @@ def predict_upcoming_games(rf_model, lr_model, feature_cols):
     
     output_df["Over_Under_Pred"] = ["Over" if p >= 0.5 else "Under" for p in over_probs]
     
+    # Rename bookie odds columns for clarity
+    rename_map = {
+        "odds_h": "Bookie_H",
+        "odds_d": "Bookie_D",
+        "odds_a": "Bookie_A",
+        "odds_over": "Bookie_Over",
+        "odds_under": "Bookie_Under"
+    }
+    output_df.rename(columns=rename_map, inplace=True)
+
     # Reorder columns
     cols_order = [
         "Day", "Time", "league", "home_team", "away_team", 
-        "Result_Pred", "Prob_H", "Odds_H", "Prob_D", "Odds_D", "Prob_A", "Odds_A",
-        "Over_Under_Pred", "Prob_Over_2.5", "Odds_Over_2.5", "Prob_Under_2.5", "Odds_Under_2.5"
+        "Result_Pred", "Prob_H", "Odds_H", "Bookie_H", "Prob_D", "Odds_D", "Bookie_D", "Prob_A", "Odds_A", "Bookie_A",
+        "Over_Under_Pred", "Prob_Over_2.5", "Odds_Over_2.5", "Bookie_Over", "Prob_Under_2.5", "Odds_Under_2.5", "Bookie_Under"
     ]
+    
+    # Filter cols_order to only include columns that actually exist
+    cols_order = [c for c in cols_order if c in output_df.columns]
     
     return output_df[cols_order]
 
@@ -199,7 +221,7 @@ def main():
     # 2. Load Models
     print("\n--- Step 2: Loading Models ---")
     try:
-        rf_model, lr_model, feature_cols = load_models_and_meta()
+        result_model, over_model, feature_cols = load_models_and_meta()
     except Exception as e:
         print(f"Error loading models: {e}")
         return
@@ -207,7 +229,7 @@ def main():
     # 3. Predict
     print("\n--- Step 3: Generating Predictions ---")
     try:
-        predictions_df = predict_upcoming_games(rf_model, lr_model, feature_cols)
+        predictions_df = predict_upcoming_games(result_model, over_model, feature_cols)
     except Exception as e:
         print(f"Error generating predictions: {e}")
         return

@@ -30,12 +30,17 @@ This is a machine learning system for predicting football match outcomes (Win/Dr
 
 ### 4. Production Inference (`prod_run/`)
 - **Workflow**:
-  1. `build_prod_features.py`: 
+  1. **`pipeline.py`**: The main entry point.
+     - Calls `build_prod_features.py` to fetch data and generate features.
+     - Loads trained models (`result_model.joblib`, `over_model.joblib`).
+     - Generates predictions and probabilities for upcoming games (Today + 3 days).
+     - Calculates implied odds (1/probability).
+     - Saves results to `data/predictions/upcoming_predictions.csv`.
+     - Sends email with CSV attachment if configured in `.env`.
+  2. **`build_prod_features.py`**: 
      - Fetches current season data (completed matches + upcoming schedule) using `soccerdata`.
-     - Computes rolling features using `feature_engineering` logic (on current season data).
-     - Filters for upcoming matches (today onwards).
+     - Computes rolling features using `feature_engineering` logic.
      - Output: `data/prod/features_season.parquet`.
-  2. *(Missing step)*: Load models and predict on `features_season.parquet`.
 
 ## Critical Conventions
 
@@ -76,12 +81,10 @@ python training/models_training.py --parquet data/training/understat_df.parquet
 
 ### Production Predictions
 ```powershell
-# 1. Generate features for upcoming matches
-python prod_run/build_prod_features.py
-
-# 2. (Manual) Load models and predict
-# TODO: Script missing
+# Run the end-to-end pipeline (fetch data -> features -> predict -> email)
+uv run python prod_run/pipeline.py
 ```
+*Requires `.env` file with `EMAIL_USER`, `EMAIL_PASS`, `EMAIL_RECIPIENTS`.*
 
 ### Debugging Feature Mismatches
 - If prod features don't match training: compare `features_lib.py` vs `build_understat_features.py`
@@ -89,13 +92,13 @@ python prod_run/build_prod_features.py
 - Use `inspect_features.py` to verify null counts and column names
 
 ## Key Files Reference
+- **Production Pipeline**: `prod_run/pipeline.py` (orchestrator), `prod_run/build_prod_features.py` (features)
 - **Feature engineering logic**: `preprocessing/build_understat_features.py` (training), `prod_run/features_lib.py` (prod)
 - **Scraper configs**: Leagues in `LEAGUES_DEFAULT` (hardcoded in scrapers)
 - **Model artifacts**: `data/models/features_and_meta.json` (source of truth for feature list)
 - **Dependencies**: `pyproject.toml` (polars>=1.34.0, scikit-learn>=1.7.2, scraperfc>=3.4.0, soccerdata>=1.8.2)
 
 ## Known Gaps
-- No automated inference script (step 4 in prod workflow)
 - `current.py` uses FotMob adapter (different from training's Understat data)
 - `test_scripts/` contains exploratory notebooks but no unit tests
 - Salary data collected but not integrated into features
