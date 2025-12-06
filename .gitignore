@@ -16,3 +16,4 @@ test_scripts/
 
 # Files
 main.py
+.env
