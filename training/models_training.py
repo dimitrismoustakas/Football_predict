@@ -83,13 +83,125 @@ def make_targets(df: pl.DataFrame) -> pl.DataFrame:
         raise ValueError("'Over' column not found; ensure you used build_match_level().")
     return df
 
-def prepare_matrices(df: pl.DataFrame, feature_cols: list[str], season_list: list[str]) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+def prepare_matrices(df: pl.DataFrame, feature_cols: list[str], season_list: list[str], extra_cols: list[str] = None) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.DataFrame | None]:
     part = df.filter(pl.col("season").cast(pl.Utf8).is_in(season_list))
     part = part.drop_nulls(subset=feature_cols)
     X = part.select(feature_cols).to_pandas()
     y_res = part.select("match_result").to_pandas().iloc[:, 0]
     y_over = part.select("Over").to_pandas().iloc[:, 0].astype(int)
-    return X, y_res, y_over
+    
+    extras = None
+    if extra_cols:
+        extras = part.select(extra_cols).to_pandas()
+        
+    return X, y_res, y_over, extras
+
+def evaluate_betting(proba, y_true, odds_df, model_type="result"):
+    """
+    Evaluates betting performance based on Expected Value (EV).
+    Strategy: Bet 1 unit if EV > 0 on the outcome with highest probability.
+    EV = prob * odds - 1
+    """
+    bets_placed = 0
+    total_profit = 0.0
+    
+    if model_type == "result":
+        # Classes: ['A', 'D', 'H'] (sorted)
+        # Map indices to odds columns
+        # 0 -> A -> odds_a
+        # 1 -> D -> odds_d
+        # 2 -> H -> odds_h
+        
+        # Ensure we have the odds columns
+        if not all(col in odds_df.columns for col in ["odds_a", "odds_d", "odds_h"]):
+            print("Missing odds columns for result betting evaluation.")
+            return
+
+        odds_values = odds_df[["odds_a", "odds_d", "odds_h"]].values
+        outcomes_map = {0: "A", 1: "D", 2: "H"}
+        
+        # Get max prob index for each row
+        pred_indices = np.argmax(proba, axis=1)
+        max_probs = np.max(proba, axis=1)
+        
+        # Get corresponding odds
+        selected_odds = odds_values[np.arange(len(odds_values)), pred_indices]
+        
+        # Calculate EV
+        ev = (max_probs * selected_odds) - 1
+        
+        # Identify bets
+        bet_mask = ev > 0
+        bets_placed = np.sum(bet_mask)
+        
+        if bets_placed > 0:
+            # Calculate profit
+            # If won: profit = odds - 1
+            # If lost: profit = -1
+            
+            actual_outcomes = y_true.values
+            predicted_outcomes = np.array([outcomes_map[i] for i in pred_indices])
+            
+            # Filter for bets placed
+            bet_outcomes = actual_outcomes[bet_mask]
+            bet_predictions = predicted_outcomes[bet_mask]
+            bet_odds = selected_odds[bet_mask]
+            
+            won_mask = (bet_outcomes == bet_predictions)
+            
+            # Profit calculation
+            # Won: odds - 1
+            # Lost: -1
+            profits = np.where(won_mask, bet_odds - 1, -1.0)
+            total_profit = np.sum(profits)
+            
+    else: # over
+        # proba is prob of Over (class 1)
+        # prob_under = 1 - proba
+        
+        if not all(col in odds_df.columns for col in ["odds_over", "odds_under"]):
+            print("Missing odds columns for over/under betting evaluation.")
+            return
+
+        prob_over = proba
+        prob_under = 1.0 - proba
+        
+        # Determine prediction (highest prob)
+        pred_is_over = prob_over > prob_under # boolean
+        
+        max_probs = np.where(pred_is_over, prob_over, prob_under)
+        
+        # Get odds
+        odds_over = odds_df["odds_over"].values
+        odds_under = odds_df["odds_under"].values
+        selected_odds = np.where(pred_is_over, odds_over, odds_under)
+        
+        # Calculate EV
+        ev = (max_probs * selected_odds) - 1
+        
+        # Identify bets
+        bet_mask = ev > 0
+        bets_placed = np.sum(bet_mask)
+        
+        if bets_placed > 0:
+            actual_over = y_true.values # 1 for Over, 0 for Under
+            pred_values = pred_is_over.astype(int)
+            
+            bet_actual = actual_over[bet_mask]
+            bet_pred = pred_values[bet_mask]
+            bet_odds = selected_odds[bet_mask]
+            
+            won_mask = (bet_actual == bet_pred)
+            
+            profits = np.where(won_mask, bet_odds - 1, -1.0)
+            total_profit = np.sum(profits)
+
+    total_games = len(y_true)
+    prop_bets = bets_placed / total_games if total_games > 0 else 0
+    avg_return = total_profit / bets_placed if bets_placed > 0 else 0
+    
+    print(f"Betting Eval ({model_type}): Bets: {bets_placed}/{total_games} ({prop_bets:.1%}), Total Profit: {total_profit:.2f}, Avg Return/Bet: {avg_return:.4f}")
+    return bets_placed, total_profit, avg_return
 
 def evaluate_model(model, X_val, y_val, model_type="result"):
     if model_type == "result":
@@ -150,35 +262,42 @@ def main(parquet_path: Path):
     
     # --- Model A (No Odds) ---
     print("\n--- Model A (No Odds) ---")
-    X_train_A, y_res_train, y_over_train = prepare_matrices(df, base_feats, train_seasons)
-    X_val_A, y_res_val, y_over_val = prepare_matrices(df_odds, base_feats, [prev_season]) # Eval on odds subset
+    X_train_A, y_res_train, y_over_train, _ = prepare_matrices(df, base_feats, train_seasons)
+    
+    # We need odds for validation to evaluate betting
+    odds_cols = odds_res_cols + odds_over_cols
+    X_val_A, y_res_val, y_over_val, val_odds_A = prepare_matrices(df_odds, base_feats, [prev_season], extra_cols=odds_cols) 
     
     # Tune Result Model A
     print("Result Model A:")
     rf_A = train_lgbm(X_train_A, y_res_train, objective="multiclass")
     acc_res_A, _, proba_res_A = evaluate_model(rf_A, X_val_A, y_res_val, "result")
+    bets_res_A, profit_res_A, roi_res_A = evaluate_betting(proba_res_A, y_res_val, val_odds_A, "result")
     
     # Tune Over Model A
     print("Over Model A:")
     lr_A = train_lgbm(X_train_A, y_over_train, objective="binary")
     acc_over_A, brier_over_A, proba_over_A = evaluate_model(lr_A, X_val_A, y_over_val, "over")
+    bets_over_A, profit_over_A, roi_over_A = evaluate_betting(proba_over_A, y_over_val, val_odds_A, "over")
     
     # --- Model B (With Odds) ---
     print("\n--- Model B (With Odds) ---")
     # Train on df_odds only
-    X_train_B_res, y_res_train_B, _ = prepare_matrices(df_odds, base_feats + odds_res_cols, train_seasons)
-    X_val_B_res, _, _ = prepare_matrices(df_odds, base_feats + odds_res_cols, [prev_season])
+    X_train_B_res, y_res_train_B, _, _ = prepare_matrices(df_odds, base_feats + odds_res_cols, train_seasons)
+    X_val_B_res, _, _, val_odds_B_res = prepare_matrices(df_odds, base_feats + odds_res_cols, [prev_season], extra_cols=odds_cols)
     
     print("Result Model B:")
     rf_B = train_lgbm(X_train_B_res, y_res_train_B, objective="multiclass")
     acc_res_B, _, proba_res_B = evaluate_model(rf_B, X_val_B_res, y_res_val, "result")
+    bets_res_B, profit_res_B, roi_res_B = evaluate_betting(proba_res_B, y_res_val, val_odds_B_res, "result")
     
-    X_train_B_over, _, y_over_train_B = prepare_matrices(df_odds, base_feats + odds_over_cols, train_seasons)
-    X_val_B_over, _, _ = prepare_matrices(df_odds, base_feats + odds_over_cols, [prev_season])
+    X_train_B_over, _, y_over_train_B, _ = prepare_matrices(df_odds, base_feats + odds_over_cols, train_seasons)
+    X_val_B_over, _, _, val_odds_B_over = prepare_matrices(df_odds, base_feats + odds_over_cols, [prev_season], extra_cols=odds_cols)
     
     print("Over Model B:")
     lr_B = train_lgbm(X_train_B_over, y_over_train_B, objective="binary")
     acc_over_B, brier_over_B, proba_over_B = evaluate_model(lr_B, X_val_B_over, y_over_val, "over")
+    bets_over_B, profit_over_B, roi_over_B = evaluate_betting(proba_over_B, y_over_val, val_odds_B_over, "over")
     
     # --- Comparison with Implied Odds ---
     print("\n--- Implied Odds Comparison ---")
@@ -204,8 +323,6 @@ def main(parquet_path: Path):
     # We need to match classes. rf.classes_ usually ['A', 'D', 'H'] sorted.
     classes = rf_A.classes_
     idx_h = np.where(classes == 'H')[0][0]
-    idx_d = np.where(classes == 'D')[0][0]
-    idx_a = np.where(classes == 'A')[0][0]
     
     corr_h_A = np.corrcoef(proba_res_A[:, idx_h], implied_h)[0, 1]
     corr_over_A = np.corrcoef(proba_over_A, implied_over)[0, 1]
@@ -229,7 +346,11 @@ def main(parquet_path: Path):
         "comparison": {
             "acc_res_A": acc_res_A, "acc_res_B": acc_res_B,
             "acc_over_A": acc_over_A, "acc_over_B": acc_over_B,
-            "corr_h_A": corr_h_A, "corr_h_B": corr_h_B
+            "corr_h_A": corr_h_A, "corr_h_B": corr_h_B,
+            "betting_res_A": {"bets": int(bets_res_A), "profit": float(profit_res_A), "roi": float(roi_res_A)},
+            "betting_over_A": {"bets": int(bets_over_A), "profit": float(profit_over_A), "roi": float(roi_over_A)},
+            "betting_res_B": {"bets": int(bets_res_B), "profit": float(profit_res_B), "roi": float(roi_res_B)},
+            "betting_over_B": {"bets": int(bets_over_B), "profit": float(profit_over_B), "roi": float(roi_over_B)}
         }
     }
     (MODELS_DIR / "features_and_meta.json").write_text(json.dumps(meta, indent=2))
