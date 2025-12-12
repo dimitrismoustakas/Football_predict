@@ -110,3 +110,5 @@ uv run python prod_run/pipeline.py
 - Avoid wrapper functions that do not add value.
 - Always keep in mind that we use uv instead of pip and the corresponding venv.
 - We are in development mode, we don't need about backwards compatibility, we can break stuff as needed.
+- Don't use argparse, we won't need complex CLI interfaces.
+- Spacing in Python should always be with tabs, never spaces.
