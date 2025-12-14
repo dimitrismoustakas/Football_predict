@@ -55,24 +55,21 @@ MAX_EPOCHS = 100
 PATIENCE = 15
 BATCH_SIZE = 128
 
-# Set to True to also train/save Model B (with odds features)
-TRAIN_MODEL_WITH_ODDS = False
-
 # --- MANUAL OVERRIDE FOR PHASE 2 ---
 # If you want to skip Phase 1 (Architecture Search) and run only Phase 2 (Lambda Tuning),
 # fill this dictionary with the best parameters from a previous run.
 # Set to None to run the full pipeline.
-MANUAL_ARCH_PARAMS = {
-    'n_layers': 3,
-    'layer_0_size': 128,
-    'layer_1_size': 512,
-    'layer_2_size': 128,
-    'dropout': 0.3179188503051007,
-    'norm': 'ln',
-    'lr': 0.0022539642014855073,
-    'weight_decay': 0.0005345906215353935
-}
-# MANUAL_ARCH_PARAMS = None  # Uncomment to run full pipeline
+# MANUAL_ARCH_PARAMS = {
+#     'n_layers': 3,
+#     'layer_0_size': 128,
+#     'layer_1_size': 512,
+#     'layer_2_size': 128,
+#     'dropout': 0.3179188503051007,
+#     'norm': 'ln',
+#     'lr': 0.0022539642014855073,
+#     'weight_decay': 0.0005345906215353935
+# }
+MANUAL_ARCH_PARAMS = None  # Uncomment to run full pipeline
 
 # Device setup
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -697,7 +694,7 @@ def create_architecture_objective(
 
 	def objective(trial: optuna.Trial) -> float:
 		# Sample architecture hyperparameters
-		n_layers = trial.suggest_int("n_layers", 2, 4)
+		n_layers = trial.suggest_int("n_layers", 2, 5)
 		layer_sizes = []
 		for i in range(n_layers):
 			size = trial.suggest_categorical(f"layer_{i}_size", [64, 128, 256, 512])

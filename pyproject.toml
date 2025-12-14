@@ -1,6 +1,6 @@
 [project]
 name = "football-predict"
-version = "0.0.5"
+version = "0.1.0"
 description = "Machine learning model for predicting football outcomes"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,6 +13,9 @@ dependencies = [
     "pyarrow>=21.0.0",
     "python-dotenv>=1.2.1",
     "scikit-learn>=1.7.2",
-    "scraperfc>=3.4.0",
-    "soccerdata>=1.8.2",
+    "soccerdata>=1.8.7",
+    "torch>=2.9.1",
 ]
+
+[tool.uv.sources]
+soccerdata = { git = "ssh://git@github.com/dimitrismoustakas/soccerdata.git", rev = "understat-fix" }
