@@ -50,11 +50,11 @@ def load_match_history_and_map():
         return pl.coalesce([pl.col(c) for c in valid_cols]).alias(alias)
 
     mh = mh.with_columns([
-        coalesce_odds_list(["B365CH", "B365H"], "odds_h"),
-        coalesce_odds_list(["B365CD", "B365D"], "odds_d"),
-        coalesce_odds_list(["B365CA", "B365A"], "odds_a"),
-        coalesce_odds_list(["B365C>2.5", "B365>2.5", "Avg>2.5", "BbAv>2.5"], "odds_over"),
-        coalesce_odds_list(["B365C<2.5", "B365<2.5", "Avg<2.5", "BbAv<2.5"], "odds_under"),
+        coalesce_odds_list(["B365H", "B365CH"], "odds_h"),
+        coalesce_odds_list(["B365D", "B365CD"], "odds_d"),
+        coalesce_odds_list(["B365A", "B365CA"], "odds_a"),
+        coalesce_odds_list(["B365>2.5", "B365C>2.5", "Avg>2.5", "BbAv>2.5"], "odds_over"),
+        coalesce_odds_list(["B365<2.5", "B365C<2.5", "Avg<2.5", "BbAv<2.5"], "odds_under"),
     ])
     
     return mh

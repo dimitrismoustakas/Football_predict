@@ -1,10 +1,7 @@
-# build_understat_features.py
-# Requires: polars>=1.21.0
 from pathlib import Path
 import sys
 import os
 
-# Add project root to path to allow imports
 sys.path.append(os.getcwd())
 
 import polars as pl

@@ -4,7 +4,6 @@ Production Pipeline for Over/Under Neural Network Model
 import os
 import sys
 import json
-import smtplib
 import numpy as np
 import pandas as pd
 import polars as pl
@@ -12,10 +11,6 @@ import torch
 import joblib
 from pathlib import Path
 from datetime import datetime, timezone
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -25,7 +20,15 @@ load_dotenv()
 sys.path.append(os.getcwd())
 
 from prod_run import build_prod_features
-from training.pytorch_testing import MLP, _logits
+from prod_run import fetch_odds
+from prod_run.generate_html_report import generate_html_report
+from training.models.neural_net import MLP, _logits
+from utils import calculate_betting_allocations, send_email
+
+# API Key
+ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
+if not ODDS_API_KEY:
+	raise RuntimeError("ODDS_API_KEY not set in environment")
 
 # Paths
 DATA_DIR = Path("data")
@@ -38,84 +41,10 @@ MODEL_PATH = MODELS_DIR / "over_under_decorrelated.pt"
 META_PATH = MODELS_DIR / "over_under_metadata.json"
 SCALER_PATH = MODELS_DIR / "scaler.joblib"
 PROD_FEATURES_PATH = PROD_DIR / "features_season.parquet"
-ODDS_FILE_PATH = DATA_DIR / "odds for england.js"
 OUTPUT_CSV_PATH = PREDICTIONS_DIR / "upcoming_predictions.csv"
+OUTPUT_HTML_PATH = PREDICTIONS_DIR / "upcoming_predictions.html"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-# ============================================================================
-# ODDS PARSING
-# ============================================================================
-
-def parse_odds_file(odds_path: Path) -> pd.DataFrame:
-	"""
-	Parse the JSON odds file and extract best odds for each game.
-	Returns DataFrame with: home_team, away_team, commence_time, odds_over, odds_under
-	"""
-	with open(odds_path, "r", encoding="utf-8") as f:
-		data = json.load(f)
-	
-	games = []
-	for game in data:
-		home_team = game["home_team"]
-		away_team = game["away_team"]
-		commence_time = game["commence_time"]
-		
-		# Find best over/under odds across all bookmakers
-		best_over = None
-		best_under = None
-		
-		for bookmaker in game.get("bookmakers", []):
-			for market in bookmaker.get("markets", []):
-				if market["key"] == "totals":
-					for outcome in market["outcomes"]:
-						if outcome.get("point") == 2.5:
-							if outcome["name"] == "Over":
-								if best_over is None or outcome["price"] > best_over:
-									best_over = outcome["price"]
-							elif outcome["name"] == "Under":
-								if best_under is None or outcome["price"] > best_under:
-									best_under = outcome["price"]
-		
-		if best_over is not None and best_under is not None:
-			games.append({
-				"home_team_odds": home_team,
-				"away_team_odds": away_team,
-				"commence_time": commence_time,
-				"odds_over": best_over,
-				"odds_under": best_under,
-			})
-	
-	return pd.DataFrame(games)
-
-
-def create_team_mapping() -> dict:
-	"""
-	Create mapping from odds file team names to canonical names used in features.
-	"""
-	return {
-		"Brighton and Hove Albion": "Brighton",
-		"West Ham United": "West Ham",
-		"Crystal Palace": "Crystal Palace",
-		"Fulham": "Fulham",
-		"Wolverhampton Wanderers": "Wolverhampton Wanderers",
-		"Manchester United": "Manchester United",
-		"Arsenal": "Arsenal",
-		"Everton": "Everton",
-		"Nottingham Forest": "Nottingham Forest",
-		"Aston Villa": "Aston Villa",
-		"Manchester City": "Manchester City",
-		"Chelsea": "Chelsea",
-		"Tottenham Hotspur": "Tottenham",
-		"Leicester City": "Leicester",
-		"Newcastle United": "Newcastle United",
-		"Liverpool": "Liverpool",
-		"Bournemouth": "Bournemouth",
-		"Southampton": "Southampton",
-		"Brentford": "Brentford",
-		"Ipswich Town": "Ipswich",
-	}
 
 
 # ============================================================================
@@ -178,89 +107,6 @@ def predict(model, scaler, feature_cols, X_raw: np.ndarray, implied_probs: np.nd
 
 
 # ============================================================================
-# PORTFOLIO STRATEGY
-# ============================================================================
-
-def calculate_betting_allocations(
-	probs: np.ndarray,
-	odds_over: np.ndarray,
-	odds_under: np.ndarray,
-	home_teams: list,
-	away_teams: list,
-	dates: list,
-	budget: float = 100.0,
-) -> pd.DataFrame:
-	"""
-	Calculate betting allocations using Sharpe-weighted portfolio strategy.
-	"""
-	df = pd.DataFrame({
-		"home_team": home_teams,
-		"away_team": away_teams,
-		"date": dates,
-		"prob_over": probs,
-		"odds_over": odds_over,
-		"odds_under": odds_under,
-	})
-	
-	p = df["prob_over"]
-	o_over = df["odds_over"]
-	o_under = df["odds_under"]
-	
-	# Expected value calculations
-	# For Over bet: E[profit] = p * (odds - 1) + (1-p) * (-1) = p * odds - 1
-	mu_over = p * o_over - 1
-	# For Under bet: E[profit] = (1-p) * (odds - 1) + p * (-1) = (1-p) * odds - 1
-	mu_under = (1 - p) * o_under - 1
-	
-	# Variance calculations
-	# Var(profit) = E[profit^2] - E[profit]^2
-	# For Over: outcomes are (odds-1) with prob p, or -1 with prob (1-p)
-	e_x2_over = p * (o_over - 1) ** 2 + (1 - p) * 1
-	var_over = e_x2_over - mu_over ** 2
-	
-	e_x2_under = (1 - p) * (o_under - 1) ** 2 + p * 1
-	var_under = e_x2_under - mu_under ** 2
-	
-	# Determine better side for each game
-	better_is_over = mu_over >= mu_under
-	mu_best = np.where(better_is_over, mu_over, mu_under)
-	var_best = np.where(better_is_over, var_over, var_under)
-	odds_best = np.where(better_is_over, o_over, o_under)
-	
-	df["bet_side"] = np.where(better_is_over, "Over", "Under")
-	df["mu"] = mu_best
-	df["var"] = var_best
-	df["odds_selected"] = odds_best
-	df["eligible"] = df["mu"] > 0  # Only bet on positive EV
-	
-	# Calculate Sharpe-weighted allocations
-	eligible_df = df[df["eligible"]].copy()
-	
-	if len(eligible_df) > 0:
-		# Sharpe weight = mu / var (capped variance at small value for stability)
-		vars_ = eligible_df["var"].values + 1e-6
-		mus = eligible_df["mu"].values
-		raw_weights = np.maximum(0, mus / vars_)
-		sum_weights = raw_weights.sum()
-		
-		if sum_weights > 0:
-			norm_weights = raw_weights / sum_weights
-			eligible_df["allocation_pct"] = (norm_weights * 100).round(2)
-		else:
-			eligible_df["allocation_pct"] = 0.0
-	
-	# Merge back
-	df = df.merge(
-		eligible_df[["home_team", "away_team", "allocation_pct"]],
-		on=["home_team", "away_team"],
-		how="left"
-	)
-	df["allocation_pct"] = df["allocation_pct"].fillna(0.0)
-	
-	return df
-
-
-# ============================================================================
 # MAIN PIPELINE
 # ============================================================================
 
@@ -286,14 +132,13 @@ def main():
 		print(f"Error loading model: {e}")
 		return
 	
-	# 3. Load and parse odds
-	print("\n--- Step 3: Parsing Odds ---")
-	if not ODDS_FILE_PATH.exists():
-		print(f"Odds file not found: {ODDS_FILE_PATH}")
-		return
+	# 3. Fetch odds from API (with caching)
+	print("\n--- Step 3: Fetching Odds ---")
+	raw_odds = fetch_odds.get_all_leagues_odds(ODDS_API_KEY)
+	parsed_odds = fetch_odds.parse_odds_data(raw_odds)
+	print(f"Fetched {len(parsed_odds)} games with over/under odds across all leagues")
 	
-	odds_df = parse_odds_file(ODDS_FILE_PATH)
-	print(f"Parsed {len(odds_df)} games with over/under odds")
+	odds_df = pd.DataFrame(parsed_odds)
 	
 	# Convert commence_time to datetime (UTC timezone-aware)
 	odds_df["commence_time"] = pd.to_datetime(odds_df["commence_time"], utc=True)
@@ -306,26 +151,20 @@ def main():
 	print(f"Found {len(odds_df)} upcoming games")
 	
 	if odds_df.empty:
-		print("No upcoming games found in odds file")
-		return
+		raise RuntimeError("No upcoming games found in odds data")
 	
 	features_df = pl.read_parquet(PROD_FEATURES_PATH)
 	
-	# Filter for EPL only
-	features_df = features_df.filter(pl.col("league") == "ENG-Premier League")
-	print(f"EPL games in features: {len(features_df)}")
-	
-	# Create team name mapping
-	team_mapping = create_team_mapping()
-	
-	# Map odds team names to canonical names
-	odds_df["home_team"] = odds_df["home_team_odds"].map(team_mapping).fillna(odds_df["home_team_odds"])
-	odds_df["away_team"] = odds_df["away_team_odds"].map(team_mapping).fillna(odds_df["away_team_odds"])
+	# Filter features to only supported leagues (same as odds)
+	supported_leagues = list(fetch_odds.LEAGUE_TO_SPORT_KEY.keys())
+	features_df = features_df.filter(pl.col("league").is_in(supported_leagues))
+	print(f"Games in features for supported leagues: {len(features_df)}")
 	
 	# Convert features to pandas for merging
 	features_pd = features_df.to_pandas()
 	
 	# Merge by team names (odds have the game, features have the stats)
+	# Team names in odds_df are already mapped to canonical names by parse_odds_data
 	merged = odds_df.merge(
 		features_pd,
 		on=["home_team", "away_team"],
@@ -336,14 +175,13 @@ def main():
 	print(f"Matched {len(merged)} games between odds and features")
 	
 	if merged.empty:
-		print("No games matched between odds and features")
 		# Debug: show what teams don't match
-		print("\nOdds teams:")
-		print(odds_df[["home_team", "away_team"]].to_string())
-		print("\nFeature teams (EPL, upcoming):")
+		print("\nOdds teams (mapped):")
+		print(odds_df[["home_team", "away_team", "home_team_raw", "away_team_raw"]].to_string())
+		print("\nFeature teams (supported leagues, upcoming):")
 		upcoming_features = features_pd[pd.to_datetime(features_pd["date"]) >= pd.Timestamp.now()]
-		print(upcoming_features[["home_team", "away_team"]].head(20).to_string())
-		return
+		print(upcoming_features[["league", "home_team", "away_team"]].head(30).to_string())
+		raise RuntimeError("No games matched between odds and features")
 	
 	# 5. Check for required feature columns
 	print("\n--- Step 5: Checking Features ---")
@@ -397,9 +235,12 @@ def main():
 	# 8. Build output DataFrame
 	print("\n--- Step 8: Building Output ---")
 	
+	# Convert to Greek time (Europe/Athens)
+	greek_times = merged["commence_time"].dt.tz_convert("Europe/Athens")
+	
 	output_df = pd.DataFrame({
-		"Date": merged["commence_time"].dt.strftime("%Y-%m-%d"),
-		"Time": merged["commence_time"].dt.strftime("%H:%M"),
+		"Date": greek_times.dt.strftime("%Y-%m-%d"),
+		"Time": greek_times.dt.strftime("%H:%M"),
 		"Home": merged["home_team"],
 		"Away": merged["away_team"],
 		"Prob_Over": probs.round(3),
@@ -418,11 +259,14 @@ def main():
 	# Sort by date and time
 	output_df = output_df.sort_values(["Date", "Time"])
 	
-	# 9. Save CSV
+	# 9. Save CSV and HTML
 	print("\n--- Step 9: Saving Output ---")
 	PREDICTIONS_DIR.mkdir(parents=True, exist_ok=True)
 	output_df.to_csv(OUTPUT_CSV_PATH, index=False)
 	print(f"Saved predictions to {OUTPUT_CSV_PATH}")
+	
+	# Generate interactive HTML report
+	generate_html_report(output_df, OUTPUT_HTML_PATH)
 	
 	# Print summary
 	print("\n" + "=" * 60)
@@ -447,93 +291,9 @@ def main():
 	recipients_str = os.environ.get("EMAIL_RECIPIENTS", "")
 	recipients = [r.strip() for r in recipients_str.split(",") if r.strip()]
 	
-	send_email(OUTPUT_CSV_PATH, output_df, bets if not bets.empty else None, recipients)
+	send_email(OUTPUT_CSV_PATH, OUTPUT_HTML_PATH, output_df, bets if not bets.empty else None, recipients)
 	
 	print("\nPipeline completed successfully.")
-
-
-def send_email(csv_path: Path, predictions_df: pd.DataFrame, bets_df: pd.DataFrame, recipients: list):
-	"""Send email with predictions CSV and betting recommendations."""
-	if not recipients:
-		print("No email recipients defined. Skipping email.")
-		return
-	
-	sender_email = os.environ.get("EMAIL_USER")
-	sender_password = os.environ.get("EMAIL_PASS")
-	
-	if not sender_email or not sender_password:
-		print("EMAIL_USER or EMAIL_PASS not set. Skipping email.")
-		return
-	
-	print(f"Sending email to {recipients}...")
-	
-	# Build email body
-	today_str = datetime.now().strftime("%Y-%m-%d")
-	
-	html_body = f"""
-	<html>
-	<head>
-		<style>
-			table {{ border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 12px; }}
-			th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-			th {{ background-color: #4CAF50; color: white; }}
-			tr:nth-child(even) {{ background-color: #f2f2f2; }}
-			.positive {{ color: green; font-weight: bold; }}
-			.negative {{ color: red; }}
-			h2 {{ color: #333; }}
-		</style>
-	</head>
-	<body>
-		<h2>Football Predictions - {today_str}</h2>
-		<h3>Over/Under 2.5 Goals - English Premier League</h3>
-		
-		<h4>All Predictions</h4>
-		{predictions_df.to_html(index=False, classes='predictions')}
-	"""
-	
-	if bets_df is not None and not bets_df.empty:
-		html_body += f"""
-		<h4>Betting Recommendations (Positive EV)</h4>
-		<p>Budget allocation percentages based on Sharpe-weighted portfolio strategy:</p>
-		{bets_df[["Date", "Time", "Home", "Away", "Bet_Side", "Odds_Over", "Odds_Under", "EV", "Allocation_Pct"]].to_html(index=False, classes='bets')}
-		<p><strong>Total Allocation: {bets_df['Allocation_Pct'].sum():.2f}%</strong></p>
-		<p><em>To use: If your total budget is €10, multiply each Allocation_Pct by €0.1 to get the bet amount.</em></p>
-		"""
-	else:
-		html_body += """
-		<h4>Betting Recommendations</h4>
-		<p>No positive expected value bets found for this period.</p>
-		"""
-	
-	html_body += """
-	</body>
-	</html>
-	"""
-	
-	# Create message
-	msg = MIMEMultipart("alternative")
-	msg["Subject"] = f"Football Predictions (NN) - {today_str}"
-	msg["From"] = sender_email
-	msg["To"] = ", ".join(recipients)
-	
-	# Attach HTML body
-	msg.attach(MIMEText(html_body, "html"))
-	
-	# Attach CSV
-	with open(csv_path, "rb") as f:
-		part = MIMEBase("application", "octet-stream")
-		part.set_payload(f.read())
-		encoders.encode_base64(part)
-		part.add_header("Content-Disposition", f"attachment; filename={csv_path.name}")
-		msg.attach(part)
-	
-	try:
-		with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-			smtp.login(sender_email, sender_password)
-			smtp.send_message(msg)
-		print("Email sent successfully.")
-	except Exception as e:
-		print(f"Failed to send email: {e}")
 
 
 if __name__ == "__main__":

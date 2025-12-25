@@ -87,6 +87,9 @@ def main():
     for team in tqdm(teams_list, desc="Fetching team Elo histories"):
         try:
             hist = fetch_team_history(team)
+            # Reset index to convert 'from' to a column
+            if hist.index.name == "from":
+                hist = hist.reset_index()
             # Attach country if missing
             if "country" not in hist.columns and "country" in team_universe.columns:
                 c = team_universe.loc[team_universe["team"] == team, "country"]
@@ -94,17 +97,29 @@ def main():
                     hist = hist.assign(country=c.iloc[0])
             histories.append(hist)
         except Exception as e:
-            print(f"Failed to fetch history for {team}: {e}")
+            # Fallback: use snapshot data for this team
+            team_snapshots = snapshots_df[snapshots_df["team"] == team].copy()
+            if not team_snapshots.empty:
+                # Convert to history format with from/to intervals
+                # Keep only relevant columns and rename snapshot_date to from
+                cols_to_keep = ["team", "elo", "snapshot_date"]
+                if "country" in team_snapshots.columns:
+                    cols_to_keep.append("country")
+                team_snapshots = team_snapshots[cols_to_keep].copy()
+                team_snapshots = team_snapshots.rename(columns={"snapshot_date": "from"})
+                team_snapshots = team_snapshots.sort_values("from")
+                team_snapshots["to"] = team_snapshots["from"].shift(-1) - pd.Timedelta(days=1)
+                team_snapshots["to"] = team_snapshots["to"].fillna(pd.Timestamp.today())
+                histories.append(team_snapshots)
+                print(f"Using snapshot data for {team} (full history unavailable)")
+            else:
+                print(f"Failed to fetch history for {team}: {e}")
 
     if not histories:
         print("No histories collected.")
         return
 
     elo_history = pd.concat(histories, ignore_index=True)
-
-    # Rename 'to' to 'from' because it represents the date of the update (valid from this date)
-    if "to" in elo_history.columns and "from" not in elo_history.columns:
-        elo_history = elo_history.rename(columns={"to": "from"})
 
     # Clean and filter
     for col in ("from", "to"):
