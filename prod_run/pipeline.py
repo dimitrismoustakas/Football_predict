@@ -192,7 +192,7 @@ def main():
 	
 	# Check for nulls in feature columns
 	initial_count = len(merged)
-	merged = merged.dropna(subset=feature_cols)
+	merged = merged.dropna(subset=feature_cols).reset_index(drop=True)
 	final_count = len(merged)
 	
 	if initial_count != final_count:

@@ -7,9 +7,13 @@ To view MLflow results:
 """
 
 import os
+import sys
 import json
 from pathlib import Path
 from typing import Dict, List
+
+# Add project root to path to enable imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import joblib
 import mlflow
