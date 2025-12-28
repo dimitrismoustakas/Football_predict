@@ -14,8 +14,14 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "scikit-learn>=1.7.2",
     "soccerdata>=1.8.7",
-    "torch>=2.9.1",
+    "torch>=2.6.0",
 ]
 
 [tool.uv.sources]
 soccerdata = { git = "ssh://git@github.com/dimitrismoustakas/soccerdata.git", rev = "understat-fix" }
+torch = { index = "pytorch-cu124" }
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true

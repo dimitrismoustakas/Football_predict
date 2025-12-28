@@ -11,8 +11,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class GeGLU(nn.Module):
+	"""Gated GELU activation with linear projection."""
+
+	def __init__(self, in_dim: int, hidden_dim: int, bias: bool = True):
+		super().__init__()
+		self.proj = nn.Linear(in_dim, 2 * hidden_dim, bias=bias)
+
+	def forward(self, x: torch.Tensor) -> torch.Tensor:
+		v, g = self.proj(x).chunk(2, dim=-1)
+		return v * F.gelu(g)
+
+
 class MLP(nn.Module):
-	"""Flexible MLP with configurable layers, dropout, and normalization."""
+	"""Flexible MLP with configurable layers, dropout, normalization, and activation."""
 
 	def __init__(
 		self,
@@ -20,17 +32,33 @@ class MLP(nn.Module):
 		hidden_layers: List[int],
 		dropout: float = 0.3,
 		norm: str = "none",
+		activation: str = "relu",
 	):
 		super().__init__()
 		layers = []
 		prev = input_dim
 		NormClass = {"none": None, "bn": nn.BatchNorm1d, "ln": nn.LayerNorm}.get(norm)
 
+		# Activation factory
+		def get_activation():
+			if activation == "relu":
+				return nn.ReLU()
+			elif activation == "silu":
+				return nn.SiLU()
+			elif activation == "gelu":
+				return nn.GELU()
+			else:
+				raise ValueError(f"Unknown activation: {activation}")
+
 		for h in hidden_layers:
-			layers.append(nn.Linear(prev, h))
-			if NormClass is not None:
-				layers.append(NormClass(h))
-			layers.append(nn.ReLU())
+			if activation == "geglu":
+				# GeGLU combines linear + activation in one module
+				layers.append(GeGLU(prev, h))
+			else:
+				layers.append(nn.Linear(prev, h))
+				if NormClass is not None:
+					layers.append(NormClass(h))
+				layers.append(get_activation())
 			layers.append(nn.Dropout(dropout))
 			prev = h
 		layers.append(nn.Linear(prev, 1))
@@ -38,6 +66,7 @@ class MLP(nn.Module):
 		self.hidden_layers = hidden_layers
 		self.dropout = dropout
 		self.norm = norm
+		self.activation = activation
 
 	def forward(self, x):
 		return self.net(x)
@@ -54,6 +83,8 @@ class TrainConfig:
 	weight_decay: float
 	lambda_repulsion: float
 	lambda_corr: float
+	activation: str = "relu"
+	scheduler_type: str = "plateau"
 	epochs: int = 100
 	patience: int = 15
 	batch_size: int = 128
