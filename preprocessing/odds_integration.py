@@ -24,9 +24,16 @@ def load_match_history_and_map():
     cols_to_select = [
         "season_year", "home_team_mapped", "away_team_mapped",
         "HS", "AS", "HST", "AST",
+        # B365 odds
         "B365H", "B365D", "B365A", "B365CH", "B365CD", "B365CA",
         "B365>2.5", "B365<2.5", "B365C>2.5", "B365C<2.5",
-        "BbAv>2.5", "BbAv<2.5", "Avg>2.5", "Avg<2.5"
+        # Pinnacle odds (fallback)
+        "PSH", "PSD", "PSA", "PSCH", "PSCD", "PSCA",
+        "P>2.5", "P<2.5", "PC>2.5", "PC<2.5",
+        # Average odds (fallback)
+        "AvgH", "AvgD", "AvgA", "AvgCH", "AvgCD", "AvgCA",
+        "Avg>2.5", "Avg<2.5", "AvgC>2.5", "AvgC<2.5",
+        "BbAv>2.5", "BbAv<2.5",
     ]
     
     existing = mh.columns
@@ -50,11 +57,13 @@ def load_match_history_and_map():
         return pl.coalesce([pl.col(c) for c in valid_cols]).alias(alias)
 
     mh = mh.with_columns([
-        coalesce_odds_list(["B365H", "B365CH"], "odds_h"),
-        coalesce_odds_list(["B365D", "B365CD"], "odds_d"),
-        coalesce_odds_list(["B365A", "B365CA"], "odds_a"),
-        coalesce_odds_list(["B365>2.5", "B365C>2.5", "Avg>2.5", "BbAv>2.5"], "odds_over"),
-        coalesce_odds_list(["B365<2.5", "B365C<2.5", "Avg<2.5", "BbAv<2.5"], "odds_under"),
+        # Home/Draw/Away odds - prefer B365, then Pinnacle, then average
+        coalesce_odds_list(["B365H", "B365CH", "PSH", "PSCH", "AvgH", "AvgCH"], "odds_h"),
+        coalesce_odds_list(["B365D", "B365CD", "PSD", "PSCD", "AvgD", "AvgCD"], "odds_d"),
+        coalesce_odds_list(["B365A", "B365CA", "PSA", "PSCA", "AvgA", "AvgCA"], "odds_a"),
+        # Over/Under odds
+        coalesce_odds_list(["B365>2.5", "B365C>2.5", "P>2.5", "PC>2.5", "Avg>2.5", "AvgC>2.5", "BbAv>2.5"], "odds_over"),
+        coalesce_odds_list(["B365<2.5", "B365C<2.5", "P<2.5", "PC<2.5", "Avg<2.5", "AvgC<2.5", "BbAv<2.5"], "odds_under"),
     ])
     
     return mh

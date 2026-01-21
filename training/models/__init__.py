@@ -3,17 +3,31 @@
 from training.models.neural_net import (
 	MLP,
 	TrainConfig,
-	residual_market_loss,
+	TaskType,
+	CategoricalConfig,
+	CategoricalEmbedder,
 	residual_market_loss_corr,
+	residual_market_loss_multiclass,
 	batch_corr,
 	logits_conditional_corr,
+	multiclass_batch_corr,
+	multiclass_conditional_corr,
+	_logits,
+	_log_softmax_from_implied,
 )
 
 __all__ = [
 	"MLP",
 	"TrainConfig",
-	"residual_market_loss",
+	"TaskType",
+	"CategoricalConfig",
+	"CategoricalEmbedder",
 	"residual_market_loss_corr",
+	"residual_market_loss_multiclass",
 	"batch_corr",
 	"logits_conditional_corr",
+	"multiclass_batch_corr",
+	"multiclass_conditional_corr",
+	"_logits",
+	"_log_softmax_from_implied",
 ]

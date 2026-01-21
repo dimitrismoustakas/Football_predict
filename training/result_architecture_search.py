@@ -1,5 +1,5 @@
 """
-Joint Architecture & Optimizer Tuning for Over/Under Neural Network
+Joint Architecture & Optimizer Tuning for Result Prediction Neural Network (Home/Draw/Away)
 
 Two-phase hyperparameter search with rolling cross-validation:
 - Phase 1 (Coarse): Joint search over architecture + training params with aggressive pruning
@@ -32,7 +32,7 @@ import torch
 from training.evaluation import evaluate_model
 from training.models import TrainConfig, CategoricalConfig
 from training.train_utils import (
-	add_targets_and_implied,
+	add_targets_and_implied_result,
 	build_hidden_layers,
 	filter_min_history,
 	fold_data_to_loaders,
@@ -42,10 +42,11 @@ from training.train_utils import (
 	load_existing_model,
 	load_frame,
 	precompute_fold_data,
-	prepare_data,
+	prepare_data_result,
 	select_feature_columns,
 	to_loader,
 	train_model,
+	evaluate_implied_baseline,
 )
 
 # ============================================================================
@@ -82,10 +83,12 @@ MODELS_DIR = Path("data/models")
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 os.environ["MLFLOW_TRACKING_URI"] = "mlruns"
-# os.environ["MLFLOW_TRACKING_URI"] = "sqlite:///mlruns.db"
 
 # Device configuration - set once at module level
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Task type for this script
+TASK_TYPE = "multiclass"
 
 # ============================================================================
 # UTILITIES
@@ -176,13 +179,10 @@ def create_joint_objective(
 		scheduler_type = trial.suggest_categorical("scheduler_type", ["plateau", "cosine", "onecycle"])
 		
 		# === Train across all CV folds ===
-		# Note: We don't pass `trial` to train_model to avoid duplicate step reports
-		# when the same epoch is trained across multiple folds. Instead, we report
-		# the mean loss after each fold completes, using fold_idx as the step.
 		fold_losses = []
 		
 		for fold_idx, fold in enumerate(fold_data):
-			train_loader, val_loader = fold_data_to_loaders(fold, batch_size)
+			train_loader, val_loader = fold_data_to_loaders(fold, batch_size, task_type=TASK_TYPE)
 			
 			config = TrainConfig(
 				input_dim=input_dim,
@@ -198,11 +198,11 @@ def create_joint_objective(
 				epochs=max_epochs,
 				patience=patience,
 				batch_size=batch_size,
+				task_type=TASK_TYPE,
 				cat_config=cat_config,
 			)
 			
 			try:
-				# Don't pass trial here - we'll report after fold completes
 				_, _, best_val_loss = train_model(
 					config, train_loader, val_loader, device=DEVICE, trial=None, verbose=False
 				)
@@ -215,7 +215,7 @@ def create_joint_objective(
 					raise optuna.TrialPruned()
 					
 			except optuna.TrialPruned:
-				raise  # Re-raise pruning
+				raise
 			except Exception as e:
 				print(f"  Fold {fold_idx} failed: {e}")
 				return float("inf")
@@ -246,16 +246,17 @@ def run_coarse_search(
 	
 	Uses aggressive Hyperband pruning to efficiently explore.
 	"""
-	print_header("PHASE 1: COARSE JOINT SEARCH")
+	print_header("PHASE 1: COARSE JOINT SEARCH (Result Prediction)")
 	print(f"Trials: {COARSE_TRIALS}")
 	print(f"Epochs: {COARSE_EPOCHS}, Patience: {COARSE_PATIENCE}")
 	print(f"CV Folds: {len(fold_data)}")
 	if cat_config:
 		print(f"Categorical: {cat_config.num_leagues} leagues (embed_dim={cat_config.league_embed_dim})")
 	
-	with mlflow.start_run(run_name="phase1_coarse_search"):
+	with mlflow.start_run(run_name="result_phase1_coarse_search"):
 		mlflow.log_params({
 			"phase": "1_coarse",
+			"task": "result_prediction",
 			"n_trials": COARSE_TRIALS,
 			"max_epochs": COARSE_EPOCHS,
 			"n_folds": len(fold_data),
@@ -282,7 +283,7 @@ def run_coarse_search(
 		study = optuna.create_study(
 			direction="minimize",
 			pruner=pruner,
-			study_name="phase1_coarse",
+			study_name="result_phase1_coarse",
 		)
 		
 		study.optimize(objective, n_trials=COARSE_TRIALS, show_progress_bar=True)
@@ -308,14 +309,12 @@ def extract_refinement_ranges(study: optuna.Study, top_n: int = 20) -> Dict[str,
 	For continuous params (lr, weight_decay): use quartile bounds
 	For categorical params: restrict to values appearing in top trials
 	"""
-	# Get top N completed trials
 	completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
 	top_trials = sorted(completed, key=lambda t: t.value)[:top_n]
 	
 	if len(top_trials) < 5:
 		print(f"Warning: Only {len(top_trials)} completed trials, using all for refinement")
 	
-	# Extract values from top trials
 	lrs = [t.params["lr"] for t in top_trials]
 	wds = [t.params["weight_decay"] for t in top_trials]
 	activations = [t.params["activation"] for t in top_trials]
@@ -323,11 +322,9 @@ def extract_refinement_ranges(study: optuna.Study, top_n: int = 20) -> Dict[str,
 	shapes = [t.params["shape"] for t in top_trials]
 	base_widths = [t.params["base_width"] for t in top_trials]
 	
-	# Compute narrowed ranges
 	lr_range = (np.percentile(lrs, 10), np.percentile(lrs, 90))
 	wd_range = (np.percentile(wds, 10), np.percentile(wds, 90))
 	
-	# For categoricals: keep values appearing in >20% of top trials
 	threshold = max(1, len(top_trials) // 5)
 	
 	def filter_categorical(values):
@@ -361,9 +358,8 @@ def run_refinement_search(
 	
 	Narrowed search space, longer training budget.
 	"""
-	print_header("PHASE 2: REFINEMENT SEARCH")
+	print_header("PHASE 2: REFINEMENT SEARCH (Result Prediction)")
 	
-	# Extract narrowed ranges from coarse search
 	ranges = extract_refinement_ranges(coarse_study, top_n=20)
 	
 	print(f"Trials: {REFINE_TRIALS}")
@@ -375,9 +371,10 @@ def run_refinement_search(
 	print(f"Shapes: {ranges['allowed_shapes']}")
 	print(f"Base widths: {ranges['allowed_base_widths']}")
 	
-	with mlflow.start_run(run_name="phase2_refinement"):
+	with mlflow.start_run(run_name="result_phase2_refinement"):
 		mlflow.log_params({
 			"phase": "2_refine",
+			"task": "result_prediction",
 			"n_trials": REFINE_TRIALS,
 			"max_epochs": REFINE_EPOCHS,
 			"lr_low": ranges["lr_range"][0],
@@ -407,7 +404,7 @@ def run_refinement_search(
 		study = optuna.create_study(
 			direction="minimize",
 			pruner=pruner,
-			study_name="phase2_refine",
+			study_name="result_phase2_refine",
 		)
 		
 		study.optimize(objective, n_trials=REFINE_TRIALS, show_progress_bar=True)
@@ -448,6 +445,7 @@ def extract_config_from_params(params: Dict, input_dim: int, cat_config: Categor
 		epochs=REFINE_EPOCHS,
 		patience=REFINE_PATIENCE,
 		batch_size=params["batch_size"],
+		task_type=TASK_TYPE,
 		cat_config=cat_config,
 	)
 
@@ -466,11 +464,11 @@ def retrain_with_seeds(
 	stopping_epochs = []
 	
 	for seed in seeds:
-		set_seed(seed, deterministic=False)  # Speed during multi-seed eval
+		set_seed(seed, deterministic=False)
 		
 		fold_losses = []
 		for fold in fold_data:
-			train_loader, val_loader = fold_data_to_loaders(fold, config.batch_size)
+			train_loader, val_loader = fold_data_to_loaders(fold, config.batch_size, task_type=TASK_TYPE)
 			
 			_, history, best_val_loss = train_model(
 				config, train_loader, val_loader, device=DEVICE, verbose=False
@@ -496,7 +494,6 @@ def run_multi_seed_evaluation(
 	"""
 	print_header(f"PHASE 3: MULTI-SEED EVALUATION (Top {TOP_K_CONFIGS}, {SEEDS_PER_CONFIG} seeds)")
 	
-	# Get top K completed trials
 	completed = [t for t in refine_study.trials if t.state == optuna.trial.TrialState.COMPLETE]
 	top_trials = sorted(completed, key=lambda t: t.value)[:TOP_K_CONFIGS]
 	
@@ -504,9 +501,10 @@ def run_multi_seed_evaluation(
 	results = []
 	all_stopping_epochs = []
 	
-	with mlflow.start_run(run_name="phase3_multi_seed"):
+	with mlflow.start_run(run_name="result_phase3_multi_seed"):
 		mlflow.log_params({
 			"phase": "3_multi_seed",
+			"task": "result_prediction",
 			"top_k": TOP_K_CONFIGS,
 			"seeds_per_config": SEEDS_PER_CONFIG,
 		})
@@ -531,7 +529,6 @@ def run_multi_seed_evaluation(
 				"all_losses": losses,
 			})
 		
-		# Select best by mean loss
 		best_result = min(results, key=lambda r: r["mean_loss"])
 		median_epochs = int(np.median(all_stopping_epochs))
 		
@@ -567,17 +564,16 @@ def compare_and_save_model(
 	"""
 	Compare new model against existing saved model by evaluating both on test data.
 	
-	Uses Brier score as comparison metric (lower is better).
-	If feature sets differ, re-prepares test data using old model's features and scaler.
+	Uses Log Loss as comparison metric (lower is better).
 	Returns True if new model was saved, False if existing was kept.
 	"""
-	model_path = MODELS_DIR / "over_under_arch_tuned.pt"
-	config_path = MODELS_DIR / "architecture_config.json"
-	scaler_path = MODELS_DIR / "scaler_arch_tuned.joblib"
+	model_path = MODELS_DIR / "result_arch_tuned.pt"
+	config_path = MODELS_DIR / "result_architecture_config.json"
+	scaler_path = MODELS_DIR / "result_scaler_arch_tuned.joblib"
 	
-	existing_model, existing_config = load_existing_model(config_path, model_path, DEVICE)
+	existing_model, existing_config = load_existing_model(config_path, model_path, DEVICE, task_type=TASK_TYPE)
 	
-	new_brier = new_metrics["brier"]
+	new_log_loss = new_metrics["log_loss"]
 	
 	if existing_model is None:
 		print("\nNo existing model found. Saving new model.")
@@ -585,33 +581,31 @@ def compare_and_save_model(
 	else:
 		print("\nEvaluating existing model on test set...")
 		try:
-			# Check if we need to re-prepare data with old features
 			old_feature_cols = existing_config.get("feature_cols") if existing_config else None
 			
 			if old_feature_cols and set(old_feature_cols) != set(feature_cols):
 				print(f"Feature sets differ ({len(old_feature_cols)} vs {len(feature_cols)} features).")
 				print("Re-preparing test data with old model's features and scaler...")
 				old_scaler = joblib.load(scaler_path)
-				data_test_old = prepare_data(df, old_feature_cols, [test_season], scaler=old_scaler)
+				data_test_old = prepare_data_result(df, old_feature_cols, [test_season], scaler=old_scaler)
 			else:
-				# Same features, use new scaler (they should be equivalent)
-				data_test_old = prepare_data(df, feature_cols, [test_season], scaler=data_train["scaler"])
+				data_test_old = prepare_data_result(df, feature_cols, [test_season], scaler=data_train["scaler"])
 			
-			existing_metrics = evaluate_model(existing_model, data_test_old, device=DEVICE, verbose=False)
-			existing_brier = existing_metrics["brier"]
+			existing_metrics = evaluate_model(existing_model, data_test_old, device=DEVICE, verbose=False, task_type=TASK_TYPE)
+			existing_log_loss = existing_metrics["log_loss"]
 			
 			print(f"\n{'='*40}")
 			print("MODEL COMPARISON (on test set)")
 			print(f"{'='*40}")
-			print(f"Existing model Brier: {existing_brier:.5f}")
-			print(f"New model Brier:      {new_brier:.5f}")
+			print(f"Existing model LogLoss: {existing_log_loss:.5f}")
+			print(f"New model LogLoss:      {new_log_loss:.5f}")
 			
-			if new_brier < existing_brier:
-				improvement = (existing_brier - new_brier) / existing_brier * 100
+			if new_log_loss < existing_log_loss:
+				improvement = (existing_log_loss - new_log_loss) / existing_log_loss * 100
 				print(f"New model is BETTER by {improvement:.2f}%")
 				save_new = True
 			else:
-				degradation = (new_brier - existing_brier) / existing_brier * 100
+				degradation = (new_log_loss - existing_log_loss) / existing_log_loss * 100
 				print(f"Existing model is better by {degradation:.2f}%")
 				print("Keeping existing model.")
 				save_new = False
@@ -650,6 +644,8 @@ def compare_and_save_model(
 			"lambda_corr": new_config.lambda_corr,
 			"final_epochs": final_epochs,
 			"feature_cols": feature_cols,
+			"task_type": TASK_TYPE,
+			"output_dim": 3,
 			"cat_config": cat_config_dict,
 		}
 		with open(config_path, "w") as f:
@@ -680,7 +676,7 @@ def train_final_model(
 	3. Retrain on train+final_val for exactly best_epoch epochs (fixed)
 	4. Evaluate once on test (no leakage)
 	"""
-	print_header("PHASE 4: FINAL MODEL TRAINING")
+	print_header("PHASE 4: FINAL MODEL TRAINING (Result Prediction)")
 	
 	# Get all seasons from folds for training+validation
 	all_cv_seasons = set()
@@ -702,15 +698,15 @@ def train_final_model(
 	
 	set_seed(42, deterministic=True)
 	
-	with mlflow.start_run(run_name="phase4_final_model"):
+	with mlflow.start_run(run_name="result_phase4_final_model"):
 		# === Step 1: Train with early stopping on final_val_season ===
 		print("\n--- Step 1: Finding best epoch with early stopping ---")
 		
-		data_initial_train = prepare_data(df, feature_cols, initial_train_seasons, fit_scaler=True)
-		data_final_val = prepare_data(df, feature_cols, [final_val_season], scaler=data_initial_train["scaler"])
+		data_initial_train = prepare_data_result(df, feature_cols, initial_train_seasons, fit_scaler=True)
+		data_final_val = prepare_data_result(df, feature_cols, [final_val_season], scaler=data_initial_train["scaler"])
 		
-		initial_train_loader = to_loader(data_initial_train, config.batch_size, device=DEVICE)
-		final_val_loader = to_loader(data_final_val, config.batch_size, shuffle=False, device=DEVICE)
+		initial_train_loader = to_loader(data_initial_train, config.batch_size, device=DEVICE, task_type=TASK_TYPE)
+		final_val_loader = to_loader(data_final_val, config.batch_size, shuffle=False, device=DEVICE, task_type=TASK_TYPE)
 		
 		# Use generous patience for early stopping
 		early_stop_config = TrainConfig(
@@ -727,6 +723,7 @@ def train_final_model(
 			epochs=REFINE_EPOCHS,  # Use refinement epochs as max
 			patience=REFINE_PATIENCE,
 			batch_size=config.batch_size,
+			task_type=TASK_TYPE,
 			cat_config=cat_config,
 		)
 		
@@ -743,10 +740,10 @@ def train_final_model(
 		print(f"\n--- Step 2: Retraining on all data for {best_epoch} epochs (fixed) ---")
 		
 		# Refit scaler on all training data
-		data_train = prepare_data(df, feature_cols, all_cv_seasons, fit_scaler=True)
-		data_test = prepare_data(df, feature_cols, [test_season], scaler=data_train["scaler"])
+		data_train = prepare_data_result(df, feature_cols, all_cv_seasons, fit_scaler=True)
+		data_test = prepare_data_result(df, feature_cols, [test_season], scaler=data_train["scaler"])
 		
-		train_loader = to_loader(data_train, config.batch_size, device=DEVICE)
+		train_loader = to_loader(data_train, config.batch_size, device=DEVICE, task_type=TASK_TYPE)
 		
 		# Update config for final training (fixed epochs, no early stopping)
 		config.input_dim = data_train["X"].shape[1]
@@ -756,6 +753,7 @@ def train_final_model(
 		
 		mlflow.log_params({
 			"phase": "4_final",
+			"task": "result_prediction",
 			"hidden_layers": str(config.hidden_layers),
 			"activation": config.activation,
 			"norm": config.norm,
@@ -773,25 +771,51 @@ def train_final_model(
 			"has_categorical": cat_config is not None,
 		})
 		
-		print("\nTraining final model...")
+		# === Evaluate baseline (bookmaker implied probabilities) ===
+		print("\n--- Baseline (Bookmaker Implied Probabilities) ---")
+		baseline_metrics = evaluate_implied_baseline(data_test, task_type=TASK_TYPE)
+		print(f"Accuracy: {baseline_metrics['accuracy']:.4f}, Brier: {baseline_metrics['brier']:.4f}, "
+			  f"RPS: {baseline_metrics['rps']:.4f}, LogLoss: {baseline_metrics['log_loss']:.4f}")
 		
-		# Use a dummy val loader (train data) since we're not using early stopping
-		dummy_val_loader = to_loader(data_train, config.batch_size, shuffle=False, device=DEVICE)
+		mlflow.log_metrics({
+			"baseline_accuracy": baseline_metrics["accuracy"],
+			"baseline_brier": baseline_metrics["brier"],
+			"baseline_rps": baseline_metrics["rps"],
+			"baseline_log_loss": baseline_metrics["log_loss"],
+		})
+		
+		print("\n--- Training Final Model ---")
+		
+		# Use a dummy val_loader (train data) since we're not using early stopping
+		dummy_val_loader = to_loader(data_train, config.batch_size, shuffle=False, device=DEVICE, task_type=TASK_TYPE)
 		
 		model, history, _ = train_model(
 			config, train_loader, dummy_val_loader, device=DEVICE, verbose=True
 		)
 		
 		# Evaluate on held-out test
-		print("\nEvaluating on held-out test set...")
-		metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True)
+		print("\n--- Model Performance on Held-out Test Set ---")
+		metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True, task_type=TASK_TYPE)
 		
 		mlflow.log_metrics({
 			"test_accuracy": metrics["accuracy"],
 			"test_brier": metrics["brier"],
+			"test_rps": metrics["rps"],
 			"test_log_loss": metrics["log_loss"],
 			"test_corr": metrics["corr_with_implied"],
 		})
+		
+		# Print comparison with baseline
+		print("\n--- Comparison vs Baseline ---")
+		print(f"{'Metric':<15} {'Baseline':>12} {'Model':>12} {'Diff':>12}")
+		print("-" * 55)
+		for metric in ["accuracy", "brier", "rps", "log_loss"]:
+			baseline_val = baseline_metrics[metric]
+			model_val = metrics[metric]
+			diff = model_val - baseline_val
+			# For accuracy, positive diff is good; for others, negative is good
+			sign = "+" if (diff > 0 and metric == "accuracy") or (diff < 0 and metric != "accuracy") else ""
+			print(f"{metric:<15} {baseline_val:>12.4f} {model_val:>12.4f} {sign}{diff:>11.4f}")
 		
 		# Compare against existing model and save only if better
 		model_saved = compare_and_save_model(
@@ -816,24 +840,25 @@ def train_final_model(
 
 
 def main():
-	"""Main entry point for joint architecture search pipeline."""
-	print_header("JOINT ARCHITECTURE & OPTIMIZER SEARCH PIPELINE")
+	"""Main entry point for result prediction architecture search pipeline."""
+	print_header("RESULT PREDICTION ARCHITECTURE SEARCH PIPELINE")
+	print("Task: Home Win / Draw / Away Win (Multiclass)")
 	
-	print(f"Device: {DEVICE}")
+	print(f"\nDevice: {DEVICE}")
 	if DEVICE.type == "cuda":
 		print(f"GPU: {torch.cuda.get_device_name(0)}")
 	
-	set_seed(42, deterministic=False)  # Speed during search
+	set_seed(42, deterministic=False)
 	
 	# === Load and prepare data ===
 	print(f"\nLoading data from {DEFAULT_PARQUET}")
 	df = load_frame(DEFAULT_PARQUET)
 	df = filter_min_history(df)
-	df = add_targets_and_implied(df)
+	df = add_targets_and_implied_result(df)
 	
-	# Filter to rows with valid odds
-	df = df.drop_nulls(subset=["odds_over", "odds_under"])
-	print(f"Total rows with odds: {len(df)}")
+	# Filter to rows with valid result odds
+	df = df.drop_nulls(subset=["odds_home", "odds_draw", "odds_away"])
+	print(f"Total rows with result odds: {len(df)}")
 	
 	feature_cols = select_feature_columns(df)
 	print(f"Features: {len(feature_cols)} columns")
@@ -855,12 +880,12 @@ def main():
 	
 	# === Precompute scaled data for all folds ===
 	print("\nPrecomputing scaled data for CV folds...")
-	fold_data = precompute_fold_data(df, feature_cols, folds)
+	fold_data = precompute_fold_data(df, feature_cols, folds, task_type=TASK_TYPE)
 	input_dim = fold_data[0]["X_train"].shape[1]
 	print(f"Input dimension: {input_dim}")
 	
 	# === Set up MLflow ===
-	mlflow.set_experiment("joint_architecture_search")
+	mlflow.set_experiment("result_architecture_search")
 	
 	# === Phase 1: Coarse search ===
 	coarse_study = run_coarse_search(fold_data, input_dim, cat_config)

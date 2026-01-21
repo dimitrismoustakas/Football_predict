@@ -69,11 +69,14 @@ def load_model():
 	arch = meta["architecture"]
 	
 	# Build model using imported MLP class
+	# Note: output_dim defaults to 1 for binary classification (over/under)
 	model = MLP(
 		input_dim=len(feature_cols),
 		hidden_layers=arch["hidden_layers"],
 		dropout=arch["dropout"],
 		norm=arch["norm"],
+		activation=arch.get("activation", "relu"),
+		output_dim=arch.get("output_dim", 1),
 	)
 	model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE, weights_only=True))
 	model.to(DEVICE)

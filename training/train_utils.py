@@ -1,5 +1,14 @@
 """
 Training utilities and data preparation functions.
+
+Supports two task types:
+- Binary classification (over/under): 1 implied probability
+- Multiclass classification (home/draw/away): 3 implied probabilities
+
+Categorical features:
+- league_idx: embedded (configurable dim)
+- season_stage: one-hot (early/mid/late)
+- home_promoted, away_promoted: binary
 """
 
 import copy
@@ -14,8 +23,26 @@ import torch.nn as nn
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 
-from training.models.neural_net import MLP, TrainConfig, residual_market_loss_corr
+from training.models.neural_net import (
+	MLP,
+	TrainConfig,
+	TaskType,
+	CategoricalConfig,
+	residual_market_loss_corr,
+	residual_market_loss_multiclass,
+)
 from training.evaluation.metrics import accuracy_score, brier_score_loss, log_loss
+
+
+# ============================================================================
+# CATEGORICAL FEATURE CONSTANTS
+# ============================================================================
+
+# Mapping from season_stage string to index
+SEASON_STAGE_MAP = {"early": 0, "mid": 1, "late": 2}
+
+# Categorical columns expected in the DataFrame
+CAT_COLS = ["league_idx", "season_stage", "home_promoted", "away_promoted"]
 
 
 # ============================================================================
@@ -41,9 +68,17 @@ def select_feature_columns(df: pl.DataFrame) -> List[str]:
 		and (c.endswith("__h") or c.endswith("__a"))
 	]
 	# Add Elo features if present
-	for ec in ["elo_diff", "elo_sum", "elo_mean"]:
-		if ec in cols:
-			feat_cols.append(ec)
+	# for ec in ['opponent_elo_r5__h', 'elo_diff_r5__h', 'opponent_elo_std_r5__h', 'opponent_elo_r5__a', 'elo_diff_r5__a', 'opponent_elo_std_r5__a']:
+	# 	if ec in cols:
+	# 		feat_cols.append(ec)
+	feat_cols.extend(
+		c for c in cols
+		if 'elo' in c and c not in {'home_elo', 'away_elo'}
+	)
+	# Add schedule congestion features if present
+	for sc in ["days_since_last_match__h", "days_since_last_match__a", "games_last_15_days__h", "games_last_15_days__a"]:
+		if sc in cols:
+			feat_cols.append(sc)
 	return sorted(feat_cols)
 
 
@@ -148,7 +183,7 @@ def generate_rolling_cv_folds(
 
 
 def get_test_season(df: pl.DataFrame) -> str:
-	"""Get the held-out test season (second to last, as last is current/future)."""
+	"""Get the held-out test season (current/latest season, even if incomplete)."""
 	seasons = (
 		df.select(pl.col("season").cast(pl.Utf8))
 		.unique()
@@ -158,7 +193,7 @@ def get_test_season(df: pl.DataFrame) -> str:
 	)
 	if len(seasons) < 2:
 		raise ValueError("Need at least 2 seasons to have a test season.")
-	return seasons[-2]
+	return seasons[-1]
 
 
 def build_hidden_layers(
@@ -233,7 +268,7 @@ def build_hidden_layers(
 
 
 def add_targets_and_implied(df: pl.DataFrame) -> pl.DataFrame:
-	"""Add match result and implied probability columns."""
+	"""Add match result and implied probability columns for over/under."""
 	if "Over" not in df.columns:
 		raise ValueError("'Over' column not found; ensure you used build_match_level().")
 
@@ -258,6 +293,78 @@ def add_targets_and_implied(df: pl.DataFrame) -> pl.DataFrame:
 	return df.with_columns((implied_over / norm).alias("implied_over_prob"))
 
 
+def extract_categorical_features(df: pl.DataFrame) -> np.ndarray:
+	"""
+	Extract categorical features as a numpy array.
+	
+	Returns shape (n_rows, 4) with columns:
+		[league_idx, season_stage_idx, home_promoted, away_promoted]
+	
+	Assumes df has columns: league_idx, season_stage, home_promoted, away_promoted
+	"""
+	# Convert season_stage string to index
+	stage_col = df.select(
+		pl.col("season_stage").replace(SEASON_STAGE_MAP).cast(pl.Int64)
+	).to_numpy().flatten()
+	
+	league_idx = df.select("league_idx").to_numpy().flatten().astype(np.int64)
+	home_promoted = df.select("home_promoted").to_numpy().flatten().astype(np.int64)
+	away_promoted = df.select("away_promoted").to_numpy().flatten().astype(np.int64)
+	
+	return np.stack([league_idx, stage_col, home_promoted, away_promoted], axis=1)
+
+
+def get_num_leagues(df: pl.DataFrame) -> int:
+	"""Get the number of unique leagues in the dataset."""
+	return df.select("league_idx").unique().height
+
+
+def add_targets_and_implied_result(df: pl.DataFrame) -> pl.DataFrame:
+	"""
+	Add match result targets and implied probabilities for result prediction.
+	
+	Requires odds columns: odds_h, odds_d, odds_a (or odds_home, odds_draw, odds_away)
+	Adds:
+		- result_label: 0=Home, 1=Draw, 2=Away
+		- implied_home, implied_draw, implied_away: normalized implied probs
+		- odds_home, odds_draw, odds_away: renamed odds columns (if needed)
+	"""
+	# Support both naming conventions
+	if "odds_h" in df.columns and "odds_home" not in df.columns:
+		df = df.with_columns([
+			pl.col("odds_h").alias("odds_home"),
+			pl.col("odds_d").alias("odds_draw"),
+			pl.col("odds_a").alias("odds_away"),
+		])
+	
+	need_odds = ["odds_home", "odds_draw", "odds_away"]
+	missing = [c for c in need_odds if c not in df.columns]
+	if missing:
+		raise ValueError(f"Missing odds columns for result prediction: {missing}")
+	
+	# Create numeric result label
+	df = df.with_columns(
+		pl.when(pl.col("home_goals") > pl.col("away_goals"))
+		.then(pl.lit(0))  # Home win
+		.when(pl.col("home_goals") == pl.col("away_goals"))
+		.then(pl.lit(1))  # Draw
+		.otherwise(pl.lit(2))  # Away win
+		.alias("result_label")
+	)
+	
+	# Compute implied probabilities (normalized to remove overround)
+	implied_home = 1 / pl.col("odds_home")
+	implied_draw = 1 / pl.col("odds_draw")
+	implied_away = 1 / pl.col("odds_away")
+	norm = implied_home + implied_draw + implied_away
+	
+	return df.with_columns([
+		(implied_home / norm).alias("implied_home"),
+		(implied_draw / norm).alias("implied_draw"),
+		(implied_away / norm).alias("implied_away"),
+	])
+
+
 def prepare_data(
 	df: pl.DataFrame,
 	feature_cols: List[str],
@@ -265,12 +372,13 @@ def prepare_data(
 	scaler: StandardScaler = None,
 	fit_scaler: bool = False,
 ) -> Dict[str, np.ndarray]:
-	"""Selects data, scales features, and returns a dictionary of arrays."""
+	"""Selects data, scales features, extracts categorical features, returns a dictionary of arrays."""
 	part = df.filter(pl.col("season").cast(pl.Utf8).is_in(list(season_list)))
 
 	req_cols = list(
 		set(feature_cols)
 		| {"Over", "implied_over_prob", "odds_over", "odds_under", "date"}
+		| set(CAT_COLS)
 	)
 
 	initial_count = len(part)
@@ -293,13 +401,92 @@ def prepare_data(
 		X = scaler.fit_transform(X)
 	elif scaler is not None:
 		X = scaler.transform(X)
+	
+	# Extract categorical features
+	cat_features = extract_categorical_features(part)
 
 	return {
 		"X": X,
 		"y": part.select("Over").to_pandas().values.flatten().astype(int),
 		"implied": part.select("implied_over_prob").to_pandas().values.flatten(),
+		"cat_features": cat_features,
 		"odds_over": part.select("odds_over").to_pandas().values.flatten(),
 		"odds_under": part.select("odds_under").to_pandas().values.flatten(),
+		"dates": part.select("date").to_pandas().values.flatten(),
+		"scaler": scaler,
+	}
+
+
+def prepare_data_result(
+	df: pl.DataFrame,
+	feature_cols: List[str],
+	season_list: List[str],
+	scaler: StandardScaler = None,
+	fit_scaler: bool = False,
+) -> Dict[str, np.ndarray]:
+	"""
+	Prepare data for result prediction (home/draw/away).
+	
+	Returns dict with:
+		- X: scaled features
+		- y: result labels (0=Home, 1=Draw, 2=Away)
+		- implied: shape (n, 3) with [home, draw, away] implied probs
+		- cat_features: shape (n, 4) with [league_idx, stage_idx, home_promoted, away_promoted]
+		- odds_home, odds_draw, odds_away: original odds
+		- dates: match dates
+		- scaler: fitted StandardScaler
+	"""
+	part = df.filter(pl.col("season").cast(pl.Utf8).is_in(list(season_list)))
+	
+	req_cols = list(
+		set(feature_cols)
+		| {"result_label", "implied_home", "implied_draw", "implied_away",
+		   "odds_home", "odds_draw", "odds_away", "date"}
+		| set(CAT_COLS)
+	)
+	
+	initial_count = len(part)
+	part = part.filter(
+		(pl.col("odds_home") > 1.0)
+		& (pl.col("odds_draw") > 1.0)
+		& (pl.col("odds_away") > 1.0)
+		& pl.col("implied_home").is_finite()
+		& pl.col("implied_draw").is_finite()
+		& pl.col("implied_away").is_finite()
+	).drop_nulls(subset=req_cols)
+	final_count = len(part)
+	
+	if initial_count != final_count:
+		print(
+			f"Dropped {initial_count - final_count} rows due to invalid odds/missing data in {season_list}"
+		)
+	
+	X = part.select(feature_cols).to_pandas().values
+	
+	if fit_scaler:
+		scaler = StandardScaler()
+		X = scaler.fit_transform(X)
+	elif scaler is not None:
+		X = scaler.transform(X)
+	
+	# Stack implied probs into shape (n, 3)
+	implied = np.stack([
+		part.select("implied_home").to_pandas().values.flatten(),
+		part.select("implied_draw").to_pandas().values.flatten(),
+		part.select("implied_away").to_pandas().values.flatten(),
+	], axis=1)
+	
+	# Extract categorical features
+	cat_features = extract_categorical_features(part)
+	
+	return {
+		"X": X,
+		"y": part.select("result_label").to_pandas().values.flatten().astype(int),
+		"implied": implied,
+		"cat_features": cat_features,
+		"odds_home": part.select("odds_home").to_pandas().values.flatten(),
+		"odds_draw": part.select("odds_draw").to_pandas().values.flatten(),
+		"odds_away": part.select("odds_away").to_pandas().values.flatten(),
 		"dates": part.select("date").to_pandas().values.flatten(),
 		"scaler": scaler,
 	}
@@ -312,17 +499,19 @@ def to_loader(
 	device: torch.device = None,
 	num_workers: int = 0,
 	pin_memory: bool = None,
+	task_type: TaskType = "binary",
 ) -> DataLoader:
 	"""
 	Convert data dictionary to PyTorch DataLoader.
 	
 	Args:
-		data: Dict with 'X', 'y', 'implied' arrays
+		data: Dict with 'X', 'y', 'implied', 'cat_features' arrays
 		batch_size: Batch size
 		shuffle: Whether to shuffle data
 		device: Target device (for pin_memory default)
 		num_workers: Number of worker processes for data loading
 		pin_memory: Whether to pin memory (defaults to True for CUDA)
+		task_type: "binary" for over/under, "multiclass" for result
 	"""
 	if device is None:
 		device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -330,9 +519,18 @@ def to_loader(
 		pin_memory = device.type == "cuda"
 		
 	tensor_x = torch.tensor(data["X"], dtype=torch.float32)
-	tensor_implied = torch.tensor(data["implied"], dtype=torch.float32).unsqueeze(1)
-	tensor_y = torch.tensor(data["y"], dtype=torch.float32).unsqueeze(1)
-	ds = TensorDataset(tensor_x, tensor_implied, tensor_y)
+	tensor_cat = torch.tensor(data["cat_features"], dtype=torch.long)
+	
+	if task_type == "binary":
+		# implied is shape (n,) -> (n, 1)
+		tensor_implied = torch.tensor(data["implied"], dtype=torch.float32).unsqueeze(1)
+		tensor_y = torch.tensor(data["y"], dtype=torch.float32).unsqueeze(1)
+	else:
+		# multiclass: implied is shape (n, 3), y is class label
+		tensor_implied = torch.tensor(data["implied"], dtype=torch.float32)
+		tensor_y = torch.tensor(data["y"], dtype=torch.long)
+	
+	ds = TensorDataset(tensor_x, tensor_cat, tensor_implied, tensor_y)
 	return DataLoader(
 		ds, 
 		batch_size=batch_size, 
@@ -346,8 +544,11 @@ def to_loader(
 # CV FOLD DATA CACHING
 # ============================================================================
 
-# Optimal settings for data loading (benchmark tested)
-OPTIMAL_NUM_WORKERS = 4
+# Optimal settings for data loading
+# NOTE: On Windows, multiprocessing spawn overhead makes num_workers > 0 slow
+# for small datasets. Using 0 workers is ~20x faster for our data size.
+import sys
+OPTIMAL_NUM_WORKERS = 0 if sys.platform == "win32" else 4
 PIN_MEMORY = torch.cuda.is_available()
 
 
@@ -355,6 +556,7 @@ def precompute_fold_data(
 	df: pl.DataFrame,
 	feature_cols: List[str],
 	folds: List[Tuple[List[str], str]],
+	task_type: TaskType = "binary",
 ) -> List[Dict[str, Any]]:
 	"""
 	Precompute scaled train/val data for each CV fold.
@@ -362,38 +564,58 @@ def precompute_fold_data(
 	Called ONCE before Optuna search to avoid refitting scalers on every trial.
 	Each trial only needs to wrap DataLoaders with the appropriate batch size.
 	
+	Args:
+		df: DataFrame with features and targets
+		feature_cols: List of feature column names
+		folds: List of (train_seasons, val_season) tuples
+		task_type: "binary" for over/under, "multiclass" for result
+	
 	Returns:
 		List of dicts, one per fold, each containing:
-		- X_train, y_train, implied_train: scaled training arrays
-		- X_val, y_val, implied_val, odds_over_val, odds_under_val, dates_val
+		- X_train, y_train, implied_train, cat_train: scaled training arrays
+		- X_val, y_val, implied_val, cat_val, odds columns, dates_val
 		- scaler: fitted StandardScaler for this fold
 		- train_seasons, val_season: for reference
+		- task_type: the task type for this fold data
 	"""
 	fold_data = []
+	prepare_fn = prepare_data if task_type == "binary" else prepare_data_result
 	
 	for fold_idx, (train_seasons, val_season) in enumerate(folds):
 		print(f"  Fold {fold_idx}: train={train_seasons[0]}..{train_seasons[-1]}, val={val_season}")
 		
 		# Prepare training data (fits scaler)
-		data_train = prepare_data(df, feature_cols, train_seasons, fit_scaler=True)
+		data_train = prepare_fn(df, feature_cols, train_seasons, fit_scaler=True)
 		
 		# Prepare validation data (uses fitted scaler)
-		data_val = prepare_data(df, feature_cols, [val_season], scaler=data_train["scaler"])
+		data_val = prepare_fn(df, feature_cols, [val_season], scaler=data_train["scaler"])
 		
-		fold_data.append({
+		fold_dict = {
 			"X_train": data_train["X"],
 			"y_train": data_train["y"],
 			"implied_train": data_train["implied"],
+			"cat_train": data_train["cat_features"],
 			"X_val": data_val["X"],
 			"y_val": data_val["y"],
 			"implied_val": data_val["implied"],
-			"odds_over_val": data_val["odds_over"],
-			"odds_under_val": data_val["odds_under"],
+			"cat_val": data_val["cat_features"],
 			"dates_val": data_val["dates"],
 			"scaler": data_train["scaler"],
 			"train_seasons": train_seasons,
 			"val_season": val_season,
-		})
+			"task_type": task_type,
+		}
+		
+		# Add task-specific odds columns
+		if task_type == "binary":
+			fold_dict["odds_over_val"] = data_val["odds_over"]
+			fold_dict["odds_under_val"] = data_val["odds_under"]
+		else:
+			fold_dict["odds_home_val"] = data_val["odds_home"]
+			fold_dict["odds_draw_val"] = data_val["odds_draw"]
+			fold_dict["odds_away_val"] = data_val["odds_away"]
+		
+		fold_data.append(fold_dict)
 	
 	return fold_data
 
@@ -402,34 +624,49 @@ def fold_data_to_loaders(
 	fold: Dict[str, Any],
 	batch_size: int,
 	device: torch.device = None,
+	task_type: TaskType = None,
 ) -> Tuple[DataLoader, DataLoader]:
 	"""
 	Convert precomputed fold data to DataLoaders with specified batch size.
 	
 	Fast because data is already scaled - just wraps in tensors.
 	Uses optimized num_workers and pin_memory settings.
+	
+	Args:
+		fold: Precomputed fold data dict
+		batch_size: Batch size for DataLoaders
+		device: Target device
+		task_type: Override task type (defaults to fold's task_type)
 	"""
 	if device is None:
 		device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+	
+	# Use fold's task_type if not overridden
+	if task_type is None:
+		task_type = fold.get("task_type", "binary")
 	
 	train_data = {
 		"X": fold["X_train"],
 		"y": fold["y_train"],
 		"implied": fold["implied_train"],
+		"cat_features": fold["cat_train"],
 	}
 	train_loader = to_loader(
 		train_data, batch_size, shuffle=True, device=device,
-		num_workers=OPTIMAL_NUM_WORKERS, pin_memory=PIN_MEMORY
+		num_workers=OPTIMAL_NUM_WORKERS, pin_memory=PIN_MEMORY,
+		task_type=task_type,
 	)
 	
 	val_data = {
 		"X": fold["X_val"],
 		"y": fold["y_val"],
 		"implied": fold["implied_val"],
+		"cat_features": fold["cat_val"],
 	}
 	val_loader = to_loader(
 		val_data, batch_size, shuffle=False, device=device,
-		num_workers=OPTIMAL_NUM_WORKERS, pin_memory=PIN_MEMORY
+		num_workers=OPTIMAL_NUM_WORKERS, pin_memory=PIN_MEMORY,
+		task_type=task_type,
 	)
 	
 	return train_loader, val_loader
@@ -437,14 +674,25 @@ def fold_data_to_loaders(
 
 def get_val_data_dict(fold: Dict[str, Any]) -> Dict[str, np.ndarray]:
 	"""Extract validation data in format expected by evaluate_model."""
-	return {
+	task_type = fold.get("task_type", "binary")
+	
+	result = {
 		"X": fold["X_val"],
 		"y": fold["y_val"],
 		"implied": fold["implied_val"],
-		"odds_over": fold["odds_over_val"],
-		"odds_under": fold["odds_under_val"],
+		"cat_features": fold["cat_val"],
 		"dates": fold["dates_val"],
 	}
+	
+	if task_type == "binary":
+		result["odds_over"] = fold["odds_over_val"]
+		result["odds_under"] = fold["odds_under_val"]
+	else:
+		result["odds_home"] = fold["odds_home_val"]
+		result["odds_draw"] = fold["odds_draw_val"]
+		result["odds_away"] = fold["odds_away_val"]
+	
+	return result
 
 
 # ============================================================================
@@ -527,6 +775,9 @@ def train_model(
 ) -> Tuple:
 	"""
 	Train model with early stopping.
+	
+	Supports both binary (over/under) and multiclass (result) tasks based on config.task_type.
+	
 	Returns (model, history, best_val_loss)
 	"""
 	if device is None:
@@ -535,8 +786,14 @@ def train_model(
 	from .models.neural_net import MLP
 
 	activation = getattr(config, "activation", "relu")
+	task_type = getattr(config, "task_type", "binary")
+	cat_config = getattr(config, "cat_config", None)
+	output_dim = 1 if task_type == "binary" else 3
+	
 	model = MLP(
-		config.input_dim, config.hidden_layers, config.dropout, config.norm, activation
+		config.input_dim, config.hidden_layers, config.dropout, config.norm, activation,
+		output_dim=output_dim,
+		cat_config=cat_config,
 	).to(device)
 	optimizer = torch.optim.AdamW(
 		model.parameters(), lr=config.lr, weight_decay=config.weight_decay
@@ -551,6 +808,12 @@ def train_model(
 		lr=config.lr,
 	)
 	early_stopping = EarlyStopping(patience=config.patience, min_delta=1e-4)
+	
+	# Select loss function based on task type
+	if task_type == "binary":
+		loss_fn = residual_market_loss_corr
+	else:
+		loss_fn = residual_market_loss_multiclass
 
 	history = {"train_loss": [], "val_loss": []}
 
@@ -558,14 +821,15 @@ def train_model(
 		# Training phase
 		model.train()
 		total_loss = 0.0
-		for batch_x, batch_implied, batch_y in train_loader:
+		for batch_x, batch_cat, batch_implied, batch_y in train_loader:
 			batch_x = batch_x.to(device)
+			batch_cat = batch_cat.to(device)
 			batch_implied = batch_implied.to(device)
 			batch_y = batch_y.to(device)
 
 			optimizer.zero_grad()
-			residual_logits = model(batch_x)
-			loss = residual_market_loss_corr(
+			residual_logits = model(batch_x, batch_cat if cat_config else None)
+			loss = loss_fn(
 				residual_logits,
 				batch_implied,
 				batch_y,
@@ -587,10 +851,10 @@ def train_model(
 		model.eval()
 		val_loss = 0.0
 		with torch.no_grad():
-			for bx, bi, by in val_loader:
-				bx, bi, by = bx.to(device), bi.to(device), by.to(device)
-				residual_logits = model(bx)
-				loss = residual_market_loss_corr(
+			for bx, bc, bi, by in val_loader:
+				bx, bc, bi, by = bx.to(device), bc.to(device), bi.to(device), by.to(device)
+				residual_logits = model(bx, bc if cat_config else None)
+				loss = loss_fn(
 					residual_logits,
 					bi,
 					by,
@@ -636,30 +900,62 @@ def train_model(
 	early_stopping.load_best_weights(model)
 	return model, history, early_stopping.best_loss
 
-def evaluate_implied_baseline(data: Dict[str, np.ndarray]) -> Dict:
-	"""Evaluate market implied probabilities as baseline predictions."""
+
+def evaluate_implied_baseline(data: Dict[str, np.ndarray], task_type: TaskType = "binary") -> Dict:
+	"""
+	Evaluate market implied probabilities as baseline predictions.
+	
+	Args:
+		data: Dict with 'implied' and 'y' arrays
+		task_type: "binary" for over/under, "multiclass" for result
+	"""
+	from training.evaluation.metrics import ranked_probability_score
+	
 	implied_probs = data["implied"]
 	y_true = data["y"]
 	
-	preds = (implied_probs >= 0.5).astype(int)
-	acc = accuracy_score(y_true, preds)
-	brier = brier_score_loss(y_true, implied_probs)
-	ll = log_loss(y_true, np.c_[1 - implied_probs, implied_probs], labels=[0, 1])
-	
-	return {
-		"accuracy": float(acc),
-		"brier": float(brier),
-		"log_loss": float(ll),
-	}
+	if task_type == "binary":
+		preds = (implied_probs >= 0.5).astype(int)
+		acc = accuracy_score(y_true, preds)
+		brier = brier_score_loss(y_true, implied_probs)
+		ll = log_loss(y_true, np.c_[1 - implied_probs, implied_probs], labels=[0, 1])
+		return {
+			"accuracy": float(acc),
+			"brier": float(brier),
+			"log_loss": float(ll),
+		}
+	else:
+		# Multiclass: implied is shape (n, 3)
+		preds = np.argmax(implied_probs, axis=1)
+		acc = accuracy_score(y_true, preds)
+		# Brier for multiclass: mean squared error of one-hot vs probs
+		n_classes = 3
+		y_onehot = np.eye(n_classes)[y_true]
+		brier = np.mean(np.sum((implied_probs - y_onehot) ** 2, axis=1))
+		ll = log_loss(y_true, implied_probs, labels=[0, 1, 2])
+		rps = ranked_probability_score(y_true, implied_probs)
+		return {
+			"accuracy": float(acc),
+			"brier": float(brier),
+			"rps": float(rps),
+			"log_loss": float(ll),
+		}
 
 
 def load_existing_model(
 	config_path: Path,
 	model_path: Path,
 	device: torch.device,
+	task_type: TaskType = "binary",
 ) -> Tuple[nn.Module, Dict]:
 	"""
 	Load existing model from disk if it exists.
+	
+	Args:
+		config_path: Path to config JSON file
+		model_path: Path to model weights
+		device: Target device
+		task_type: "binary" for over/under, "multiclass" for result
 	
 	Returns (model, config_dict) or (None, None) if not found.
 	"""
@@ -670,12 +966,25 @@ def load_existing_model(
 	with open(config_path) as f:
 		config_dict = json.load(f)
 	
+	output_dim = config_dict.get("output_dim", 1 if task_type == "binary" else 3)
+	
+	# Reconstruct categorical config if present
+	cat_config = None
+	if "cat_config" in config_dict and config_dict["cat_config"] is not None:
+		cat_config = CategoricalConfig(
+			num_leagues=config_dict["cat_config"]["num_leagues"],
+			league_embed_dim=config_dict["cat_config"]["league_embed_dim"],
+			num_season_stages=config_dict["cat_config"]["num_season_stages"],
+		)
+	
 	model = MLP(
 		input_dim=config_dict["input_dim"],
 		hidden_layers=config_dict["hidden_layers"],
 		dropout=config_dict["dropout"],
 		norm=config_dict["norm"],
 		activation=config_dict["activation"],
+		output_dim=output_dim,
+		cat_config=cat_config,
 	).to(device)
 	
 	model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
