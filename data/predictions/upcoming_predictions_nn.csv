@@ -1,0 +1,10 @@
+Date,Time,Home,Away,Prob_Over,Prob_Under,Implied_Over,Implied_Under,Odds_Over,Odds_Under,Model_Odds_Over,Model_Odds_Under,Bet_Side,EV,Allocation_Pct
+2025-12-13,15:00,Liverpool,Brighton,0.595,0.405,0.612,0.388,1.57,2.48,1.68,2.47,Under,0.0035,0.82
+2025-12-13,15:00,Chelsea,Everton,0.509,0.491,0.508,0.492,1.94,2.0,1.96,2.04,Over,-0.0117,0.0
+2025-12-13,17:30,Burnley,Fulham,0.515,0.485,0.47,0.53,2.1,1.86,1.94,2.06,Over,0.0805,25.52
+2025-12-13,20:00,Arsenal,Wolverhampton Wanderers,0.556,0.444,0.573,0.427,1.72,2.31,1.8,2.25,Under,0.0262,6.96
+2025-12-14,14:00,West Ham,Aston Villa,0.568,0.432,0.524,0.476,1.88,2.07,1.76,2.32,Over,0.0684,27.56
+2025-12-14,14:00,Crystal Palace,Manchester City,0.56,0.44,0.551,0.449,1.79,2.2,1.79,2.27,Over,0.0018,0.78
+2025-12-14,14:00,Sunderland,Newcastle United,0.547,0.453,0.492,0.508,2.0,1.94,1.83,2.21,Over,0.0936,33.0
+2025-12-14,14:00,Nottingham Forest,Tottenham,0.492,0.508,0.508,0.492,1.94,2.0,2.03,1.97,Under,0.0153,5.36
+2025-12-15,20:00,Manchester United,Bournemouth,0.605,0.395,0.598,0.402,1.65,2.45,1.65,2.53,Over,-0.002,0.0

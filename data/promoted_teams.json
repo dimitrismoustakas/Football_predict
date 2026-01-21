@@ -1,0 +1,304 @@
+{
+	"_description": "Promoted teams per league per season. 2014/2015 is manually seeded. Other seasons are computed from historical data (teams not present in previous season).",
+	"_leagues": {
+		"ENG-Premier League": "England Premier League",
+		"FRA-Ligue 1": "France Ligue 1",
+		"GER-Bundesliga": "Germany Bundesliga",
+		"ESP-La Liga": "Spain La Liga",
+		"ITA-Serie A": "Italy Serie A"
+	},
+	"FRA-Ligue 1": {
+		"1415": [
+			"Metz",
+			"Lens",
+			"Caen"
+		],
+		"1516": [
+			"Angers",
+			"GFC Ajaccio",
+			"Troyes"
+		],
+		"1617": [
+			"Dijon",
+			"Metz",
+			"Nancy"
+		],
+		"1718": [
+			"Amiens",
+			"Strasbourg",
+			"Troyes"
+		],
+		"1819": [
+			"Nimes",
+			"Reims"
+		],
+		"1920": [
+			"Brest",
+			"Metz"
+		],
+		"2021": [
+			"Lens",
+			"Lorient"
+		],
+		"2122": [
+			"Clermont Foot",
+			"Troyes"
+		],
+		"2223": [
+			"Ajaccio",
+			"Auxerre",
+			"Toulouse"
+		],
+		"2324": [
+			"Le Havre",
+			"Metz"
+		],
+		"2425": [
+			"Angers",
+			"Auxerre",
+			"Saint-Etienne"
+		],
+		"2526": [
+			"Lorient",
+			"Metz",
+			"Paris FC"
+		]
+	},
+	"ESP-La Liga": {
+		"1415": [
+			"Eibar",
+			"Deportivo La Coruna",
+			"Cordoba"
+		],
+		"1516": [
+			"Las Palmas",
+			"Real Betis",
+			"Sporting Gijon"
+		],
+		"1617": [
+			"Alaves",
+			"Leganes",
+			"Osasuna"
+		],
+		"1718": [
+			"Getafe",
+			"Girona",
+			"Levante"
+		],
+		"1819": [
+			"Rayo Vallecano",
+			"Real Valladolid",
+			"SD Huesca"
+		],
+		"1920": [
+			"Granada",
+			"Mallorca",
+			"Osasuna"
+		],
+		"2021": [
+			"Cadiz",
+			"Elche",
+			"SD Huesca"
+		],
+		"2122": [
+			"Espanyol",
+			"Mallorca",
+			"Rayo Vallecano"
+		],
+		"2223": [
+			"Almeria",
+			"Girona",
+			"Real Valladolid"
+		],
+		"2324": [
+			"Alaves",
+			"Granada",
+			"Las Palmas"
+		],
+		"2425": [
+			"Espanyol",
+			"Leganes",
+			"Real Valladolid"
+		],
+		"2526": [
+			"Elche",
+			"Levante",
+			"Real Oviedo"
+		]
+	},
+	"GER-Bundesliga": {
+		"1415": [
+			"FC Cologne",
+			"Paderborn"
+		],
+		"1516": [
+			"Darmstadt",
+			"Ingolstadt"
+		],
+		"1617": [
+			"Freiburg",
+			"RasenBallsport Leipzig"
+		],
+		"1718": [
+			"Hannover 96",
+			"VfB Stuttgart"
+		],
+		"1819": [
+			"Fortuna Duesseldorf",
+			"Nuernberg"
+		],
+		"1920": [
+			"FC Cologne",
+			"Paderborn",
+			"Union Berlin"
+		],
+		"2021": [
+			"Arminia Bielefeld",
+			"VfB Stuttgart"
+		],
+		"2122": [
+			"Bochum",
+			"Greuther Fuerth"
+		],
+		"2223": [
+			"Schalke 04",
+			"Werder Bremen"
+		],
+		"2324": [
+			"Darmstadt",
+			"FC Heidenheim"
+		],
+		"2425": [
+			"Holstein Kiel",
+			"St. Pauli"
+		],
+		"2526": [
+			"FC Cologne",
+			"Hamburger SV"
+		]
+	},
+	"ENG-Premier League": {
+		"1415": [
+			"Leicester",
+			"Burnley",
+			"Queens Park Rangers"
+		],
+		"1516": [
+			"Bournemouth",
+			"Norwich",
+			"Watford"
+		],
+		"1617": [
+			"Burnley",
+			"Hull",
+			"Middlesbrough"
+		],
+		"1718": [
+			"Brighton",
+			"Huddersfield",
+			"Newcastle United"
+		],
+		"1819": [
+			"Cardiff",
+			"Fulham",
+			"Wolverhampton Wanderers"
+		],
+		"1920": [
+			"Aston Villa",
+			"Norwich",
+			"Sheffield United"
+		],
+		"2021": [
+			"Fulham",
+			"Leeds",
+			"West Bromwich Albion"
+		],
+		"2122": [
+			"Brentford",
+			"Norwich",
+			"Watford"
+		],
+		"2223": [
+			"Bournemouth",
+			"Fulham",
+			"Nottingham Forest"
+		],
+		"2324": [
+			"Burnley",
+			"Luton",
+			"Sheffield United"
+		],
+		"2425": [
+			"Ipswich",
+			"Leicester",
+			"Southampton"
+		],
+		"2526": [
+			"Burnley",
+			"Leeds",
+			"Sunderland"
+		]
+	},
+	"ITA-Serie A": {
+		"1415": [
+			"Palermo",
+			"Empoli",
+			"Cesena"
+		],
+		"1516": [
+			"Bologna",
+			"Carpi",
+			"Frosinone"
+		],
+		"1617": [
+			"Cagliari",
+			"Crotone",
+			"Pescara"
+		],
+		"1718": [
+			"Benevento",
+			"SPAL 2013",
+			"Verona"
+		],
+		"1819": [
+			"Empoli",
+			"Frosinone",
+			"Parma Calcio 1913"
+		],
+		"1920": [
+			"Brescia",
+			"Lecce",
+			"Verona"
+		],
+		"2021": [
+			"Benevento",
+			"Crotone",
+			"Spezia"
+		],
+		"2122": [
+			"Empoli",
+			"Salernitana",
+			"Venezia"
+		],
+		"2223": [
+			"Cremonese",
+			"Lecce",
+			"Monza"
+		],
+		"2324": [
+			"Cagliari",
+			"Frosinone",
+			"Genoa"
+		],
+		"2425": [
+			"Como",
+			"Parma Calcio 1913",
+			"Venezia"
+		],
+		"2526": [
+			"Cremonese",
+			"Pisa",
+			"Sassuolo"
+		]
+	}
+}

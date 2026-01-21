@@ -11,13 +11,8 @@ wheels/
 .venv
 
 # Folders
-data/
-test_scripts/
-
-# Odds cache (API responses)
-data/prod/odds/
+secrets/
 
 # Files
-main.py
 .env
 mlruns/
