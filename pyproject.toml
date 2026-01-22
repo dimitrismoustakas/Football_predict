@@ -18,8 +18,8 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-soccerdata = { git = "ssh://git@github.com/dimitrismoustakas/soccerdata.git", rev = "understat-fix" }
 torch = { index = "pytorch-cu124" }
+soccerdata = { git = "https://github.com/probberechts/soccerdata.git" }
 
 [[tool.uv.index]]
 name = "pytorch-cu124"

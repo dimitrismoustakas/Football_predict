@@ -887,7 +887,9 @@ def train_model(
 
 		# Optuna pruning
 		if trial is not None:
-			trial.report(avg_val_loss, epoch)
+			# Report best-so-far to avoid pruning on transient loss spikes
+			# (e.g., overfitting after hitting a good minimum).
+			trial.report(min(history["val_loss"]), epoch)
 			if trial.should_prune():
 				import optuna
 				raise optuna.TrialPruned()

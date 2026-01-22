@@ -176,12 +176,14 @@ def create_joint_objective(
 		scheduler_type = trial.suggest_categorical("scheduler_type", ["plateau", "cosine", "onecycle"])
 		
 		# === Train across all CV folds ===
-		# Note: We don't pass `trial` to train_model to avoid duplicate step reports
-		# when the same epoch is trained across multiple folds. Instead, we report
-		# the mean loss after each fold completes, using fold_idx as the step.
+		# Use epoch-level reporting for pruning, but only on the first (most-recent)
+		# fold to avoid duplicate/non-monotonic step reporting across folds.
 		fold_losses = []
-		
-		for fold_idx, fold in enumerate(fold_data):
+
+		# Evaluate most-recent validation season first (best signal for pruning).
+		folds_for_objective = list(reversed(fold_data))
+
+		for fold_idx, fold in enumerate(folds_for_objective):
 			train_loader, val_loader = fold_data_to_loaders(fold, batch_size)
 			
 			config = TrainConfig(
@@ -202,17 +204,12 @@ def create_joint_objective(
 			)
 			
 			try:
-				# Don't pass trial here - we'll report after fold completes
+				# Prune only on the first fold (epoch-level).
+				trial_for_fold = trial if fold_idx == 0 else None
 				_, _, best_val_loss = train_model(
-					config, train_loader, val_loader, device=DEVICE, trial=None, verbose=False
+					config, train_loader, val_loader, device=DEVICE, trial=trial_for_fold, verbose=False
 				)
 				fold_losses.append(best_val_loss)
-				
-				# Report running mean after each fold for intermediate pruning
-				running_mean = np.mean(fold_losses)
-				trial.report(running_mean, fold_idx)
-				if trial.should_prune():
-					raise optuna.TrialPruned()
 					
 			except optuna.TrialPruned:
 				raise  # Re-raise pruning
@@ -587,15 +584,18 @@ def compare_and_save_model(
 		try:
 			# Check if we need to re-prepare data with old features
 			old_feature_cols = existing_config.get("feature_cols") if existing_config else None
+			old_scaler = joblib.load(scaler_path) if scaler_path.exists() else None
 			
 			if old_feature_cols and set(old_feature_cols) != set(feature_cols):
 				print(f"Feature sets differ ({len(old_feature_cols)} vs {len(feature_cols)} features).")
 				print("Re-preparing test data with old model's features and scaler...")
-				old_scaler = joblib.load(scaler_path)
+				if old_scaler is None:
+					raise FileNotFoundError(f"Missing saved scaler for existing model: {scaler_path}")
 				data_test_old = prepare_data(df, old_feature_cols, [test_season], scaler=old_scaler)
 			else:
-				# Same features, use new scaler (they should be equivalent)
-				data_test_old = prepare_data(df, feature_cols, [test_season], scaler=data_train["scaler"])
+				# Same features: evaluate existing model with its saved scaler if available.
+				scaler_for_existing = old_scaler if old_scaler is not None else data_train["scaler"]
+				data_test_old = prepare_data(df, feature_cols, [test_season], scaler=scaler_for_existing)
 			
 			existing_metrics = evaluate_model(existing_model, data_test_old, device=DEVICE, verbose=False)
 			existing_brier = existing_metrics["brier"]
