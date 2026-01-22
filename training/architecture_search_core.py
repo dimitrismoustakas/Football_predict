@@ -181,6 +181,10 @@ def create_joint_objective(
 		scheduler_type = trial.suggest_categorical("scheduler_type", ["plateau", "cosine", "onecycle"])
 		
 		fold_losses = []
+		# Reverse folds so that fold 0 is the most recent validation season.
+		# This is intentional: pruning is only applied on fold 0, and we want
+		# pruning decisions to be based on the fold most similar to the deployment/test distribution.
+		# See ARCHITECTURE_SEARCH_ISSUES.txt for rationale.
 		folds_for_objective = list(reversed(fold_data))
 
 		for fold_idx, fold in enumerate(folds_for_objective):
