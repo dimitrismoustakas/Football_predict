@@ -93,48 +93,6 @@ def filter_min_history(df: pl.DataFrame) -> pl.DataFrame:
 	)
 
 
-def train_test_season_splits(df: pl.DataFrame) -> Tuple[List[str], str, str]:
-	"""Split seasons into train/validation/test sets."""
-	seasons = (
-		df.select(pl.col("season").cast(pl.Utf8))
-		.unique()
-		.sort(by="season")
-		.to_series()
-		.to_list()
-	)
-	if len(seasons) < 3:
-		raise ValueError("Need at least 3 seasons to create the requested splits.")
-	current = seasons[-1]
-	previous = seasons[-2]
-	train = seasons[:-2]
-	return train, previous, current
-
-
-def train_test_season_splits_arch_search(df: pl.DataFrame) -> Tuple[List[str], str, str]:
-	"""
-	Split seasons for architecture search.
-	Uses last season of 'normal train' as validation.
-	Returns: (train_seasons, val_season, test_season)
-	- train: seasons[:-3] (all except last 3)
-	- val: seasons[-3] (third from last, i.e., last of normal train)
-	- test: seasons[-2] (second from last, held out)
-	- seasons[-1] is current/future season, not used
-	"""
-	seasons = (
-		df.select(pl.col("season").cast(pl.Utf8))
-		.unique()
-		.sort(by="season")
-		.to_series()
-		.to_list()
-	)
-	if len(seasons) < 4:
-		raise ValueError("Need at least 4 seasons for architecture search splits.")
-	train = seasons[:-3]
-	val = seasons[-3]
-	test = seasons[-2]
-	return train, val, test
-
-
 def generate_rolling_cv_folds(
 	df: pl.DataFrame, n_folds: int = 3
 ) -> List[Tuple[List[str], str]]:
