@@ -10,10 +10,18 @@ from preprocessing.feature_engineering import (
     rename_and_cast,
     build_long,
     compute_rolling_features,
+    compute_opponent_baselines,
+    join_opponent_baselines,
+    compute_adjusted_stats,
+    compute_adjusted_rolling_features,
     build_match_level,
 )
 from preprocessing.odds_integration import load_match_history_and_map, join_odds
 from preprocessing.elo_integration import merge_elo_features
+from preprocessing.player_feature_engineering import (
+    load_all_player_data,
+    build_player_team_features,
+)
 
 # ---------- Config ----------
 INPUT_GLOB = "data/understat/*/*/matches.parquet"
@@ -69,6 +77,9 @@ def main():
         "date",
         "home_team",
         "away_team",
+        "home_team_id",
+        "away_team_id",
+        "game_id",
         "home_goals",
         "away_goals",
         "home_xg",
@@ -105,12 +116,67 @@ def main():
 
     # Rolling features (within league+season; shift(1) prevents leakage)
     long_feats = compute_rolling_features(long_df)
+    
+    # Opponent-adjusted features
+    # 1. Compute each team's baseline stats (what they typically produce/concede)
+    long_feats = compute_opponent_baselines(long_feats)
+    # 2. Join opponent's baselines to each row
+    long_feats = join_opponent_baselines(long_feats)
+    # 3. Calculate adjusted stats (actual / expected based on opponent)
+    long_feats = compute_adjusted_stats(long_feats)
+    # 4. Compute rolling averages of adjusted stats
+    long_feats = compute_adjusted_rolling_features(long_feats)
 
     # Rejoin to match level and write
     final_df = build_match_level(base_matches, long_feats)
+    
+    # Add player-derived team features
+    print("Building player-derived team features...")
+    player_df = load_all_player_data()
+    player_team_features = build_player_team_features(player_df)
+    
+    # Join player features for home team
+    player_feature_cols = [c for c in player_team_features.columns if "_r15" in c or "_r5_sum" in c]
+    home_player_feats = player_team_features.select(
+        ["league", "team_id", "game_id"] + player_feature_cols
+    ).rename({"team_id": "home_team_id"})
+    home_player_feats = home_player_feats.rename({col: f"home_{col}" for col in player_feature_cols})
+    
+    # Join player features for away team  
+    away_player_feats = player_team_features.select(
+        ["league", "team_id", "game_id"] + player_feature_cols
+    ).rename({"team_id": "away_team_id"})
+    away_player_feats = away_player_feats.rename({col: f"away_{col}" for col in player_feature_cols})
+    
+    # Collect final_df for joining
+    final_df_collected = final_df.collect()
+    
+    # Check if we have the necessary columns for joining
+    if "home_team_id" in final_df_collected.columns and "away_team_id" in final_df_collected.columns:
+        print(f"Joining {len(player_feature_cols)} player features for home and away teams...")
+        
+        # Cast league to string to match player features (which uses str)
+        final_df_collected = final_df_collected.with_columns(
+            pl.col("league").cast(pl.Utf8)
+        )
+        
+        final_df_collected = final_df_collected.join(
+            home_player_feats,
+            left_on=["league", "home_team_id", "game_id"],
+            right_on=["league", "home_team_id", "game_id"],
+            how="left"
+        ).join(
+            away_player_feats,
+            left_on=["league", "away_team_id", "game_id"],
+            right_on=["league", "away_team_id", "game_id"],
+            how="left"
+        )
+        print(f"Added player features: home columns = {len([c for c in final_df_collected.columns if c.startswith('home_') and '_r15' in c])}")
+    else:
+        print("Warning: Missing team_id columns, skipping player feature join")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    final_df.collect().write_parquet(OUTPUT_PARQUET, compression="zstd")
+    final_df_collected.write_parquet(OUTPUT_PARQUET, compression="zstd")
     print(f"Wrote: {OUTPUT_PARQUET}")
 
 

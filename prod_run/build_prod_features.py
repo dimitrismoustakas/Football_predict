@@ -14,6 +14,10 @@ from preprocessing.feature_engineering import (
     rename_and_cast,
     build_long,
     compute_rolling_features,
+    compute_opponent_baselines,
+    join_opponent_baselines,
+    compute_adjusted_stats,
+    compute_adjusted_rolling_features,
     build_match_level,
 )
 from preprocessing.odds_integration import load_match_history_and_map, join_odds
@@ -220,6 +224,12 @@ def main():
 
     # Rolling features (within league+season; shift(1) prevents leakage)
     long_feats = compute_rolling_features(long_df)
+    
+    # Opponent-adjusted features
+    long_feats = compute_opponent_baselines(long_feats)
+    long_feats = join_opponent_baselines(long_feats)
+    long_feats = compute_adjusted_stats(long_feats)
+    long_feats = compute_adjusted_rolling_features(long_feats)
 
     # Rejoin to match level and write
     final_df = build_match_level(base_matches, long_feats)

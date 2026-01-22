@@ -1,0 +1,3 @@
+# UV configuration for OneDrive compatibility
+# Hardlinks don't work in OneDrive, so we use copy mode
+link-mode = "copy"

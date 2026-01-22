@@ -2,6 +2,7 @@ import polars as pl
 
 # ---------- Constants ----------
 ROLL_WINDOWS = [3, 5, 10]
+ADJUSTMENT_WINDOW = 10  # Window for computing opponent baseline strength
 
 # Updated stats based on available soccerdata columns
 # Missing: shots_for, sot_for (commented out)
@@ -25,6 +26,10 @@ BASE_STATS_AGAINST = [
     "ga",
 ]
 DERIVED_STATS = ["xgd", "gd", "points", "win", "draw", "loss"]
+
+# Stats to compute opponent-adjusted versions for (subset of most meaningful)
+ADJUST_STATS_FOR = ["xg_for", "npxg_for", "gf", "shots_for", "sot_for"]
+ADJUST_STATS_AGAINST = ["xg_against", "npxg_against", "ga", "shots_against", "sot_against"]
 
 
 # ---------- Helpers ----------
@@ -274,6 +279,140 @@ def compute_rolling_features(long_df: pl.LazyFrame) -> pl.LazyFrame:
     for w in ROLL_WINDOWS:
         for scope in ("ovr", "home", "away"):
             exprs += rolling_feature_exprs(scope, w)
+    return long_df.with_columns(exprs)
+
+
+def compute_opponent_baselines(long_df: pl.LazyFrame) -> pl.LazyFrame:
+    """
+    Compute each team's rolling baseline stats (what they typically produce/concede).
+    This will be used to adjust opponent's stats against them.
+    
+    For offensive adjustment: We need opponent's defensive baseline (what they concede)
+    For defensive adjustment: We need opponent's offensive baseline (what they produce)
+    """
+    gkeys = ["league_id", "season", "team"]
+    exprs = []
+    
+    # Opponent's defensive baseline: what they typically concede (used to adjust our offensive stats)
+    # e.g., if opponent concedes 1.5 xG on average, and we score 2.0 xG, our adjusted = 2.0/1.5 = 1.33
+    for stat in ADJUST_STATS_AGAINST:
+        series = pl.col(stat).shift(1)
+        exprs.append(
+            series.rolling_mean(window_size=ADJUSTMENT_WINDOW, min_samples=3)
+            .over(gkeys)
+            .alias(f"baseline__{stat}")
+        )
+    
+    # Opponent's offensive baseline: what they typically produce (used to adjust our defensive stats)
+    # e.g., if opponent produces 1.8 xG on average, and we concede 1.0 xG, our adjusted = 1.0/1.8 = 0.56 (good!)
+    for stat in ADJUST_STATS_FOR:
+        series = pl.col(stat).shift(1)
+        exprs.append(
+            series.rolling_mean(window_size=ADJUSTMENT_WINDOW, min_samples=3)
+            .over(gkeys)
+            .alias(f"baseline__{stat}")
+        )
+    
+    return long_df.with_columns(exprs)
+
+
+def join_opponent_baselines(long_df: pl.LazyFrame) -> pl.LazyFrame:
+    """
+    Join each row with the opponent's baseline stats at that point in time.
+    This tells us what we'd "expect" to produce/concede against this opponent.
+    """
+    # Extract opponent baseline columns
+    baseline_cols = [c for c in long_df.collect_schema().names() if c.startswith("baseline__")]
+    
+    # Create opponent lookup frame: (match_id, team) -> baseline stats
+    # We need to join on match_id and opponent
+    opponent_baselines = long_df.select(
+        ["match_id", "team"] + baseline_cols
+    )
+    
+    # Rename for join: team -> opponent (the opponent's perspective)
+    rename_map = {"team": "opponent"}
+    rename_map.update({c: f"opp_{c}" for c in baseline_cols})
+    opponent_baselines = opponent_baselines.rename(rename_map)
+    
+    # Join: for each row, get the opponent's baselines
+    result = long_df.join(
+        opponent_baselines,
+        on=["match_id", "opponent"],
+        how="left"
+    )
+    
+    return result
+
+
+def compute_adjusted_stats(long_df: pl.LazyFrame) -> pl.LazyFrame:
+    """
+    Calculate opponent-adjusted performance stats.
+    
+    For offensive stats (xg_for, gf, etc.):
+        adjusted = actual / opponent's defensive baseline (what they typically concede)
+        > 1.0 means you did better than average against this defense
+        
+    For defensive stats (xg_against, ga, etc.):
+        adjusted = actual / opponent's offensive baseline (what they typically produce)
+        < 1.0 means you conceded less than expected against this attack (good!)
+    """
+    exprs = []
+    
+    # Adjust offensive stats by opponent's defensive baseline
+    # If opponent concedes 1.5 xG typically, and we scored 2.0 xG -> 2.0/1.5 = 1.33 (above average)
+    for stat_for in ADJUST_STATS_FOR:
+        # Map xg_for -> xg_against (what opponent concedes)
+        stat_against = stat_for.replace("_for", "_against").replace("gf", "ga")
+        opp_baseline = f"opp_baseline__{stat_against}"
+        
+        # Avoid division by zero, use small epsilon
+        exprs.append(
+            (pl.col(stat_for) / pl.col(opp_baseline).clip(lower_bound=0.1))
+            .alias(f"adj__{stat_for}")
+        )
+    
+    # Adjust defensive stats by opponent's offensive baseline
+    # If opponent produces 1.8 xG typically, and we conceded 1.0 xG -> 1.0/1.8 = 0.56 (good defense!)
+    for stat_against in ADJUST_STATS_AGAINST:
+        # Map xg_against -> xg_for (what opponent produces)
+        stat_for = stat_against.replace("_against", "_for").replace("ga", "gf")
+        opp_baseline = f"opp_baseline__{stat_for}"
+        
+        exprs.append(
+            (pl.col(stat_against) / pl.col(opp_baseline).clip(lower_bound=0.1))
+            .alias(f"adj__{stat_against}")
+        )
+    
+    return long_df.with_columns(exprs)
+
+
+def rolling_adjusted_feature_exprs(window: int):
+    """
+    Compute rolling averages of opponent-adjusted stats.
+    Only computed for 'ovr' scope to keep feature count manageable.
+    """
+    gkeys = ["league_id", "season", "team"]
+    exprs = []
+    
+    adjusted_stats = [f"adj__{s}" for s in ADJUST_STATS_FOR + ADJUST_STATS_AGAINST]
+    
+    for stat in adjusted_stats:
+        series = pl.col(stat).shift(1)
+        exprs.append(
+            series.rolling_mean(window_size=window, min_samples=2)
+            .over(gkeys)
+            .alias(f"ovr__{stat}__r{window}")
+        )
+    
+    return exprs
+
+
+def compute_adjusted_rolling_features(long_df: pl.LazyFrame) -> pl.LazyFrame:
+    """Compute rolling averages of opponent-adjusted stats."""
+    exprs = []
+    for w in ROLL_WINDOWS:
+        exprs += rolling_adjusted_feature_exprs(w)
     return long_df.with_columns(exprs)
 
 
