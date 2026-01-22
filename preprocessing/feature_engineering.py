@@ -17,11 +17,6 @@ LEAGUE_IDS = {
 	"ITA-Serie A": 4,
 }
 
-# Season stage boundaries (as percentages of season)
-# Early: first ~21% (rounds 1-8 of 38), Mid: ~21-68% (rounds 9-26), Late: ~68%+ (27+)
-SEASON_STAGE_EARLY_PCT = 0.21
-SEASON_STAGE_MID_PCT = 0.68
-
 # FBRef schedule path for week/round data
 FBREF_SCHEDULE_PATH = PROJECT_ROOT / "data" / "full_schedule" / "domestic_all.csv"
 
@@ -156,35 +151,22 @@ def compute_round_number(lf: pl.LazyFrame, fbref_data: pl.LazyFrame | None = Non
 	return lf
 
 
-def compute_season_stage(lf: pl.LazyFrame) -> pl.LazyFrame:
+def compute_season_progress(lf: pl.LazyFrame) -> pl.LazyFrame:
 	"""
-	Compute season stage based on round number relative to max round in league-season.
-	Uses percentage thresholds to handle varying season lengths:
-	- 'early': first ~21% of season
-	- 'mid': ~21-68% of season  
-	- 'late': final ~32% of season
+	Compute season progress as a continuous feature in [0, 1].
 	
-	Returns LazyFrame with 'season_stage' column added.
+	Calculated as round_number / max_round_in_season.
+	- Round 1 of 38: 1/38 ≈ 0.026
+	- Round 38 of 38: 38/38 = 1.0
+	
+	Returns LazyFrame with 'season_progress' column added.
 	"""
-	# Compute max round per league-season for percentage calculation
 	lf = lf.with_columns(
 		pl.col("round_number").max().over(["league_id", "season"]).alias("_max_round")
 	)
-	
-	# Compute relative position in season
 	lf = lf.with_columns(
-		(pl.col("round_number") / pl.col("_max_round")).alias("_season_pct")
-	)
-	
-	# Assign season stage based on percentage thresholds
-	lf = lf.with_columns(
-		pl.when(pl.col("_season_pct") <= SEASON_STAGE_EARLY_PCT)
-		.then(pl.lit("early"))
-		.when(pl.col("_season_pct") <= SEASON_STAGE_MID_PCT)
-		.then(pl.lit("mid"))
-		.otherwise(pl.lit("late"))
-		.alias("season_stage")
-	).drop(["_max_round", "_season_pct"])
+		(pl.col("round_number") / pl.col("_max_round")).alias("season_progress")
+	).drop("_max_round")
 	return lf
 
 
@@ -288,7 +270,7 @@ def add_categorical_features(
 	Add all categorical features to match-level data:
 	1. league_idx: Numeric ID for league (for embeddings)
 	2. round_number: Round/matchday number within season (from FBRef if available)
-	3. season_stage: 'early', 'mid', or 'late'
+	3. season_progress: Continuous [0,1] value = round_number / max_round
 	4. home_promoted: Whether home team was promoted this season
 	5. away_promoted: Whether away team was promoted this season
 	
@@ -313,8 +295,8 @@ def add_categorical_features(
 	# Add round number (uses FBRef week where available)
 	lf = compute_round_number(lf, fbref_data)
 	
-	# Add season stage based on round number
-	lf = compute_season_stage(lf)
+	# Add season progress (continuous [0,1] feature)
+	lf = compute_season_progress(lf)
 	
 	# Add promoted flags
 	lf = add_promoted_flags(lf, promoted_lookup)

@@ -263,7 +263,7 @@ def main():
     # Rejoin to match level
     final_df = build_match_level(base_matches, long_feats)
 
-    # Add categorical features (league_idx, round_number, season_stage, promoted flags)
+    # Add categorical features (league_idx, round_number, season_progress, promoted flags)
     print("Adding categorical features...")
     promoted_data = load_promoted_teams()
     promoted_lookup = build_promoted_teams_set(promoted_data)

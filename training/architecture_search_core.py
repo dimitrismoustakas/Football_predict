@@ -625,7 +625,6 @@ def compare_and_save_model(
 			cat_config_dict = {
 				"num_leagues": new_config.cat_config.num_leagues,
 				"league_embed_dim": new_config.cat_config.league_embed_dim,
-				"num_season_stages": new_config.cat_config.num_season_stages,
 			}
 		
 		config_dict = {
@@ -728,8 +727,8 @@ def train_final_model(
 		total_epochs_trained = len(early_stop_history["val_loss"])
 		print(f"\nEarly stopping: trained for {total_epochs_trained} epochs, best was epoch {best_epoch} (val_loss = {best_val_loss:.5f})")
 		
-		# Step 2: Retrain on all CV seasons
-		print(f"\n--- Step 2: Retraining on all data for {best_epoch} epochs (fixed) ---")
+		# Step 2: Retrain on all CV seasons (no validation, fixed epochs)
+		print(f"\n--- Step 2: Retraining on all data for {best_epoch} epochs (no early stopping) ---")
 		
 		data_train = prepare_fn(df, feature_cols, all_cv_seasons, fit_scaler=True)
 		data_test = prepare_fn(df, feature_cols, [test_season], scaler=data_train["scaler"])
@@ -738,7 +737,6 @@ def train_final_model(
 		
 		config.input_dim = data_train["X"].shape[1]
 		config.epochs = best_epoch
-		config.patience = best_epoch + 1
 		config.cat_config = cat_config
 		
 		mlflow.log_params({
@@ -777,10 +775,9 @@ def train_final_model(
 		
 		print("\n--- Training Final Model ---")
 		
-		dummy_val_loader = to_loader(data_train, config.batch_size, shuffle=False, device=DEVICE, task_type=task_type)
-		
+		# Train without validation - exactly best_epoch epochs, no early stopping
 		model, history, _ = train_model(
-			config, train_loader, dummy_val_loader, device=DEVICE, verbose=True
+			config, train_loader, val_loader=None, device=DEVICE, verbose=True
 		)
 		
 		print("\n--- Model Performance on Held-out Test Set ---")
@@ -859,9 +856,8 @@ def run_pipeline(task_type: TaskType):
 	cat_config = CategoricalConfig(
 		num_leagues=num_leagues,
 		league_embed_dim=3,
-		num_season_stages=3,
 	)
-	print(f"Categorical config: {num_leagues} leagues, embed_dim=3, stages=3")
+	print(f"Categorical config: {num_leagues} leagues, embed_dim=3")
 	
 	print(f"\nGenerating {N_CV_FOLDS}-fold rolling CV splits...")
 	folds = generate_rolling_cv_folds(df, n_folds=N_CV_FOLDS)

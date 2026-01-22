@@ -5,10 +5,15 @@ Supports two task types:
 - Binary classification (over/under): 1 implied probability
 - Multiclass classification (home/draw/away): 3 implied probabilities
 
-Categorical features:
+Categorical features (via CategoricalEmbedder):
 - league_idx: embedded (configurable dim)
-- season_stage: one-hot (early/mid/late)
 - home_promoted, away_promoted: binary
+
+Continuous features (via StandardScaler):
+- Rolling stats (ovr__*__r5__h/a)
+- Elo features
+- Schedule congestion features
+- season_progress: [0,1] representing position in season
 """
 
 import copy
@@ -38,11 +43,8 @@ from training.evaluation.metrics import accuracy_score, brier_score_loss, log_lo
 # CATEGORICAL FEATURE CONSTANTS
 # ============================================================================
 
-# Mapping from season_stage string to index
-SEASON_STAGE_MAP = {"early": 0, "mid": 1, "late": 2}
-
 # Categorical columns expected in the DataFrame
-CAT_COLS = ["league_idx", "season_stage", "home_promoted", "away_promoted"]
+CAT_COLS = ["league_idx", "home_promoted", "away_promoted"]
 
 
 # ============================================================================
@@ -68,9 +70,6 @@ def select_feature_columns(df: pl.DataFrame) -> List[str]:
 		and (c.endswith("__h") or c.endswith("__a"))
 	]
 	# Add Elo features if present
-	# for ec in ['opponent_elo_r5__h', 'elo_diff_r5__h', 'opponent_elo_std_r5__h', 'opponent_elo_r5__a', 'elo_diff_r5__a', 'opponent_elo_std_r5__a']:
-	# 	if ec in cols:
-	# 		feat_cols.append(ec)
 	feat_cols.extend(
 		c for c in cols
 		if 'elo' in c and c not in {'home_elo', 'away_elo'}
@@ -79,6 +78,9 @@ def select_feature_columns(df: pl.DataFrame) -> List[str]:
 	for sc in ["days_since_last_match__h", "days_since_last_match__a", "games_last_15_days__h", "games_last_15_days__a"]:
 		if sc in cols:
 			feat_cols.append(sc)
+	# Add season_progress (continuous [0,1] feature)
+	if "season_progress" in cols:
+		feat_cols.append("season_progress")
 	return sorted(feat_cols)
 
 
@@ -255,21 +257,14 @@ def extract_categorical_features(df: pl.DataFrame) -> np.ndarray:
 	"""
 	Extract categorical features as a numpy array.
 	
-	Returns shape (n_rows, 4) with columns:
-		[league_idx, season_stage_idx, home_promoted, away_promoted]
-	
-	Assumes df has columns: league_idx, season_stage, home_promoted, away_promoted
+	Returns shape (n_rows, 3) with columns:
+		[league_idx, home_promoted, away_promoted]
 	"""
-	# Convert season_stage string to index
-	stage_col = df.select(
-		pl.col("season_stage").replace(SEASON_STAGE_MAP).cast(pl.Int64)
-	).to_numpy().flatten()
-	
 	league_idx = df.select("league_idx").to_numpy().flatten().astype(np.int64)
 	home_promoted = df.select("home_promoted").to_numpy().flatten().astype(np.int64)
 	away_promoted = df.select("away_promoted").to_numpy().flatten().astype(np.int64)
 	
-	return np.stack([league_idx, stage_col, home_promoted, away_promoted], axis=1)
+	return np.stack([league_idx, home_promoted, away_promoted], axis=1)
 
 
 def get_num_leagues(df: pl.DataFrame) -> int:
@@ -726,17 +721,27 @@ class EarlyStopping:
 def train_model(
 	config: TrainConfig,
 	train_loader: DataLoader,
-	val_loader: DataLoader,
+	val_loader: DataLoader = None,
 	device: torch.device = None,
 	trial = None,
 	verbose: bool = True,
 ) -> Tuple:
 	"""
-	Train model with early stopping.
+	Train model with optional early stopping.
 	
 	Supports both binary (over/under) and multiclass (result) tasks based on config.task_type.
 	
+	Args:
+		config: Training configuration
+		train_loader: DataLoader for training data
+		val_loader: DataLoader for validation data. If None, trains for exactly config.epochs
+		            without early stopping (useful for final retraining after hyperparameter search).
+		device: Device to train on
+		trial: Optuna trial for pruning (only used when val_loader is provided)
+		verbose: Whether to print progress
+	
 	Returns (model, history, best_val_loss)
+	        If val_loader is None, best_val_loss will be the final training loss.
 	"""
 	if device is None:
 		device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -747,6 +752,9 @@ def train_model(
 	task_type = getattr(config, "task_type", "binary")
 	cat_config = getattr(config, "cat_config", None)
 	output_dim = 1 if task_type == "binary" else 3
+	
+	# Determine if we're doing validation/early-stopping
+	use_validation = val_loader is not None
 	
 	model = MLP(
 		config.input_dim, config.hidden_layers, config.dropout, config.norm, activation,
@@ -765,7 +773,9 @@ def train_model(
 		steps_per_epoch=len(train_loader),
 		lr=config.lr,
 	)
-	early_stopping = EarlyStopping(patience=config.patience, min_delta=1e-4)
+	
+	# Only use early stopping when we have validation data
+	early_stopping = EarlyStopping(patience=config.patience, min_delta=1e-4) if use_validation else None
 	
 	# Select loss function based on task type
 	if task_type == "binary":
@@ -805,60 +815,79 @@ def train_model(
 		avg_train_loss = total_loss / len(train_loader.dataset)
 		history["train_loss"].append(avg_train_loss)
 
-		# Validation phase
-		model.eval()
-		val_loss = 0.0
-		with torch.no_grad():
-			for bx, bc, bi, by in val_loader:
-				bx, bc, bi, by = bx.to(device), bc.to(device), bi.to(device), by.to(device)
-				residual_logits = model(bx, bc if cat_config else None)
-				loss = loss_fn(
-					residual_logits,
-					bi,
-					by,
-					lambda_repulsion=config.lambda_repulsion,
-					lambda_corr=config.lambda_corr,
+		# Validation phase (only if we have validation data)
+		if use_validation:
+			model.eval()
+			val_loss = 0.0
+			with torch.no_grad():
+				for bx, bc, bi, by in val_loader:
+					bx, bc, bi, by = bx.to(device), bc.to(device), bi.to(device), by.to(device)
+					residual_logits = model(bx, bc if cat_config else None)
+					loss = loss_fn(
+						residual_logits,
+						bi,
+						by,
+						lambda_repulsion=config.lambda_repulsion,
+						lambda_corr=config.lambda_corr,
+					)
+					val_loss += loss.item() * len(bx)
+
+			avg_val_loss = val_loss / len(val_loader.dataset)
+			history["val_loss"].append(avg_val_loss)
+			
+			# Step schedulers that operate per-epoch (validation-based)
+			if scheduler_type == "plateau":
+				scheduler.step(avg_val_loss)
+			elif scheduler_type == "cosine":
+				scheduler.step()
+			# onecycle is stepped per batch above
+			
+			early_stopping(avg_val_loss, model)
+
+			# Log to MLflow if in an active run
+			if mlflow.active_run():
+				mlflow.log_metric("train_loss", avg_train_loss, step=epoch)
+				mlflow.log_metric("val_loss", avg_val_loss, step=epoch)
+
+			if verbose and (epoch % 10 == 0 or epoch == 1):
+				print(
+					f"Epoch {epoch:03d} | Train: {avg_train_loss:.5f} | Val: {avg_val_loss:.5f}"
 				)
-				val_loss += loss.item() * len(bx)
 
-		avg_val_loss = val_loss / len(val_loader.dataset)
-		history["val_loss"].append(avg_val_loss)
+			# Optuna pruning
+			if trial is not None:
+				# Report best-so-far to avoid pruning on transient loss spikes
+				# (e.g., overfitting after hitting a good minimum).
+				trial.report(min(history["val_loss"]), epoch)
+				if trial.should_prune():
+					import optuna
+					raise optuna.TrialPruned()
 
-		# Step schedulers that operate per-epoch
-		if scheduler_type == "plateau":
-			scheduler.step(avg_val_loss)
-		elif scheduler_type == "cosine":
-			scheduler.step()
-		# onecycle is stepped per batch above
-		
-		early_stopping(avg_val_loss, model)
+			if early_stopping.early_stop:
+				if verbose:
+					print(f"Early stopping at epoch {epoch}")
+				break
+		else:
+			# No validation: step schedulers using training loss
+			if scheduler_type == "plateau":
+				scheduler.step(avg_train_loss)
+			elif scheduler_type == "cosine":
+				scheduler.step()
+			# onecycle is stepped per batch above
+			
+			# Log to MLflow if in an active run
+			if mlflow.active_run():
+				mlflow.log_metric("train_loss", avg_train_loss, step=epoch)
 
-		# Log to MLflow if in an active run
-		if mlflow.active_run():
-			mlflow.log_metric("train_loss", avg_train_loss, step=epoch)
-			mlflow.log_metric("val_loss", avg_val_loss, step=epoch)
+			if verbose and (epoch % 10 == 0 or epoch == 1):
+				print(f"Epoch {epoch:03d} | Train: {avg_train_loss:.5f}")
 
-		if verbose and (epoch % 10 == 0 or epoch == 1):
-			print(
-				f"Epoch {epoch:03d} | Train: {avg_train_loss:.5f} | Val: {avg_val_loss:.5f}"
-			)
-
-		# Optuna pruning
-		if trial is not None:
-			# Report best-so-far to avoid pruning on transient loss spikes
-			# (e.g., overfitting after hitting a good minimum).
-			trial.report(min(history["val_loss"]), epoch)
-			if trial.should_prune():
-				import optuna
-				raise optuna.TrialPruned()
-
-		if early_stopping.early_stop:
-			if verbose:
-				print(f"Early stopping at epoch {epoch}")
-			break
-
-	early_stopping.load_best_weights(model)
-	return model, history, early_stopping.best_loss
+	if use_validation:
+		early_stopping.load_best_weights(model)
+		return model, history, early_stopping.best_loss
+	else:
+		# Return final training loss when no validation
+		return model, history, history["train_loss"][-1]
 
 
 def evaluate_implied_baseline(data: Dict[str, np.ndarray], task_type: TaskType = "binary") -> Dict:
@@ -934,7 +963,6 @@ def load_existing_model(
 		cat_config = CategoricalConfig(
 			num_leagues=config_dict["cat_config"]["num_leagues"],
 			league_embed_dim=config_dict["cat_config"]["league_embed_dim"],
-			num_season_stages=config_dict["cat_config"]["num_season_stages"],
 		)
 	
 	model = MLP(

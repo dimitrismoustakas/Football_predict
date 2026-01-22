@@ -5,15 +5,14 @@ Supports two task types:
 - Binary classification (over/under 2.5 goals): 1 output, 1 implied odd
 - Multiclass classification (home/draw/away): 3 outputs, 3 implied odds
 
-Categorical Features:
+Categorical Features (via CategoricalEmbedder):
 - League: embedded (configurable embedding dim, default 3)
-- Season stage: one-hot encoded (early/mid/late = 3 categories)
 - Promoted status: binary features (home_promoted, away_promoted)
 """
 
 
-from dataclasses import dataclass, field
-from typing import List, Literal, Optional, Dict
+from dataclasses import dataclass
+from typing import List, Literal, Optional
 
 import torch
 import torch.nn as nn
@@ -25,11 +24,9 @@ TaskType = Literal["binary", "multiclass"]
 
 @dataclass
 class CategoricalConfig:
-	"""Configuration for categorical features."""
-	num_leagues: int = 5  # Number of unique leagues
-	league_embed_dim: int = 3  # Embedding dimension for leagues
-	num_season_stages: int = 3  # early, mid, late
-	# Binary features: home_promoted, away_promoted (just pass through)
+	"""Configuration for categorical features (league embedding + promoted flags)."""
+	num_leagues: int = 5
+	league_embed_dim: int = 3
 
 
 class GeGLU(nn.Module):
@@ -46,43 +43,35 @@ class GeGLU(nn.Module):
 
 class CategoricalEmbedder(nn.Module):
 	"""
-	Embeds categorical features: league (embedding) + season_stage (one-hot) + promoted (binary).
+	Embeds categorical features: league (embedding) + promoted flags (binary).
 	
 	Input tensor layout (cat_features):
 		- [:, 0]: league_idx (int, 0 to num_leagues-1)
-		- [:, 1]: season_stage_idx (int, 0=early, 1=mid, 2=late)
-		- [:, 2]: home_promoted (0 or 1)
-		- [:, 3]: away_promoted (0 or 1)
+		- [:, 1]: home_promoted (0 or 1)
+		- [:, 2]: away_promoted (0 or 1)
 	
-	Output: concatenated [league_embed, season_stage_onehot, home_promoted, away_promoted]
+	Output: concatenated [league_embed, home_promoted, away_promoted]
 	"""
 	
 	def __init__(self, cat_config: CategoricalConfig):
 		super().__init__()
 		self.cat_config = cat_config
 		self.league_embed = nn.Embedding(cat_config.num_leagues, cat_config.league_embed_dim)
-		# Output dim = league_embed_dim + num_season_stages (one-hot) + 2 (binary promoted flags)
-		self.output_dim = cat_config.league_embed_dim + cat_config.num_season_stages + 2
+		# Output dim = league_embed_dim + 2 (binary promoted flags)
+		self.output_dim = cat_config.league_embed_dim + 2
 	
 	def forward(self, cat_features: torch.Tensor) -> torch.Tensor:
 		"""
 		Args:
-			cat_features: (batch, 4) tensor with [league_idx, stage_idx, home_promoted, away_promoted]
+			cat_features: (batch, 3) tensor with [league_idx, home_promoted, away_promoted]
 		Returns:
 			(batch, output_dim) embedded categorical features
 		"""
 		league_idx = cat_features[:, 0].long()
-		stage_idx = cat_features[:, 1].long()
-		promoted = cat_features[:, 2:4].float()  # home_promoted, away_promoted
+		promoted = cat_features[:, 1:3].float()  # home_promoted, away_promoted
 		
-		# League embedding
 		league_emb = self.league_embed(league_idx)  # (batch, league_embed_dim)
-		
-		# Season stage one-hot
-		stage_onehot = F.one_hot(stage_idx, num_classes=self.cat_config.num_season_stages).float()  # (batch, 3)
-		
-		# Concatenate all
-		return torch.cat([league_emb, stage_onehot, promoted], dim=-1)
+		return torch.cat([league_emb, promoted], dim=-1)
 
 
 class MLP(nn.Module):

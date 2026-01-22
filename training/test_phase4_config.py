@@ -77,7 +77,6 @@ def main():
 	cat_config = CategoricalConfig(
 		num_leagues=num_leagues,
 		league_embed_dim=3,
-		num_season_stages=3,
 	)
 	print(f"Categorical: {num_leagues} leagues, embed_dim=3")
 	
