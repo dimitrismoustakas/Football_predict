@@ -158,7 +158,7 @@ def create_lambda_objective(
 	dropout = base_config["dropout"]
 	lr = base_config["lr"]
 	weight_decay = base_config["weight_decay"]
-	scheduler_type = base_config["scheduler_type"]
+	beta1 = base_config["beta1"]
 	batch_size = base_config["batch_size"]
 	
 	def objective(trial: optuna.Trial) -> float:
@@ -182,7 +182,7 @@ def create_lambda_objective(
 				lambda_repulsion=lambda_repulsion,
 				lambda_corr=lambda_corr,
 				activation=activation,
-				scheduler_type=scheduler_type,
+				beta1=beta1,
 				epochs=MAX_EPOCHS,
 				patience=PATIENCE,
 				batch_size=batch_size,
@@ -305,7 +305,7 @@ def retrain_with_seeds(
 				lambda_repulsion=lambda_repulsion,
 				lambda_corr=lambda_corr,
 				activation=base_config["activation"],
-				scheduler_type=base_config["scheduler_type"],
+				beta1=base_config["beta1"],
 				epochs=MAX_EPOCHS,
 				patience=PATIENCE,
 				batch_size=base_config["batch_size"],
@@ -453,7 +453,7 @@ def train_final_model(
 			lambda_repulsion=0.0,
 			lambda_corr=0.0,
 			activation=base_config["activation"],
-			scheduler_type=base_config["scheduler_type"],
+			beta1=base_config["beta1"],
 			epochs=MAX_EPOCHS,
 			patience=PATIENCE,
 			batch_size=base_config["batch_size"],
@@ -489,7 +489,7 @@ def train_final_model(
 			lambda_repulsion=best_lambda_params["lambda_repulsion"],
 			lambda_corr=best_lambda_params["lambda_corr"],
 			activation=base_config["activation"],
-			scheduler_type=base_config["scheduler_type"],
+			beta1=base_config["beta1"],
 			epochs=MAX_EPOCHS,
 			patience=PATIENCE,
 			batch_size=base_config["batch_size"],

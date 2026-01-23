@@ -55,12 +55,12 @@ TaskType = Literal["binary", "multiclass"]
 # ============================================================================
 
 COARSE_TRIALS = 120
-COARSE_EPOCHS = 40
-COARSE_PATIENCE = 12
+COARSE_EPOCHS = 30
+COARSE_PATIENCE = 10
 
 REFINE_TRIALS = 60
-REFINE_EPOCHS = 80
-REFINE_PATIENCE = 20
+REFINE_EPOCHS = 30
+REFINE_PATIENCE = 10
 
 TOP_K_CONFIGS = 8
 SEEDS_PER_CONFIG = 5
@@ -176,9 +176,9 @@ def create_joint_objective(
 		
 		lr = trial.suggest_float("lr", lr_range[0], lr_range[1], log=True)
 		weight_decay = trial.suggest_float("weight_decay", wd_range[0], wd_range[1], log=True)
-		dropout = trial.suggest_float("dropout", 0.05, 0.5)
+		dropout = trial.suggest_float("dropout", 0.05, 0.35)
 		batch_size = trial.suggest_categorical("batch_size", [128, 256, 512])
-		scheduler_type = trial.suggest_categorical("scheduler_type", ["plateau", "cosine", "onecycle"])
+		beta1 = trial.suggest_float("beta1", 0.75, 0.95)
 		
 		fold_losses = []
 		# Reverse folds so that fold 0 is the most recent validation season.
@@ -200,7 +200,7 @@ def create_joint_objective(
 				lambda_repulsion=0.0,
 				lambda_corr=0.0,
 				activation=activation,
-				scheduler_type=scheduler_type,
+				beta1=beta1,
 				epochs=max_epochs,
 				patience=patience,
 				batch_size=batch_size,
@@ -442,7 +442,7 @@ def extract_config_from_params(
 		lambda_repulsion=0.0,
 		lambda_corr=0.0,
 		activation=params["activation"],
-		scheduler_type=params["scheduler_type"],
+		beta1=params["beta1"],
 		epochs=REFINE_EPOCHS,
 		patience=REFINE_PATIENCE,
 		batch_size=params["batch_size"],
@@ -635,7 +635,7 @@ def compare_and_save_model(
 			"dropout": new_config.dropout,
 			"lr": new_config.lr,
 			"weight_decay": new_config.weight_decay,
-			"scheduler_type": new_config.scheduler_type,
+			"beta1": new_config.beta1,
 			"batch_size": new_config.batch_size,
 			"lambda_repulsion": new_config.lambda_repulsion,
 			"lambda_corr": new_config.lambda_corr,
@@ -711,7 +711,7 @@ def train_final_model(
 			lambda_repulsion=config.lambda_repulsion,
 			lambda_corr=config.lambda_corr,
 			activation=config.activation,
-			scheduler_type=config.scheduler_type,
+			beta1=config.beta1,
 			epochs=REFINE_EPOCHS,
 			patience=REFINE_PATIENCE,
 			batch_size=config.batch_size,
@@ -748,7 +748,7 @@ def train_final_model(
 			"dropout": config.dropout,
 			"lr": config.lr,
 			"weight_decay": config.weight_decay,
-			"scheduler_type": config.scheduler_type,
+			"beta1": config.beta1,
 			"batch_size": config.batch_size,
 			"best_epoch": best_epoch,
 			"early_stop_val_loss": best_val_loss,

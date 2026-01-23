@@ -655,38 +655,20 @@ def get_val_data_dict(fold: Dict[str, Any]) -> Dict[str, np.ndarray]:
 
 def create_scheduler(
 	optimizer: torch.optim.Optimizer,
-	scheduler_type: str,
 	epochs: int = 100,
-	steps_per_epoch: int = 1,
 	lr: float = 1e-3,
 ) -> torch.optim.lr_scheduler.LRScheduler:
 	"""
-	Factory function for learning rate schedulers.
+	Create a cosine annealing learning rate scheduler.
 	
 	Args:
 		optimizer: PyTorch optimizer
-		scheduler_type: One of 'plateau', 'cosine', 'onecycle'
-		epochs: Total training epochs (for cosine/onecycle)
-		steps_per_epoch: Steps per epoch (for onecycle)
-		lr: Base learning rate (for onecycle max_lr calculation)
+		epochs: Total training epochs
+		lr: Base learning rate (for eta_min calculation)
 	"""
-	if scheduler_type == "plateau":
-		return torch.optim.lr_scheduler.ReduceLROnPlateau(
-			optimizer, mode="min", factor=0.5, patience=5
-		)
-	elif scheduler_type == "cosine":
-		return torch.optim.lr_scheduler.CosineAnnealingLR(
-			optimizer, T_max=epochs, eta_min=lr * 0.01
-		)
-	elif scheduler_type == "onecycle":
-		return torch.optim.lr_scheduler.OneCycleLR(
-			optimizer,
-			max_lr=lr * 10,
-			epochs=epochs,
-			steps_per_epoch=steps_per_epoch,
-		)
-	else:
-		raise ValueError(f"Unknown scheduler type: {scheduler_type}")
+	return torch.optim.lr_scheduler.CosineAnnealingLR(
+		optimizer, T_max=epochs, eta_min=lr * 0.01
+	)
 
 
 class EarlyStopping:
@@ -762,15 +744,12 @@ def train_model(
 		cat_config=cat_config,
 	).to(device)
 	optimizer = torch.optim.AdamW(
-		model.parameters(), lr=config.lr, weight_decay=config.weight_decay
+		model.parameters(), lr=config.lr, weight_decay=config.weight_decay, betas=(config.beta1, 0.999)
 	)
 	
-	scheduler_type = getattr(config, "scheduler_type", "plateau")
 	scheduler = create_scheduler(
 		optimizer,
-		scheduler_type,
 		epochs=config.epochs,
-		steps_per_epoch=len(train_loader),
 		lr=config.lr,
 	)
 	
@@ -807,10 +786,6 @@ def train_model(
 			loss.backward()
 			optimizer.step()
 			total_loss += loss.item() * len(batch_x)
-			
-			# Step OneCycleLR after each batch
-			if scheduler_type == "onecycle":
-				scheduler.step()
 
 		avg_train_loss = total_loss / len(train_loader.dataset)
 		history["train_loss"].append(avg_train_loss)
@@ -835,12 +810,8 @@ def train_model(
 			avg_val_loss = val_loss / len(val_loader.dataset)
 			history["val_loss"].append(avg_val_loss)
 			
-			# Step schedulers that operate per-epoch (validation-based)
-			if scheduler_type == "plateau":
-				scheduler.step(avg_val_loss)
-			elif scheduler_type == "cosine":
-				scheduler.step()
-			# onecycle is stepped per batch above
+			# Step cosine annealing scheduler
+			scheduler.step()
 			
 			early_stopping(avg_val_loss, model)
 
@@ -868,12 +839,8 @@ def train_model(
 					print(f"Early stopping at epoch {epoch}")
 				break
 		else:
-			# No validation: step schedulers using training loss
-			if scheduler_type == "plateau":
-				scheduler.step(avg_train_loss)
-			elif scheduler_type == "cosine":
-				scheduler.step()
-			# onecycle is stepped per batch above
+			# No validation: step cosine annealing scheduler
+			scheduler.step()
 			
 			# Log to MLflow if in an active run
 			if mlflow.active_run():

@@ -174,7 +174,7 @@ class TrainConfig:
 	lambda_repulsion: float
 	lambda_corr: float
 	activation: str = "relu"
-	scheduler_type: str = "plateau"
+	beta1: float = 0.9
 	epochs: int = 100
 	patience: int = 15
 	batch_size: int = 128

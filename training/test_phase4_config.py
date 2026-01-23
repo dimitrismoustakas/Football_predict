@@ -38,12 +38,12 @@ TEST_CONFIG = {
 	'weight_decay': 9.440685529111033e-06,
 	'dropout': 0.4333529892406824,
 	'batch_size': 128,
-	'scheduler_type': 'onecycle'
+	'beta1': 0.9
 }
 
 # Training parameters (from refinement phase)
-REFINE_EPOCHS = 80
-REFINE_PATIENCE = 20
+REFINE_EPOCHS = 30
+REFINE_PATIENCE = 10
 N_CV_FOLDS = 3
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -131,7 +131,7 @@ def main():
 		lambda_repulsion=0.0,
 		lambda_corr=0.0,
 		activation=TEST_CONFIG['activation'],
-		scheduler_type=TEST_CONFIG['scheduler_type'],
+		beta1=TEST_CONFIG['beta1'],
 		epochs=REFINE_EPOCHS,
 		patience=REFINE_PATIENCE,
 		batch_size=TEST_CONFIG['batch_size'],
@@ -169,7 +169,7 @@ def main():
 		lambda_repulsion=0.0,
 		lambda_corr=0.0,
 		activation=TEST_CONFIG['activation'],
-		scheduler_type=TEST_CONFIG['scheduler_type'],
+		beta1=TEST_CONFIG['beta1'],
 		epochs=best_epoch,
 		patience=best_epoch + 1,  # Disable early stopping
 		batch_size=TEST_CONFIG['batch_size'],
