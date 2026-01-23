@@ -38,9 +38,16 @@ from training.train_utils import (
 	get_num_leagues,
 )
 from training.models.neural_net import MLP, TaskType, CategoricalConfig
+import torch.nn.functional as F
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _log_softmax_from_implied(implied_probs: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+	"""Convert implied probabilities to log-softmax space."""
+	implied_probs = implied_probs / (implied_probs.sum(dim=-1, keepdim=True) + eps)
+	return torch.log(implied_probs + eps)
 
 
 def get_model_predictions(
@@ -50,8 +57,22 @@ def get_model_predictions(
 	device: torch.device,
 	task_type: TaskType,
 	use_cat_features: bool = True,
+	implied_probs: np.ndarray = None,
+	use_residual_market: bool = False,
 ) -> np.ndarray:
-	"""Get model predictions."""
+	"""
+	Get model predictions.
+	
+	Args:
+		model: The trained model
+		X: Input features
+		cat_features: Categorical features
+		device: Torch device
+		task_type: 'binary' or 'multiclass'
+		use_cat_features: Whether to use categorical features
+		implied_probs: Market implied probabilities (required if use_residual_market=True)
+		use_residual_market: If True, model outputs residuals and we add log(p_mkt)
+	"""
 	model.eval()
 	with torch.no_grad():
 		X_tensor = torch.tensor(X, dtype=torch.float32, device=device)
@@ -59,9 +80,19 @@ def get_model_predictions(
 		
 		if task_type == "binary":
 			logits = model(X_tensor, cat_tensor)
+			if use_residual_market and implied_probs is not None:
+				# r(x) + log(p_mkt / (1-p_mkt)) for binary
+				implied_tensor = torch.tensor(implied_probs, dtype=torch.float32, device=device)
+				log_odds_market = torch.log(implied_tensor / (1 - implied_tensor + 1e-6) + 1e-6)
+				logits = logits.flatten() + log_odds_market
 			probs = torch.sigmoid(logits).cpu().numpy().flatten()
 		else:  # multiclass
 			logits = model(X_tensor, cat_tensor)
+			if use_residual_market and implied_probs is not None:
+				# r(x) + log(p_mkt) for multiclass
+				implied_tensor = torch.tensor(implied_probs, dtype=torch.float32, device=device)
+				implied_log = _log_softmax_from_implied(implied_tensor)
+				logits = logits + implied_log
 			probs = torch.softmax(logits, dim=1).cpu().numpy()
 	
 	return probs
@@ -504,15 +535,60 @@ def main(task: str = "result", n_bins: int = 10):
 	model.load_state_dict(torch.load(model_path, map_location=DEVICE))
 	print("Model loaded.\n")
 	
-	# Get predictions
+	# Check if model was trained with residual_market approach
+	# The result model uses residual_market=True (outputs r(x), combined with log p_mkt)
+	use_residual_market = (task == "result")
+	
+	# Get predictions (with proper residual market handling)
+	print(f"Using residual_market approach: {use_residual_market}")
 	model_probs = get_model_predictions(
 		model, 
 		data_test["X"], 
 		data_test["cat_features"],
 		DEVICE, 
 		task_type,
-		use_cat_features
+		use_cat_features,
+		implied_probs=data_test["implied"],
+		use_residual_market=use_residual_market,
 	)
+	
+	# Also get raw model predictions (without market prior) for comparison
+	model_probs_raw = get_model_predictions(
+		model, 
+		data_test["X"], 
+		data_test["cat_features"],
+		DEVICE, 
+		task_type,
+		use_cat_features,
+		implied_probs=None,
+		use_residual_market=False,
+	)
+	
+	# ========== RAW RESIDUAL OUTPUT ANALYSIS ==========
+	if use_residual_market:
+		print(f"\n{'='*80}")
+		print("0. RAW RESIDUAL OUTPUT ANALYSIS (What the MLP outputs directly)")
+		print(f"{'='*80}\n")
+		
+		# The raw model outputs are r(x) passed through softmax - this shows what the MLP learned
+		# These should be close to uniform (1/3, 1/3, 1/3) if the model learned small corrections
+		print("Raw MLP output (softmax of r(x)) statistics:")
+		print(f"  Home: mean={model_probs_raw[:, 0].mean():.4f}, std={model_probs_raw[:, 0].std():.4f}")
+		print(f"  Draw: mean={model_probs_raw[:, 1].mean():.4f}, std={model_probs_raw[:, 1].std():.4f}")
+		print(f"  Away: mean={model_probs_raw[:, 2].mean():.4f}, std={model_probs_raw[:, 2].std():.4f}")
+		
+		# Show residual magnitudes
+		# r(x) = logits, so we can look at logit statistics
+		model.eval()
+		with torch.no_grad():
+			X_tensor = torch.tensor(data_test["X"], dtype=torch.float32, device=DEVICE)
+			cat_tensor = torch.tensor(data_test["cat_features"], dtype=torch.long, device=DEVICE)
+			raw_logits = model(X_tensor, cat_tensor).cpu().numpy()
+		
+		print(f"\nRaw residual logits r(x) statistics:")
+		print(f"  Home: mean={raw_logits[:, 0].mean():.4f}, std={raw_logits[:, 0].std():.4f}, range=[{raw_logits[:, 0].min():.3f}, {raw_logits[:, 0].max():.3f}]")
+		print(f"  Draw: mean={raw_logits[:, 1].mean():.4f}, std={raw_logits[:, 1].std():.4f}, range=[{raw_logits[:, 1].min():.3f}, {raw_logits[:, 1].max():.3f}]")
+		print(f"  Away: mean={raw_logits[:, 2].mean():.4f}, std={raw_logits[:, 2].std():.4f}, range=[{raw_logits[:, 2].min():.3f}, {raw_logits[:, 2].max():.3f}]")
 	
 	# ========== RESIDUAL ANALYSIS ==========
 	print(f"\n{'='*80}")

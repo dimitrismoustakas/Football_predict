@@ -105,6 +105,47 @@ Note: Currently leagues are stable (5 top European leagues), but worth validatin
       if expanding to new leagues
 
 
+[INFO] Issue 10: Calibrated vs Gated Residual Models
+----------------------------------------------------
+Status: INFORMATIONAL - design decision documented
+Date: 2026-01-23
+
+We tested two approaches for learning how much to trust market probabilities:
+
+1. **Calibrated Residual Model (IMPLEMENTED)**
+   Formula: pred_logits = α · log(p_mkt) + β · r(x) + b
+   Where:
+   - α: Market temperature (learned ~1.2-1.5, meaning "trust market more than raw")
+   - β: Residual scaling (learned ~0.5-0.8, meaning "shrink our corrections")
+   - b: Per-class bias adjustment
+   
+   Results:
+   - Consistently improves log loss (~1.088 → ~1.077 in tests)
+   - Learns meaningful α > 1 and β < 1 (interpretable as "trust market, shrink corrections")
+   - Simple to implement and understand
+
+2. **Contextual Gated Model (NOT IMPLEMENTED)**
+   Formula: pred_logits = log(p_mkt) + g(x) · r(x)
+   Where g(x) = sigmoid(gate_head([h(x), market_features]))
+   
+   Idea: Allow gate to vary per-match based on context (e.g., trust model more for
+         certain league/team combinations where market might be less efficient)
+   
+   Test results:
+   - Gate values collapse to near-constant (~0.95 across all samples)
+   - No meaningful contextual variation learned
+   - Similar overall performance to calibrated model
+   - Hypothesis: Market is equally efficient across contexts in our data,
+                 OR gate network needs different architecture/features
+
+   Future investigation:
+   - Try different gate inputs (specific features vs hidden representations)
+   - Add explicit "market uncertainty" features (odds variance, line movement, etc.)
+   - Test on out-of-sample leagues where market might be less efficient
+
+Decision: Use simpler Calibrated model since gated provides no benefit in current data.
+
+
 ================================================
 NOTES
 ================================================
