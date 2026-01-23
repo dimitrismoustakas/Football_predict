@@ -303,12 +303,23 @@ def run_coarse_search(
 
 
 def extract_refinement_ranges(study: optuna.Study, top_n: int = 20) -> Dict[str, Any]:
-	"""Extract narrowed search ranges from top trials."""
+	"""Extract narrowed search ranges from top trials.
+	
+	Always includes the best trial's categorical values, plus any others
+	that appear frequently in the top trials.
+	"""
 	completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
 	top_trials = sorted(completed, key=lambda t: t.value)[:top_n]
 	
 	if len(top_trials) < 5:
 		print(f"Warning: Only {len(top_trials)} completed trials, using all for refinement")
+	
+	# Get the best trial's values (these should always be included)
+	best_trial = top_trials[0]
+	best_activation = best_trial.params["activation"]
+	best_norm = best_trial.params["norm"]
+	best_shape = best_trial.params["shape"]
+	best_base_width = best_trial.params["base_width"]
 	
 	lrs = [t.params["lr"] for t in top_trials]
 	wds = [t.params["weight_decay"] for t in top_trials]
@@ -322,15 +333,19 @@ def extract_refinement_ranges(study: optuna.Study, top_n: int = 20) -> Dict[str,
 	
 	threshold = max(1, len(top_trials) // 5)
 	
-	def filter_categorical(values):
+	def filter_categorical(values, must_include=None):
 		from collections import Counter
 		counts = Counter(values)
-		return [v for v, c in counts.items() if c >= threshold]
+		filtered = [v for v, c in counts.items() if c >= threshold]
+		# Always include the best trial's value
+		if must_include is not None and must_include not in filtered:
+			filtered.append(must_include)
+		return filtered if filtered else list(set(values))
 	
-	allowed_activations = filter_categorical(activations) or list(set(activations))
-	allowed_norms = filter_categorical(norms) or list(set(norms))
-	allowed_shapes = filter_categorical(shapes) or list(set(shapes))
-	allowed_base_widths = filter_categorical(base_widths) or list(set(base_widths))
+	allowed_activations = filter_categorical(activations, must_include=best_activation)
+	allowed_norms = filter_categorical(norms, must_include=best_norm)
+	allowed_shapes = filter_categorical(shapes, must_include=best_shape)
+	allowed_base_widths = filter_categorical(base_widths, must_include=best_base_width)
 	
 	return {
 		"lr_range": lr_range,
