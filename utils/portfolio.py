@@ -15,6 +15,7 @@ def calculate_betting_allocations(
 	away_teams: list,
 	dates: list,
 	budget: float = 100.0,
+	min_edge: float = 0.0,
 ) -> pd.DataFrame:
 	"""
 	Calculate betting allocations using Sharpe-weighted portfolio strategy.
@@ -27,6 +28,7 @@ def calculate_betting_allocations(
 		away_teams: List of away team names
 		dates: List of match dates
 		budget: Total budget for allocation (percentage)
+		min_edge: Minimum expected value (mu) required to place a bet.
 	
 	Returns:
 		DataFrame with betting allocations and metrics
@@ -69,7 +71,7 @@ def calculate_betting_allocations(
 	df["mu"] = mu_best
 	df["var"] = var_best
 	df["odds_selected"] = odds_best
-	df["eligible"] = df["mu"] > 0  # Only bet on positive EV
+	df["eligible"] = df["mu"] > min_edge  # Only bet above EV threshold
 	
 	# Calculate Sharpe-weighted allocations
 	eligible_df = df[df["eligible"]].copy()
@@ -105,6 +107,7 @@ def evaluate_portfolio(
 	odds_under: np.ndarray,
 	dates: np.ndarray,
 	budget_per_day: float = 10.0,
+	min_edge: float = 0.0,
 ) -> Dict:
 	"""
 	Portfolio-style evaluation with Sharpe-weighted betting.
@@ -116,6 +119,7 @@ def evaluate_portfolio(
 		odds_under: Bookmaker odds for under 2.5 goals
 		dates: Match dates for grouping
 		budget_per_day: Daily budget allocation
+		min_edge: Minimum expected value (mu) required to place a bet.
 	
 	Returns:
 		Dictionary with portfolio performance metrics
@@ -154,7 +158,7 @@ def evaluate_portfolio(
 	df["var"] = var_best
 	df["odds"] = odds_best
 	df["won"] = np.where(df["bet_over"], df["y_true"] == 1, df["y_true"] == 0)
-	df["eligible"] = df["mu"] > 0
+	df["eligible"] = df["mu"] > min_edge
 
 	daily_results_sharpe = []
 

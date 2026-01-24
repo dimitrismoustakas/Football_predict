@@ -14,6 +14,10 @@ from preprocessing.feature_engineering import (
     rename_and_cast,
     build_long,
     compute_rolling_features,
+    compute_opponent_baselines,
+    join_opponent_baselines,
+    compute_adjusted_stats,
+    compute_adjusted_rolling_features,
     build_match_level,
     merge_european_schedule,
     compute_schedule_features,
@@ -227,6 +231,12 @@ def main():
 
     # Rolling features (within league+season; shift(1) prevents leakage)
     long_feats = compute_rolling_features(long_df)
+    
+    # Opponent-adjusted features
+    long_feats = compute_opponent_baselines(long_feats)
+    long_feats = join_opponent_baselines(long_feats)
+    long_feats = compute_adjusted_stats(long_feats)
+    long_feats = compute_adjusted_rolling_features(long_feats)
     
     # Merge European schedule for fixture congestion features
     if EUROPEAN_SCHEDULE_PATH.exists():
