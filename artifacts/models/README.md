@@ -11,5 +11,8 @@ Typical generated files:
 - `result_model.pt`
 - `result_model_config.json`
 - `result_model_scaler.joblib`
+- `latest_main_model_metrics.json`
 
 Do not commit generated model binaries or scalers.
+`latest_main_model_metrics.json` is also runtime output and should stay untracked.
+Accepted baseline/history notes now live in `training/configs/main_models/baselines.json`.

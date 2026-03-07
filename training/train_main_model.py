@@ -3,7 +3,7 @@ Canonical training entry point for the two production models.
 
 This script keeps the evaluation loop fixed:
 - frozen rolling CV folds for model selection
-- fixed final validation season for epoch selection
+- fixed epoch-selection season for epoch selection
 - fixed held-out latest season for acceptance
 
 Use search scripts only when you explicitly want to sweep hyperparameters.
@@ -13,6 +13,7 @@ import json
 import os
 import random
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Literal
 
@@ -46,6 +47,7 @@ TaskType = Literal["binary", "multiclass"]
 
 DEFAULT_PARQUET = Path(os.environ.get("PARQUET_PATH", "data/training/understat_df.parquet"))
 MODEL_CONFIGS_DIR = PROJECT_ROOT / "training" / "configs" / "main_models"
+LATEST_MAIN_METRICS_PATH = MODELS_DIR / "latest_main_model_metrics.json"
 TASK_TYPE: TaskType = os.environ.get("TASK_TYPE", "binary")
 N_CV_FOLDS = int(os.environ.get("N_CV_FOLDS", "3"))
 TRAINING_SEED = int(os.environ.get("TRAINING_SEED", "42"))
@@ -110,6 +112,96 @@ def load_training_config(task_type: TaskType) -> Dict[str, Any]:
 	return config
 
 
+def to_builtin(value: Any) -> Any:
+	if isinstance(value, dict):
+		return {key: to_builtin(val) for key, val in value.items()}
+	if isinstance(value, list):
+		return [to_builtin(item) for item in value]
+	if isinstance(value, tuple):
+		return [to_builtin(item) for item in value]
+	if isinstance(value, np.generic):
+		return value.item()
+	return value
+
+
+def summarize_metrics(task_type: TaskType, metrics: Dict[str, Any]) -> Dict[str, Any]:
+	if task_type == "binary":
+		keys = [
+			"accuracy",
+			"brier",
+			"log_loss",
+			"total_profit",
+			"daily_total_profit",
+			"daily_roi",
+			"n_bets",
+		]
+	else:
+		keys = [
+			"accuracy",
+			"brier",
+			"rps",
+			"log_loss",
+			"total_profit",
+			"avg_profit",
+			"n_bets",
+		]
+
+	return to_builtin({key: metrics[key] for key in keys if key in metrics})
+
+
+def write_json(path: Path, payload: Dict[str, Any]):
+	path.parent.mkdir(parents=True, exist_ok=True)
+	with open(path, "w", encoding="utf-8") as f:
+		json.dump(payload, f, indent=2)
+
+
+def update_latest_run_record(task_type: TaskType, run_record: Dict[str, Any]):
+	if LATEST_MAIN_METRICS_PATH.exists():
+		with open(LATEST_MAIN_METRICS_PATH, "r", encoding="utf-8") as f:
+			payload = json.load(f)
+	else:
+		payload = {
+			"schema_version": 1,
+			"description": "Latest evaluated main-model candidates. Runtime-generated; compare with training/configs/main_models/baselines.json.",
+			"models": {},
+		}
+
+	payload["models"][task_type] = run_record
+	write_json(LATEST_MAIN_METRICS_PATH, payload)
+
+
+def log_metric_group(prefix: str, metrics: Dict[str, Any]):
+	for metric_name, metric_value in metrics.items():
+		if isinstance(metric_value, (int, float)):
+			mlflow.log_metric(f"{prefix}_{metric_name}", float(metric_value))
+
+
+def build_latest_run_record(
+	task_type: TaskType,
+	epoch_selection_season: str,
+	test_season: str,
+	best_epoch: int,
+	best_val_loss: float,
+	validation_metrics: Dict[str, Any],
+	test_metrics: Dict[str, Any],
+) -> Dict[str, Any]:
+	task_cfg = TASK_CONFIG[task_type]
+	return to_builtin({
+		"recorded_at_utc": datetime.now(timezone.utc).isoformat(),
+		"task_type": task_type,
+		"display_name": task_cfg["display_name"],
+		"description": "Latest evaluated candidate. If accepted, copy the numbers into training/configs/main_models/baselines.json with a short description of the change.",
+		"comparison_metric": task_cfg["comparison_metric"],
+		"training_config_source": str(task_cfg["config_path"].relative_to(PROJECT_ROOT)),
+		"epoch_selection_season": epoch_selection_season,
+		"held_out_test_season": test_season,
+		"best_epoch": best_epoch,
+		"best_val_loss": float(best_val_loss),
+		"val_metrics": summarize_metrics(task_type, validation_metrics),
+		"test_metrics": summarize_metrics(task_type, test_metrics),
+	})
+
+
 def build_train_config(
 	training_config: Dict[str, Any],
 	input_dim: int,
@@ -146,12 +238,15 @@ def save_model_bundle(
 	train_config: TrainConfig,
 	training_config: Dict[str, Any],
 	feature_cols: list[str],
-	metrics: Dict[str, Any],
-	baseline_metrics: Dict[str, Any],
+	validation_metrics: Dict[str, Any],
+	validation_baseline_metrics: Dict[str, Any],
+	test_metrics: Dict[str, Any],
+	test_baseline_metrics: Dict[str, Any],
 	all_cv_seasons: list[str],
 	final_val_season: str,
 	test_season: str,
 	best_epoch: int,
+	best_val_loss: float,
 ):
 	task_cfg = TASK_CONFIG[task_type]
 	artifact_model_path = task_cfg["artifact_model_path"]
@@ -199,12 +294,19 @@ def save_model_bundle(
 			"n_cv_folds": N_CV_FOLDS,
 			"selection_metric": task_cfg["comparison_metric"],
 			"cv_seasons": all_cv_seasons,
-			"final_validation_season": final_val_season,
+			"epoch_selection_season": final_val_season,
 			"held_out_test_season": test_season,
 			"training_seed": TRAINING_SEED,
 		},
-		"baseline_metrics": baseline_metrics,
-		"test_metrics": metrics,
+		"selection_summary": {
+			"best_epoch": best_epoch,
+			"best_val_loss": float(best_val_loss),
+			"epoch_selection_season": final_val_season,
+		},
+		"validation_metrics": validation_metrics,
+		"validation_baseline_metrics": validation_baseline_metrics,
+		"test_metrics": test_metrics,
+		"test_baseline_metrics": test_baseline_metrics,
 		"frozen_training_config": training_config,
 	}
 
@@ -251,10 +353,10 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 	print(f"Held-out test season: {test_season}")
 
 	all_cv_seasons = sorted({season for train_seasons, val_season in folds for season in [*train_seasons, val_season]})
-	final_val_season = all_cv_seasons[-1]
+	epoch_selection_season = all_cv_seasons[-1]
 	initial_train_seasons = all_cv_seasons[:-1]
 
-	print(f"Step 1: train on {initial_train_seasons[0]}..{initial_train_seasons[-1]} | val on {final_val_season}")
+	print(f"Step 1: train on {initial_train_seasons[0]}..{initial_train_seasons[-1]} | epoch selection on {epoch_selection_season}")
 	print(f"Step 2: retrain on {all_cv_seasons[0]}..{all_cv_seasons[-1]} | test on {test_season}")
 
 	mlflow.set_experiment(task_cfg["experiment_name"])
@@ -269,7 +371,7 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 
 		set_seed(TRAINING_SEED, deterministic=True)
 		data_initial_train = prepare_fn(df, feature_cols, initial_train_seasons, fit_scaler=True)
-		data_final_val = prepare_fn(df, feature_cols, [final_val_season], scaler=data_initial_train["scaler"])
+		data_final_val = prepare_fn(df, feature_cols, [epoch_selection_season], scaler=data_initial_train["scaler"])
 
 		initial_train_loader = to_loader(
 			data_initial_train,
@@ -291,7 +393,7 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 			cat_config=cat_config,
 			epochs=training_config["max_epochs"],
 		)
-		_, early_stop_history, best_val_loss = train_model(
+		early_stop_model, early_stop_history, best_val_loss = train_model(
 			early_stop_config,
 			initial_train_loader,
 			final_val_loader,
@@ -300,6 +402,20 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 		)
 		best_epoch = early_stop_history["val_loss"].index(min(early_stop_history["val_loss"])) + 1
 		print(f"Early stopping best epoch: {best_epoch} (val_loss={best_val_loss:.5f})")
+
+		print("\n--- Early-stop Model Performance on Epoch-selection Season ---")
+		validation_baseline_metrics = evaluate_implied_baseline(data_final_val, task_type=task_type)
+		log_metric_group("val_baseline", validation_baseline_metrics)
+		validation_metrics = evaluate_model(
+			early_stop_model,
+			data_final_val,
+			device=DEVICE,
+			verbose=True,
+			task_type=task_type,
+		)
+		log_metric_group("val", validation_metrics)
+		mlflow.log_metric("best_val_loss", float(best_val_loss))
+		mlflow.log_metric("best_epoch", int(best_epoch))
 
 		data_train = prepare_fn(df, feature_cols, all_cv_seasons, fit_scaler=True)
 		data_test = prepare_fn(df, feature_cols, [test_season], scaler=data_train["scaler"])
@@ -316,18 +432,27 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 			epochs=best_epoch,
 		)
 
-		baseline_metrics = evaluate_implied_baseline(data_test, task_type=task_type)
-		for metric_name, metric_value in baseline_metrics.items():
-			mlflow.log_metric(f"baseline_{metric_name}", metric_value)
+		test_baseline_metrics = evaluate_implied_baseline(data_test, task_type=task_type)
+		log_metric_group("test_baseline", test_baseline_metrics)
 
 		print("\n--- Training Final Model ---")
 		model, _, _ = train_model(final_config, train_loader, val_loader=None, device=DEVICE, verbose=True)
 
 		print("\n--- Model Performance on Held-out Test Set ---")
-		metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True, task_type=task_type)
-		for metric_name, metric_value in metrics.items():
-			if isinstance(metric_value, (int, float)):
-				mlflow.log_metric(f"test_{metric_name}", metric_value)
+		test_metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True, task_type=task_type)
+		log_metric_group("test", test_metrics)
+
+		run_record = build_latest_run_record(
+			task_type=task_type,
+			epoch_selection_season=epoch_selection_season,
+			test_season=test_season,
+			best_epoch=best_epoch,
+			best_val_loss=best_val_loss,
+			validation_metrics=validation_metrics,
+			test_metrics=test_metrics,
+		)
+
+		update_latest_run_record(task_type, run_record)
 
 		save_model_bundle(
 			task_type=task_type,
@@ -336,17 +461,22 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 			train_config=final_config,
 			training_config=training_config,
 			feature_cols=feature_cols,
-			metrics=metrics,
-			baseline_metrics=baseline_metrics,
+			validation_metrics=validation_metrics,
+			validation_baseline_metrics=validation_baseline_metrics,
+			test_metrics=test_metrics,
+			test_baseline_metrics=test_baseline_metrics,
 			all_cv_seasons=all_cv_seasons,
-			final_val_season=final_val_season,
+			final_val_season=epoch_selection_season,
 			test_season=test_season,
 			best_epoch=best_epoch,
+			best_val_loss=best_val_loss,
 		)
 
 	print_header("DONE")
-	print(f"Test metrics: {metrics}")
-	return metrics
+	print(f"Best validation loss: {best_val_loss:.5f}")
+	print(f"Validation metrics: {run_record['val_metrics']}")
+	print(f"Test metrics: {run_record['test_metrics']}")
+	return run_record
 
 
 
