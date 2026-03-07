@@ -19,6 +19,9 @@ The main training loop is frozen and should be used for branch comparisons:
 - fixed final validation season for epoch selection
 - fixed held-out latest season for acceptance
 
+Decision rules for iterative promotion live in `docs/evaluation_policy.md`.
+Use `docs/model_acceptance_scorecard_template.md` when deciding whether a challenger should replace the current champion.
+
 This is implemented in:
 - `training/train_main_model.py`
 - `training/train_all_models.py`
