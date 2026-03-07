@@ -44,6 +44,7 @@ from training.train_utils import (
 	to_loader,
 	train_model,
 )
+from utils.paths import MODELS_DIR
 
 # ============================================================================
 # SEARCH CONFIGURATION
@@ -67,7 +68,6 @@ PRUNER_REDUCTION_FACTOR = 3
 
 # Paths
 DEFAULT_PARQUET = Path("data/training/understat_df.parquet")
-MODELS_DIR = Path("data/models")
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 os.environ["MLFLOW_TRACKING_URI"] = "mlruns"

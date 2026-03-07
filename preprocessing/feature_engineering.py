@@ -1,12 +1,12 @@
 import polars as pl
 import json
 from pathlib import Path
+from utils.paths import MAPPINGS_DIR
 
 # ---------- Constants ----------
 ROLL_WINDOWS = [3, 5, 10]
 ADJUSTMENT_WINDOW = 10  # Window for computing opponent baseline strength
 PROJECT_ROOT = Path(__file__).parent.parent
-MAPPINGS_DIR = PROJECT_ROOT / "data" / "mappings"
 PROMOTED_TEAMS_PATH = PROJECT_ROOT / "data" / "promoted_teams.json"
 
 # League IDs for embedding lookup (consistent ordering)

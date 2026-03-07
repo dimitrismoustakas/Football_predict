@@ -26,11 +26,11 @@ from prod_run import build_prod_features
 from prod_run import fetch_odds
 from prod_run.generate_html_report import generate_html_report
 from training.models.neural_net import CategoricalConfig, GatedResidualModelBinary
+from utils.paths import MODELS_DIR
 from utils import calculate_betting_allocations, send_email
 
 # Paths
 DATA_DIR = Path("data")
-MODELS_DIR = DATA_DIR / "models"
 PROD_DIR = DATA_DIR / "prod"
 PREDICTIONS_DIR = DATA_DIR / "predictions"
 

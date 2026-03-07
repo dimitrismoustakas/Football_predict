@@ -6,10 +6,10 @@ Covers all Big-5 league teams that have played in European competitions.
 import polars as pl
 import json
 from pathlib import Path
+from utils.paths import MAPPINGS_DIR
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
-MAPPINGS_DIR = DATA_DIR / "mappings"
 
 
 def main():

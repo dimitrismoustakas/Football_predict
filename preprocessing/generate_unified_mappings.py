@@ -3,11 +3,12 @@ import pandas as pd
 import json
 from pathlib import Path
 import difflib
+from utils.paths import MAPPINGS_DIR
 
 UNDERSTAT_FILE = Path("data/training/understat_df.parquet")
 MATCH_HISTORY_FILE = Path("data/match_history/matches.parquet")
-UNDERSTAT_MAPPING_FILE = Path("data/mappings/understat_to_canonical.json")
-FOOTBALLDATA_MAPPING_FILE = Path("data/mappings/footballdata_to_canonical.json")
+UNDERSTAT_MAPPING_FILE = MAPPINGS_DIR / "understat_to_canonical.json"
+FOOTBALLDATA_MAPPING_FILE = MAPPINGS_DIR / "footballdata_to_canonical.json"
 
 # Define Canonical Names for tricky cases
 # Format: "Raw Name": "Canonical Name"

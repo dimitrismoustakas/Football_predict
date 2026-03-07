@@ -393,7 +393,7 @@ away__ppda_for__r10__a  # Away team's avg PPDA (last 10 away matches)
 
 ## 6. Team Mappings
 
-**Location:** `data/mappings/`  
+**Location:** `artifacts/mappings/`  
 **Purpose:** Normalize team names across different data sources
 
 ### Available Mappings

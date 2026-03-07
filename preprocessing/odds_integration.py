@@ -1,9 +1,10 @@
 import polars as pl
 import json
 from pathlib import Path
+from utils.paths import MAPPINGS_DIR
 
 MATCH_HISTORY_PATH = Path("data/match_history/matches.parquet")
-FOOTBALLDATA_MAPPING_PATH = Path("data/mappings/footballdata_to_canonical.json")
+FOOTBALLDATA_MAPPING_PATH = MAPPINGS_DIR / "footballdata_to_canonical.json"
 
 def load_match_history_and_map():
     if not MATCH_HISTORY_PATH.exists() or not FOOTBALLDATA_MAPPING_PATH.exists():

@@ -18,6 +18,7 @@ from training.train_utils import (
 	add_targets_and_implied,
 	prepare_data,
 )
+from utils.paths import MODELS_DIR
 from utils.portfolio import evaluate_portfolio
 
 
@@ -28,7 +29,7 @@ def main():
 	
 	# Old code below - needs updating
 	# Paths
-	model_dir = Path("data/models")
+	model_dir = MODELS_DIR
 	config_path = model_dir / "architecture_config.json"
 	model_path = model_dir / "over_under_arch_tuned.pt"
 	scaler_path = model_dir / "scaler_arch_tuned.joblib"

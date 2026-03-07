@@ -53,11 +53,11 @@ from training.train_utils import (
 	to_loader,
 	train_model,
 )
+from utils.paths import MODELS_DIR
 
 TaskType = Literal["binary", "multiclass"]
 
 DEFAULT_PARQUET = Path(os.environ.get("PARQUET_PATH", "data/training/understat_df.parquet"))
-MODELS_DIR = Path("data/models")
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 ARCH_CONFIG_PATH = Path(os.environ.get("ARCH_CONFIG_PATH", "training/fixed_arch_model_config.json"))

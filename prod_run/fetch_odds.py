@@ -5,6 +5,7 @@ import json
 import requests
 from pathlib import Path
 from datetime import datetime, timezone
+from utils.paths import MAPPINGS_DIR
 
 # League mapping: Understat league ID -> The-Odds-API sport key
 LEAGUE_TO_SPORT_KEY = {
@@ -22,7 +23,6 @@ SPORT_KEY_TO_LEAGUE = {v: k for k, v in LEAGUE_TO_SPORT_KEY.items()}
 CACHE_DIR = Path("data/prod/odds")
 
 # Team name mapping file
-MAPPINGS_DIR = Path("data/mappings")
 TEAM_MAPPING_PATH = MAPPINGS_DIR / "theoddsapi_to_canonical.json"
 
 # Load team mapping at module level

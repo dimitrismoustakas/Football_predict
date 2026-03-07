@@ -27,12 +27,13 @@ from preprocessing.player_feature_engineering import (
     load_all_player_data,
     build_player_team_features,
 )
+from utils.paths import MAPPINGS_DIR
 
 # ---------- Config ----------
 INPUT_GLOB = "data/understat/*/*/matches.parquet"
 OUTPUT_DIR = Path("data/training")
 OUTPUT_PARQUET = OUTPUT_DIR / "understat_df.parquet"
-UNDERSTAT_MAPPING_PATH = Path("data/mappings/understat_to_canonical.json")
+UNDERSTAT_MAPPING_PATH = MAPPINGS_DIR / "understat_to_canonical.json"
 EUROPEAN_SCHEDULE_PATH = Path("data/full_schedule/european_all.csv")
 
 def main():

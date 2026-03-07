@@ -26,7 +26,7 @@ This is a machine learning system for predicting football match outcomes (Win/Dr
   - Filters: both teams must have ≥5 prior games.
   - Feature selection: `ovr__*__r5__h` and `ovr__*__r5__a`.
   - Trains RandomForest (Result) and LogisticRegression (Over/Under).
-  - Outputs models to `data/models/`.
+  - Outputs models to `artifacts/models/`.
 
 ### 4. Production Inference (`prod_run/`)
 - **Workflow**:
@@ -88,14 +88,14 @@ uv run python prod_run/pipeline.py
 
 ### Debugging Feature Mismatches
 - If prod features don't match training: compare `features_lib.py` vs `build_understat_features.py`
-- Check `data/models/features_and_meta.json` for expected feature list
+- Check `artifacts/models/features_and_meta.json` for expected feature list
 - Use `inspect_features.py` to verify null counts and column names
 
 ## Key Files Reference
 - **Production Pipeline**: `prod_run/pipeline.py` (orchestrator), `prod_run/build_prod_features.py` (features)
 - **Feature engineering logic**: `preprocessing/build_understat_features.py` (training), `prod_run/features_lib.py` (prod)
 - **Scraper configs**: Leagues in `LEAGUES_DEFAULT` (hardcoded in scrapers)
-- **Model artifacts**: `data/models/features_and_meta.json` (source of truth for feature list)
+- **Model artifacts**: `artifacts/models/features_and_meta.json` (source of truth for feature list)
 - **Dependencies**: `pyproject.toml` (polars>=1.34.0, scikit-learn>=1.7.2, scraperfc>=3.4.0, soccerdata>=1.8.2)
 
 ## Known Gaps

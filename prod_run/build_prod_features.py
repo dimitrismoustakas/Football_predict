@@ -32,6 +32,7 @@ from preprocessing.player_feature_engineering import (
     build_player_team_features,
 )
 from prod_run.elo_scrap import build_prod_elo
+from utils.paths import MAPPINGS_DIR
 
 LEAGUES = ["ENG-Premier League", "ESP-La Liga", "GER-Bundesliga", "ITA-Serie A", "FRA-Ligue 1"]
 OUTPUT_DIR = Path("data/prod")
@@ -122,7 +123,7 @@ def main():
     lf = rename_and_cast(lf)
     
     # Apply Canonical Mapping to Production Data
-    UNDERSTAT_MAPPING_PATH = Path("data/mappings/understat_to_canonical.json")
+    UNDERSTAT_MAPPING_PATH = MAPPINGS_DIR / "understat_to_canonical.json"
     if UNDERSTAT_MAPPING_PATH.exists():
         with open(UNDERSTAT_MAPPING_PATH, "r") as f:
             u_mapping = json.load(f)
@@ -152,7 +153,7 @@ def main():
             elo_asof_path = elo_paths["elo_asof"]
             elo_current = pl.read_parquet(elo_asof_path)
             
-            with open("data/mappings/clubelo_to_canonical.json", "r") as f:
+            with open(MAPPINGS_DIR / "clubelo_to_canonical.json", "r") as f:
                 mapping = json.load(f)
             
             mapping_df = pl.DataFrame([{"team_clubelo": k, "team_canonical": v} for k, v in mapping.items()])

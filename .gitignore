@@ -17,9 +17,5 @@ secrets/
 .env
 mlruns/
 
-# Data (ignore everything besides mappings and models)
-data/*
-!data/mappings/
-!data/mappings/**
-!data/models/
-!data/models/**
+# Data
+data/
