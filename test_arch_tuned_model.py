@@ -1,5 +1,6 @@
 """
 Simple script to test the architecture-tuned model on validation and test sets.
+NOTE: This file needs to be updated to use the new GatedResidualModelBinary.
 """
 
 import json
@@ -10,7 +11,7 @@ import numpy as np
 import torch
 from sklearn.metrics import accuracy_score, brier_score_loss, log_loss
 
-from training.models.neural_net import MLP
+from training.models.neural_net import GatedResidualModelBinary
 from training.train_utils import (
 	load_frame,
 	filter_min_history,
@@ -21,6 +22,11 @@ from utils.portfolio import evaluate_portfolio
 
 
 def main():
+	print("This test script needs to be updated for the new gated model architecture.")
+	print("See training/test_gated_model.py for an example of how to use the new models.")
+	return
+	
+	# Old code below - needs updating
 	# Paths
 	model_dir = Path("data/models")
 	config_path = model_dir / "architecture_config.json"

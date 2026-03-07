@@ -1,5 +1,8 @@
 """
 Production Pipeline for Over/Under Neural Network Model
+
+NOTE: This pipeline uses the GatedResidualModelBinary architecture.
+Requires a trained gated model - run architecture search to generate one.
 """
 import os
 import sys
@@ -22,7 +25,7 @@ sys.path.append(os.getcwd())
 from prod_run import build_prod_features
 from prod_run import fetch_odds
 from prod_run.generate_html_report import generate_html_report
-from training.models.neural_net import MLP, _logits
+from training.models.neural_net import GatedResidualModelBinary, _logits
 from utils import calculate_betting_allocations, send_email
 
 # API Key
@@ -36,10 +39,10 @@ MODELS_DIR = DATA_DIR / "models"
 PROD_DIR = DATA_DIR / "prod"
 PREDICTIONS_DIR = DATA_DIR / "predictions"
 
-# Use the Sharpe-optimized model (final model from Phase 2)
-MODEL_PATH = MODELS_DIR / "over_under_decorrelated.pt"
-META_PATH = MODELS_DIR / "over_under_metadata.json"
-SCALER_PATH = MODELS_DIR / "scaler.joblib"
+# Use the gated model
+MODEL_PATH = MODELS_DIR / "over_under_gated.pt"
+META_PATH = MODELS_DIR / "over_under_gated_metadata.json"
+SCALER_PATH = MODELS_DIR / "scaler_gated.joblib"
 PROD_FEATURES_PATH = PROD_DIR / "features_season.parquet"
 OUTPUT_CSV_PATH = PREDICTIONS_DIR / "upcoming_predictions.csv"
 OUTPUT_HTML_PATH = PREDICTIONS_DIR / "upcoming_predictions.html"
@@ -52,7 +55,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ============================================================================
 
 def load_model():
-	"""Load the model, metadata, and scaler."""
+	"""Load the gated model, metadata, and scaler."""
 	print("Loading model and metadata...")
 	
 	if not META_PATH.exists():
@@ -68,15 +71,15 @@ def load_model():
 	feature_cols = meta["features"]
 	arch = meta["architecture"]
 	
-	# Build model using imported MLP class
-	# Note: output_dim defaults to 1 for binary classification (over/under)
-	model = MLP(
+	# Build gated model
+	model = GatedResidualModelBinary(
 		input_dim=len(feature_cols),
 		hidden_layers=arch["hidden_layers"],
 		dropout=arch["dropout"],
 		norm=arch["norm"],
 		activation=arch.get("activation", "relu"),
-		output_dim=arch.get("output_dim", 1),
+		gate_hidden_dim=arch.get("gate_hidden_dim", 32),
+		gate_target_budget=arch.get("gate_target_budget", 0.2),
 	)
 	model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE, weights_only=True))
 	model.to(DEVICE)
@@ -91,19 +94,19 @@ def load_model():
 # PREDICTION
 # ============================================================================
 
-def predict(model, scaler, feature_cols, X_raw: np.ndarray, implied_probs: np.ndarray) -> np.ndarray:
+def predict(model, scaler, feature_cols, X_raw: np.ndarray, implied_probs: np.ndarray, raw_margin: np.ndarray) -> np.ndarray:
+	"""Generate predictions using the gated model."""
 	# Scale features
 	X_scaled = scaler.transform(X_raw)
 	
 	# Convert to tensors
 	X_tensor = torch.tensor(X_scaled, dtype=torch.float32).to(DEVICE)
 	implied_tensor = torch.tensor(implied_probs, dtype=torch.float32).to(DEVICE)
+	raw_margin_tensor = torch.tensor(raw_margin, dtype=torch.float32).to(DEVICE)
 	
-	# Predict
+	# Predict using gated model
 	with torch.no_grad():
-		residual_logits = model(X_tensor).squeeze(1)
-		implied_logits = _logits(implied_tensor)
-		pred_logits = residual_logits + implied_logits
+		pred_logits = model(X_tensor, None, implied_tensor, raw_margin_tensor)
 		probs = torch.sigmoid(pred_logits).cpu().numpy()
 	
 	return probs
@@ -205,7 +208,7 @@ def main():
 		print("No games remaining after dropping nulls")
 		return
 	
-	# 6. Calculate implied probabilities
+	# 6. Calculate implied probabilities and raw margin
 	print("\n--- Step 6: Predicting ---")
 	# Use odds from the odds file (suffixed with _odds after merge)
 	odds_over_col = "odds_over_odds" if "odds_over_odds" in merged.columns else "odds_over"
@@ -216,11 +219,14 @@ def main():
 	norm = implied_over + implied_under
 	implied_probs = (implied_over / norm).values
 	
+	# Raw margin = sum of implied probs - 1 (bookmaker's vig)
+	raw_margin = (implied_over + implied_under - 1).values
+	
 	# Get feature matrix
 	X_raw = merged[feature_cols].values
 	
 	# Predict
-	probs = predict(model, scaler, feature_cols, X_raw, implied_probs)
+	probs = predict(model, scaler, feature_cols, X_raw, implied_probs, raw_margin)
 	
 	print(f"Generated predictions for {len(probs)} games")
 	

@@ -1,33 +1,29 @@
 """Neural network models and loss functions."""
 
 from training.models.neural_net import (
-	MLP,
+	GatedResidualModel,
+	GatedResidualModelBinary,
+	MLPWithHiddenAccess,
 	TrainConfig,
 	TaskType,
 	CategoricalConfig,
 	CategoricalEmbedder,
-	residual_market_loss_corr,
-	residual_market_loss_multiclass,
-	batch_corr,
-	logits_conditional_corr,
-	multiclass_batch_corr,
-	multiclass_conditional_corr,
+	gated_loss_multiclass,
+	gated_loss_binary,
 	_logits,
 	_log_softmax_from_implied,
 )
 
 __all__ = [
-	"MLP",
+	"GatedResidualModel",
+	"GatedResidualModelBinary",
+	"MLPWithHiddenAccess",
 	"TrainConfig",
 	"TaskType",
 	"CategoricalConfig",
 	"CategoricalEmbedder",
-	"residual_market_loss_corr",
-	"residual_market_loss_multiclass",
-	"batch_corr",
-	"logits_conditional_corr",
-	"multiclass_batch_corr",
-	"multiclass_conditional_corr",
+	"gated_loss_multiclass",
+	"gated_loss_binary",
 	"_logits",
 	"_log_softmax_from_implied",
 ]

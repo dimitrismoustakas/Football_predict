@@ -191,15 +191,29 @@ def evaluate_model(
 	model.eval()
 	X = torch.tensor(data["X"], dtype=torch.float32).to(device)
 	
-	# Handle categorical features if model expects them
+	# Categorical features are optional; all in-repo models accept cat_features as an optional arg.
 	cat_features = None
-	if "cat_features" in data and hasattr(model, "cat_embedder") and model.cat_embedder is not None:
+	if "cat_features" in data:
 		cat_features = torch.tensor(data["cat_features"], dtype=torch.long).to(device)
 	
 	if task_type == "binary":
 		return _evaluate_model_binary(model, X, cat_features, data, device, verbose)
 	else:
 		return _evaluate_model_multiclass(model, X, cat_features, data, device, verbose)
+
+
+def _model_forward(
+	model: nn.Module,
+	X: torch.Tensor,
+	cat_features: torch.Tensor,
+	implied: torch.Tensor,
+	raw_margin: torch.Tensor,
+) -> torch.Tensor:
+	"""Forward pass that respects gated models when market features are available."""
+	use_market = implied is not None and raw_margin is not None
+	if use_market and hasattr(model, "gate_head"):
+		return model(X, cat_features, implied, raw_margin)
+	return model(X, cat_features)
 
 
 def _evaluate_model_binary(
@@ -211,12 +225,12 @@ def _evaluate_model_binary(
 	verbose: bool,
 ) -> Dict:
 	"""Evaluate binary classification model (over/under)."""
-	implied = torch.tensor(data["implied"], dtype=torch.float32).unsqueeze(1).to(device)
+	implied = torch.tensor(data["implied"], dtype=torch.float32).to(device)
+	raw_margin = torch.tensor(data["raw_margin"], dtype=torch.float32).to(device)
 
 	with torch.no_grad():
-		residual_logits = model(X, cat_features)
-		logits = _logits(implied) + residual_logits
-		prob = torch.sigmoid(logits).squeeze(1).cpu().numpy()
+		pred_logits = _model_forward(model, X, cat_features, implied, raw_margin)
+		prob = torch.sigmoid(pred_logits).view(-1).cpu().numpy()
 
 	y_true = data["y"]
 	implied_np = data["implied"]
@@ -265,11 +279,10 @@ def _evaluate_model_multiclass(
 ) -> Dict:
 	"""Evaluate multiclass model (home/draw/away result)."""
 	implied = torch.tensor(data["implied"], dtype=torch.float32).to(device)  # (n, 3)
+	raw_margin = torch.tensor(data["raw_margin"], dtype=torch.float32).to(device)
 
 	with torch.no_grad():
-		residual_logits = model(X, cat_features)  # (n, 3)
-		implied_log = _log_softmax_from_implied(implied)
-		pred_logits = residual_logits + implied_log
+		pred_logits = _model_forward(model, X, cat_features, implied, raw_margin)
 		probs = F.softmax(pred_logits, dim=-1).cpu().numpy()  # (n, 3)
 
 	y_true = data["y"]

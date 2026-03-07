@@ -21,7 +21,6 @@ from preprocessing.feature_engineering import (
     build_match_level,
     merge_european_schedule,
     compute_schedule_features,
-    compute_games_last_15_days,
     add_categorical_features,
     load_promoted_teams,
     build_promoted_teams_set,
@@ -243,18 +242,12 @@ def main():
         print("Merging European schedule for fixture congestion features...")
         combined_long = merge_european_schedule(long_feats, EUROPEAN_SCHEDULE_PATH)
         
-        # Compute schedule features (days_since_last_match)
-        combined_long = compute_schedule_features(combined_long)
+        # Compute schedule features (days_since_last_match, games_last_15_days)
+        print("Computing schedule features...")
+        combined_df = compute_schedule_features(combined_long)
         
-        # Compute games_last_15_days (requires collected DataFrame)
-        print("Computing games_last_15_days...")
-        combined_df = combined_long.collect()
-        combined_df = compute_games_last_15_days(combined_df)
-        
-        # Filter back to domestic games only (is_european = False)
+        # Filter back to domestic games only and join schedule features to long_feats
         domestic_with_schedule = combined_df.filter(pl.col("is_european") == False)
-        
-        # Join schedule features back to long_feats
         schedule_cols = ["match_id", "team", "days_since_last_match", "games_last_15_days"]
         schedule_feats = domestic_with_schedule.select(schedule_cols)
         

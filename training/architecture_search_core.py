@@ -38,7 +38,6 @@ from training.train_utils import (
 	generate_rolling_cv_folds,
 	get_num_leagues,
 	get_test_season,
-	load_existing_model,
 	load_frame,
 	precompute_fold_data,
 	prepare_data,
@@ -157,7 +156,8 @@ def create_joint_objective(
 ):
 	"""Create objective function for joint architecture + optimizer search."""
 	if allowed_activations is None:
-		allowed_activations = ["relu", "silu", "gelu", "geglu"]
+		# Note: geglu excluded as it requires special layer construction (not drop-in activation)
+		allowed_activations = ["relu", "silu", "gelu"]
 	if allowed_norms is None:
 		allowed_norms = ["none", "ln"]
 	if allowed_shapes is None:
@@ -166,6 +166,10 @@ def create_joint_objective(
 		allowed_base_widths = [128, 256, 512]
 	
 	def objective(trial: optuna.Trial) -> float:
+		# Make individual trials comparable by resetting RNG state.
+		# Note: exact determinism on GPU is not guaranteed unless set_seed(..., deterministic=True).
+		set_seed(42 + trial.number, deterministic=False)
+		
 		base_width = trial.suggest_categorical("base_width", allowed_base_widths)
 		n_layers = trial.suggest_int("n_layers", 2, 5)
 		shape = trial.suggest_categorical("shape", allowed_shapes)
@@ -280,9 +284,12 @@ def run_coarse_search(
 			reduction_factor=PRUNER_REDUCTION_FACTOR,
 		)
 		
+		sampler = optuna.samplers.TPESampler(seed=42)
+		
 		study = optuna.create_study(
 			direction="minimize",
 			pruner=pruner,
+			sampler=sampler,
 			study_name=f"{prefix}phase1_coarse",
 		)
 		
@@ -412,9 +419,12 @@ def run_refinement_search(
 			reduction_factor=PRUNER_REDUCTION_FACTOR,
 		)
 		
+		sampler = optuna.samplers.TPESampler(seed=42)
+		
 		study = optuna.create_study(
 			direction="minimize",
 			pruner=pruner,
+			sampler=sampler,
 			study_name=f"{prefix}phase2_refine",
 		)
 		
@@ -565,110 +575,58 @@ def run_multi_seed_evaluation(
 
 def compare_and_save_model(
 	new_model: Any,
-	new_metrics: Dict,
 	new_config: TrainConfig,
 	feature_cols: List[str],
 	final_epochs: int,
 	data_train: Dict,
-	df: pl.DataFrame,
-	test_season: str,
 	task_type: TaskType,
 ) -> bool:
-	"""Compare new model against existing and save if better."""
+	"""Save the latest model and config artifacts."""
 	cfg = TASK_CONFIG[task_type]
 	model_path = MODELS_DIR / cfg["model_path"]
 	config_path = MODELS_DIR / cfg["config_path"]
 	scaler_path = MODELS_DIR / cfg["scaler_path"]
-	comparison_metric = cfg["comparison_metric"]
-	prepare_fn = cfg["prepare_fn"]
 	
-	existing_model, existing_config = load_existing_model(config_path, model_path, DEVICE, task_type=task_type)
+	torch.save(new_model.state_dict(), model_path)
+	print(f"Model saved to {model_path}")
 	
-	new_metric_val = new_metrics[comparison_metric]
+	joblib.dump(data_train["scaler"], scaler_path)
+	print(f"Scaler saved to {scaler_path}")
 	
-	if existing_model is None:
-		print("\nNo existing model found. Saving new model.")
-		save_new = True
-	else:
-		print("\nEvaluating existing model on test set...")
-		try:
-			old_feature_cols = existing_config.get("feature_cols") if existing_config else None
-			old_scaler = joblib.load(scaler_path) if scaler_path.exists() else None
-			
-			if old_feature_cols and set(old_feature_cols) != set(feature_cols):
-				print(f"Feature sets differ ({len(old_feature_cols)} vs {len(feature_cols)} features).")
-				print("Re-preparing test data with old model's features and scaler...")
-				if old_scaler is None:
-					raise FileNotFoundError(f"Missing saved scaler: {scaler_path}")
-				data_test_old = prepare_fn(df, old_feature_cols, [test_season], scaler=old_scaler)
-			else:
-				scaler_for_existing = old_scaler if old_scaler is not None else data_train["scaler"]
-				data_test_old = prepare_fn(df, feature_cols, [test_season], scaler=scaler_for_existing)
-			
-			existing_metrics = evaluate_model(existing_model, data_test_old, device=DEVICE, verbose=False, task_type=task_type)
-			existing_metric_val = existing_metrics[comparison_metric]
-			
-			print(f"\n{'='*40}")
-			print("MODEL COMPARISON (on test set)")
-			print(f"{'='*40}")
-			print(f"Existing model {comparison_metric}: {existing_metric_val:.5f}")
-			print(f"New model {comparison_metric}:      {new_metric_val:.5f}")
-			
-			if new_metric_val < existing_metric_val:
-				improvement = (existing_metric_val - new_metric_val) / existing_metric_val * 100
-				print(f"New model is BETTER by {improvement:.2f}%")
-				save_new = True
-			else:
-				degradation = (new_metric_val - existing_metric_val) / existing_metric_val * 100
-				print(f"Existing model is better by {degradation:.2f}%")
-				print("Keeping existing model.")
-				save_new = False
-		except Exception as e:
-			print(f"Failed to evaluate existing model: {e}")
-			print("Saving new model (existing model incompatible).")
-			save_new = True
-	
-	if save_new:
-		torch.save(new_model.state_dict(), model_path)
-		print(f"Model saved to {model_path}")
-		
-		joblib.dump(data_train["scaler"], scaler_path)
-		print(f"Scaler saved to {scaler_path}")
-		
-		cat_config_dict = None
-		if new_config.cat_config is not None:
-			cat_config_dict = {
-				"num_leagues": new_config.cat_config.num_leagues,
-				"league_embed_dim": new_config.cat_config.league_embed_dim,
-			}
-		
-		config_dict = {
-			"input_dim": new_config.input_dim,
-			"hidden_layers": new_config.hidden_layers,
-			"activation": new_config.activation,
-			"norm": new_config.norm,
-			"dropout": new_config.dropout,
-			"lr": new_config.lr,
-			"weight_decay": new_config.weight_decay,
-			"beta1": new_config.beta1,
-			"batch_size": new_config.batch_size,
-			"lambda_repulsion": new_config.lambda_repulsion,
-			"lambda_corr": new_config.lambda_corr,
-			"final_epochs": final_epochs,
-			"feature_cols": feature_cols,
-			"task_type": task_type,
-			"output_dim": 1 if task_type == "binary" else 3,
-			"cat_config": cat_config_dict,
+	cat_config_dict = None
+	if new_config.cat_config is not None:
+		cat_config_dict = {
+			"num_leagues": new_config.cat_config.num_leagues,
+			"league_embed_dim": new_config.cat_config.league_embed_dim,
 		}
-		with open(config_path, "w") as f:
-			json.dump(config_dict, f, indent=2)
-		print(f"Config saved to {config_path}")
-		
-		mlflow.log_artifact(str(model_path))
-		mlflow.log_artifact(str(scaler_path))
-		mlflow.log_artifact(str(config_path))
 	
-	return save_new
+	config_dict = {
+		"input_dim": new_config.input_dim,
+		"hidden_layers": new_config.hidden_layers,
+		"activation": new_config.activation,
+		"norm": new_config.norm,
+		"dropout": new_config.dropout,
+		"lr": new_config.lr,
+		"weight_decay": new_config.weight_decay,
+		"beta1": new_config.beta1,
+		"batch_size": new_config.batch_size,
+		"lambda_repulsion": new_config.lambda_repulsion,
+		"lambda_corr": new_config.lambda_corr,
+		"final_epochs": final_epochs,
+		"feature_cols": feature_cols,
+		"task_type": task_type,
+		"output_dim": 1 if task_type == "binary" else 3,
+		"cat_config": cat_config_dict,
+	}
+	with open(config_path, "w") as f:
+		json.dump(config_dict, f, indent=2)
+	print(f"Config saved to {config_path}")
+	
+	mlflow.log_artifact(str(model_path))
+	mlflow.log_artifact(str(scaler_path))
+	mlflow.log_artifact(str(config_path))
+
+	return True
 
 
 def train_final_model(
@@ -822,13 +780,10 @@ def train_final_model(
 		
 		model_saved = compare_and_save_model(
 			new_model=model,
-			new_metrics=metrics,
 			new_config=config,
 			feature_cols=feature_cols,
 			final_epochs=best_epoch,
 			data_train=data_train,
-			df=df,
-			test_season=test_season,
 			task_type=task_type,
 		)
 		

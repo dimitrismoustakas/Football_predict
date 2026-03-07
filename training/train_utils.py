@@ -16,6 +16,7 @@ Continuous features (via StandardScaler):
 - season_progress: [0,1] representing position in season
 """
 
+import sys
 import copy
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -25,16 +26,17 @@ import numpy as np
 import polars as pl
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 
 from training.models.neural_net import (
-	MLP,
+	GatedResidualModel,
+	GatedResidualModelBinary,
 	TrainConfig,
 	TaskType,
-	CategoricalConfig,
-	residual_market_loss_corr,
-	residual_market_loss_multiclass,
+	gated_loss_multiclass,
+	gated_loss_binary,
 )
 from training.evaluation.metrics import accuracy_score, brier_score_loss, log_loss
 
@@ -59,29 +61,127 @@ def load_frame(parquet_path: Path) -> pl.DataFrame:
 
 def select_feature_columns(df: pl.DataFrame) -> List[str]:
 	"""Select feature columns based on naming convention."""
-	cols = df.columns
+	cols = set(df.columns)
 	feat_cols = [
-		c
-		for c in cols
-		if c.startswith("ovr__")
-		and "__r5" in c
-		and "__sum__" not in c
-		and not c.startswith("ovr__games__")
-		and (c.endswith("__h") or c.endswith("__a"))
+		"away__deep_against__r5__a",
+		"away__deep_against__sum__r5__a",
+		"away__deep_for__r5__a",
+		"away__deep_for__sum__r5__a",
+		"away__npxg_against__r5__a",
+		"away__npxg_against__sum__r5__a",
+		"away__npxg_for__r5__a",
+		"away__npxg_for__sum__r5__a",
+		"away__ppda_against__r5__a",
+		"away__ppda_against__sum__r5__a",
+		"away__ppda_for__r5__a",
+		"away__ppda_for__sum__r5__a",
+		"away__xg_against__r5__a",
+		"away__xg_against__sum__r5__a",
+		"away__xg_for__r5__a",
+		"away__xg_for__sum__r5__a",
+		"away__xgd__r5__a",
+		"away__xgd__sum__r5__a",
+		"away_minutes_hhi_r15",
+		"away_unique_players_r15",
+		"away_unique_players_r5_sum",
+		"away_xa_hhi_r15",
+		"away_xg_hhi_r15",
+		"days_since_last_match__a",
+		"days_since_last_match__h",
+		"elo_diff",
+		"elo_diff_r5__a",
+		"elo_diff_r5__h",
+		"elo_mean",
+		"elo_sum",
+		"games_last_15_days__a",
+		"games_last_15_days__h",
+		"home__deep_against__r5__h",
+		"home__deep_against__sum__r5__h",
+		"home__deep_for__r5__h",
+		"home__deep_for__sum__r5__h",
+		"home__npxg_against__r5__h",
+		"home__npxg_against__sum__r5__h",
+		"home__npxg_for__r5__h",
+		"home__npxg_for__sum__r5__h",
+		"home__ppda_against__r5__h",
+		"home__ppda_against__sum__r5__h",
+		"home__ppda_for__r5__h",
+		"home__ppda_for__sum__r5__h",
+		"home__xg_against__r5__h",
+		"home__xg_against__sum__r5__h",
+		"home__xg_for__r5__h",
+		"home__xg_for__sum__r5__h",
+		"home__xgd__r5__h",
+		"home__xgd__sum__r5__h",
+		"home_minutes_hhi_r15",
+		"home_unique_players_r15",
+		"home_unique_players_r5_sum",
+		"home_xa_hhi_r15",
+		"home_xg_hhi_r15",
+		"opponent_elo_r5__a",
+		"opponent_elo_r5__h",
+		"opponent_elo_std_r5__a",
+		"opponent_elo_std_r5__h",
+		"ovr__adj__ga__r10__a",
+		"ovr__adj__ga__r10__h",
+		"ovr__adj__gf__r10__a",
+		"ovr__adj__gf__r10__h",
+		"ovr__adj__npxg_against__r10__a",
+		"ovr__adj__npxg_against__r10__h",
+		"ovr__adj__npxg_for__r10__a",
+		"ovr__adj__npxg_for__r10__h",
+		"ovr__adj__shots_against__r10__a",
+		"ovr__adj__shots_against__r10__h",
+		"ovr__adj__shots_for__r10__a",
+		"ovr__adj__shots_for__r10__h",
+		"ovr__adj__sot_against__r10__a",
+		"ovr__adj__sot_against__r10__h",
+		"ovr__adj__sot_for__r10__a",
+		"ovr__adj__sot_for__r10__h",
+		"ovr__adj__xg_against__r10__a",
+		"ovr__adj__xg_against__r10__h",
+		"ovr__adj__xg_for__r10__a",
+		"ovr__adj__xg_for__r10__h",
+		"ovr__draw__r5__a",
+		"ovr__draw__r5__h",
+		"ovr__draw__sum__r5__a",
+		"ovr__draw__sum__r5__h",
+		"ovr__loss__r5__a",
+		"ovr__loss__r5__h",
+		"ovr__loss__sum__r5__a",
+		"ovr__loss__sum__r5__h",
+		"ovr__npxg_against__r5__a",
+		"ovr__npxg_against__r5__h",
+		"ovr__npxg_against__sum__r5__a",
+		"ovr__npxg_against__sum__r5__h",
+		"ovr__npxg_for__r5__a",
+		"ovr__npxg_for__r5__h",
+		"ovr__npxg_for__sum__r5__a",
+		"ovr__npxg_for__sum__r5__h",
+		"ovr__points__r5__a",
+		"ovr__points__r5__h",
+		"ovr__points__sum__r5__a",
+		"ovr__points__sum__r5__h",
+		"ovr__win__r5__a",
+		"ovr__win__r5__h",
+		"ovr__win__sum__r5__a",
+		"ovr__win__sum__r5__h",
+		"ovr__xg_against__r5__a",
+		"ovr__xg_against__r5__h",
+		"ovr__xg_against__sum__r5__a",
+		"ovr__xg_against__sum__r5__h",
+		"ovr__xg_for__r5__a",
+		"ovr__xg_for__r5__h",
+		"ovr__xg_for__sum__r5__a",
+		"ovr__xg_for__sum__r5__h",
+		"ovr__xgd__r5__a",
+		"ovr__xgd__r5__h",
+		"ovr__xgd__sum__r5__a",
+		"ovr__xgd__sum__r5__h",
+		"season_progress",
 	]
-	# Add Elo features if present
-	feat_cols.extend(
-		c for c in cols
-		if 'elo' in c and c not in {'home_elo', 'away_elo'}
-	)
-	# Add schedule congestion features if present
-	for sc in ["days_since_last_match__h", "days_since_last_match__a", "games_last_15_days__h", "games_last_15_days__a"]:
-		if sc in cols:
-			feat_cols.append(sc)
-	# Add season_progress (continuous [0,1] feature)
-	if "season_progress" in cols:
-		feat_cols.append("season_progress")
-	return sorted(feat_cols)
+	# Return only columns that exist in the dataframe
+	return [c for c in feat_cols if c in cols]
 
 
 def filter_min_history(df: pl.DataFrame) -> pl.DataFrame:
@@ -246,11 +346,13 @@ def add_targets_and_implied(df: pl.DataFrame) -> pl.DataFrame:
 		.alias("match_result")
 	)
 
-	implied_over = 1 / pl.col("odds_over")
-	implied_under = 1 / pl.col("odds_under")
-	norm = implied_over + implied_under
+	prob_cols, norm = _normalize_implied(["odds_over", "odds_under"], "implied")
 
-	return df.with_columns((implied_over / norm).alias("implied_over_prob"))
+	return df.with_columns([
+		(prob_cols["implied_over"]).alias("implied_over_prob"),
+		# Raw margin (overround) - carries info about bookmaker confidence/liquidity
+		norm.alias("raw_margin_ou"),
+	])
 
 
 def extract_categorical_features(df: pl.DataFrame) -> np.ndarray:
@@ -305,41 +407,50 @@ def add_targets_and_implied_result(df: pl.DataFrame) -> pl.DataFrame:
 		.alias("result_label")
 	)
 	
-	# Compute implied probabilities (normalized to remove overround)
-	implied_home = 1 / pl.col("odds_home")
-	implied_draw = 1 / pl.col("odds_draw")
-	implied_away = 1 / pl.col("odds_away")
-	norm = implied_home + implied_draw + implied_away
-	
+	prob_cols, norm = _normalize_implied([
+		"odds_home",
+		"odds_draw",
+		"odds_away",
+	], "implied")
+
 	return df.with_columns([
-		(implied_home / norm).alias("implied_home"),
-		(implied_draw / norm).alias("implied_draw"),
-		(implied_away / norm).alias("implied_away"),
+		(prob_cols["implied_home"]).alias("implied_home"),
+		(prob_cols["implied_draw"]).alias("implied_draw"),
+		(prob_cols["implied_away"]).alias("implied_away"),
+		# Raw margin (overround) - carries info about bookmaker confidence/liquidity
+		norm.alias("raw_margin"),
 	])
 
 
-def prepare_data(
+def _normalize_implied(odds_cols: List[str], prefix: str) -> Tuple[Dict[str, pl.Expr], pl.Expr]:
+	"""Compute normalized implied probabilities and return per-col expressions plus norm."""
+	inv_odds = [1 / pl.col(col) for col in odds_cols]
+	norm = inv_odds[0]
+	for expr in inv_odds[1:]:
+		norm = norm + expr
+	
+	prob_cols = {}
+	for col, expr in zip(odds_cols, inv_odds):
+		suffix = col.replace("odds_", "")
+		prob_cols[f"{prefix}_{suffix}"] = expr / norm
+	
+	return prob_cols, norm
+
+
+def _prepare_base(
 	df: pl.DataFrame,
 	feature_cols: List[str],
 	season_list: List[str],
-	scaler: StandardScaler = None,
-	fit_scaler: bool = False,
-) -> Dict[str, np.ndarray]:
-	"""Selects data, scales features, extracts categorical features, returns a dictionary of arrays."""
+	scaler: StandardScaler,
+	fit_scaler: bool,
+	req_cols: List[str],
+	filter_expr: pl.Expr,
+) -> Tuple[pl.DataFrame, np.ndarray, np.ndarray, StandardScaler]:
+	"""Filter, drop nulls, scale features, and extract categorical features."""
 	part = df.filter(pl.col("season").cast(pl.Utf8).is_in(list(season_list)))
 
-	req_cols = list(
-		set(feature_cols)
-		| {"Over", "implied_over_prob", "odds_over", "odds_under", "date"}
-		| set(CAT_COLS)
-	)
-
 	initial_count = len(part)
-	part = part.filter(
-		(pl.col("odds_over") > 1.0)
-		& (pl.col("odds_under") > 1.0)
-		& pl.col("implied_over_prob").is_finite()
-	).drop_nulls(subset=req_cols)
+	part = part.filter(filter_expr).drop_nulls(subset=req_cols)
 	final_count = len(part)
 
 	if initial_count != final_count:
@@ -354,15 +465,47 @@ def prepare_data(
 		X = scaler.fit_transform(X)
 	elif scaler is not None:
 		X = scaler.transform(X)
-	
-	# Extract categorical features
+
 	cat_features = extract_categorical_features(part)
+
+	return part, X, cat_features, scaler
+
+
+def prepare_data(
+	df: pl.DataFrame,
+	feature_cols: List[str],
+	season_list: List[str],
+	scaler: StandardScaler = None,
+	fit_scaler: bool = False,
+) -> Dict[str, np.ndarray]:
+	"""Selects data, scales features, extracts categorical features, returns a dictionary of arrays."""
+	req_cols = list(
+		set(feature_cols)
+		| {"Over", "implied_over_prob", "odds_over", "odds_under", "date", "raw_margin_ou"}
+		| set(CAT_COLS)
+	)
+
+	filter_expr = (
+		(pl.col("odds_over") > 1.0)
+		& (pl.col("odds_under") > 1.0)
+		& pl.col("implied_over_prob").is_finite()
+	)
+	part, X, cat_features, scaler = _prepare_base(
+		df,
+		feature_cols,
+		season_list,
+		scaler,
+		fit_scaler,
+		req_cols,
+		filter_expr,
+	)
 
 	return {
 		"X": X,
 		"y": part.select("Over").to_pandas().values.flatten().astype(int),
 		"implied": part.select("implied_over_prob").to_pandas().values.flatten(),
 		"cat_features": cat_features,
+		"raw_margin": part.select("raw_margin_ou").to_pandas().values.flatten(),
 		"odds_over": part.select("odds_over").to_pandas().values.flatten(),
 		"odds_under": part.select("odds_under").to_pandas().values.flatten(),
 		"dates": part.select("date").to_pandas().values.flatten(),
@@ -384,53 +527,42 @@ def prepare_data_result(
 		- X: scaled features
 		- y: result labels (0=Home, 1=Draw, 2=Away)
 		- implied: shape (n, 3) with [home, draw, away] implied probs
-		- cat_features: shape (n, 4) with [league_idx, stage_idx, home_promoted, away_promoted]
+		- cat_features: shape (n, 3) with [league_idx, home_promoted, away_promoted]
 		- odds_home, odds_draw, odds_away: original odds
 		- dates: match dates
 		- scaler: fitted StandardScaler
 	"""
-	part = df.filter(pl.col("season").cast(pl.Utf8).is_in(list(season_list)))
-	
 	req_cols = list(
 		set(feature_cols)
 		| {"result_label", "implied_home", "implied_draw", "implied_away",
-		   "odds_home", "odds_draw", "odds_away", "date"}
+		   "odds_home", "odds_draw", "odds_away", "date", "raw_margin"}
 		| set(CAT_COLS)
 	)
-	
-	initial_count = len(part)
-	part = part.filter(
+
+	filter_expr = (
 		(pl.col("odds_home") > 1.0)
 		& (pl.col("odds_draw") > 1.0)
 		& (pl.col("odds_away") > 1.0)
 		& pl.col("implied_home").is_finite()
 		& pl.col("implied_draw").is_finite()
 		& pl.col("implied_away").is_finite()
-	).drop_nulls(subset=req_cols)
-	final_count = len(part)
-	
-	if initial_count != final_count:
-		print(
-			f"Dropped {initial_count - final_count} rows due to invalid odds/missing data in {season_list}"
-		)
-	
-	X = part.select(feature_cols).to_pandas().values
-	
-	if fit_scaler:
-		scaler = StandardScaler()
-		X = scaler.fit_transform(X)
-	elif scaler is not None:
-		X = scaler.transform(X)
-	
+	)
+	part, X, cat_features, scaler = _prepare_base(
+		df,
+		feature_cols,
+		season_list,
+		scaler,
+		fit_scaler,
+		req_cols,
+		filter_expr,
+	)
+
 	# Stack implied probs into shape (n, 3)
 	implied = np.stack([
 		part.select("implied_home").to_pandas().values.flatten(),
 		part.select("implied_draw").to_pandas().values.flatten(),
 		part.select("implied_away").to_pandas().values.flatten(),
 	], axis=1)
-	
-	# Extract categorical features
-	cat_features = extract_categorical_features(part)
 	
 	return {
 		"X": X,
@@ -440,6 +572,7 @@ def prepare_data_result(
 		"odds_home": part.select("odds_home").to_pandas().values.flatten(),
 		"odds_draw": part.select("odds_draw").to_pandas().values.flatten(),
 		"odds_away": part.select("odds_away").to_pandas().values.flatten(),
+		"raw_margin": part.select("raw_margin").to_pandas().values.flatten(),
 		"dates": part.select("date").to_pandas().values.flatten(),
 		"scaler": scaler,
 	}
@@ -458,7 +591,7 @@ def to_loader(
 	Convert data dictionary to PyTorch DataLoader.
 	
 	Args:
-		data: Dict with 'X', 'y', 'implied', 'cat_features' arrays
+		data: Dict with 'X', 'y', 'implied', 'cat_features', 'raw_margin' arrays
 		batch_size: Batch size
 		shuffle: Whether to shuffle data
 		device: Target device (for pin_memory default)
@@ -473,17 +606,18 @@ def to_loader(
 		
 	tensor_x = torch.tensor(data["X"], dtype=torch.float32)
 	tensor_cat = torch.tensor(data["cat_features"], dtype=torch.long)
+	tensor_raw_margin = torch.tensor(data["raw_margin"], dtype=torch.float32)
 	
 	if task_type == "binary":
-		# implied is shape (n,) -> (n, 1)
-		tensor_implied = torch.tensor(data["implied"], dtype=torch.float32).unsqueeze(1)
-		tensor_y = torch.tensor(data["y"], dtype=torch.float32).unsqueeze(1)
+		tensor_implied = torch.tensor(data["implied"], dtype=torch.float32)
+		tensor_y = torch.tensor(data["y"], dtype=torch.float32)
+		ds = TensorDataset(tensor_x, tensor_cat, tensor_implied, tensor_y, tensor_raw_margin)
 	else:
 		# multiclass: implied is shape (n, 3), y is class label
 		tensor_implied = torch.tensor(data["implied"], dtype=torch.float32)
 		tensor_y = torch.tensor(data["y"], dtype=torch.long)
+		ds = TensorDataset(tensor_x, tensor_cat, tensor_implied, tensor_y, tensor_raw_margin)
 	
-	ds = TensorDataset(tensor_x, tensor_cat, tensor_implied, tensor_y)
 	return DataLoader(
 		ds, 
 		batch_size=batch_size, 
@@ -500,7 +634,6 @@ def to_loader(
 # Optimal settings for data loading
 # NOTE: On Windows, multiprocessing spawn overhead makes num_workers > 0 slow
 # for small datasets. Using 0 workers is ~20x faster for our data size.
-import sys
 OPTIMAL_NUM_WORKERS = 0 if sys.platform == "win32" else 4
 PIN_MEMORY = torch.cuda.is_available()
 
@@ -548,10 +681,12 @@ def precompute_fold_data(
 			"y_train": data_train["y"],
 			"implied_train": data_train["implied"],
 			"cat_train": data_train["cat_features"],
+			"raw_margin_train": data_train["raw_margin"],
 			"X_val": data_val["X"],
 			"y_val": data_val["y"],
 			"implied_val": data_val["implied"],
 			"cat_val": data_val["cat_features"],
+			"raw_margin_val": data_val["raw_margin"],
 			"dates_val": data_val["dates"],
 			"scaler": data_train["scaler"],
 			"train_seasons": train_seasons,
@@ -603,6 +738,7 @@ def fold_data_to_loaders(
 		"y": fold["y_train"],
 		"implied": fold["implied_train"],
 		"cat_features": fold["cat_train"],
+		"raw_margin": fold["raw_margin_train"],
 	}
 	train_loader = to_loader(
 		train_data, batch_size, shuffle=True, device=device,
@@ -615,6 +751,7 @@ def fold_data_to_loaders(
 		"y": fold["y_val"],
 		"implied": fold["implied_val"],
 		"cat_features": fold["cat_val"],
+		"raw_margin": fold["raw_margin_val"],
 	}
 	val_loader = to_loader(
 		val_data, batch_size, shuffle=False, device=device,
@@ -709,13 +846,13 @@ def train_model(
 	verbose: bool = True,
 ) -> Tuple:
 	"""
-	Train model with optional early stopping.
+	Train a gated residual model with optional early stopping.
 	
 	Supports both binary (over/under) and multiclass (result) tasks based on config.task_type.
 	
 	Args:
 		config: Training configuration
-		train_loader: DataLoader for training data
+		train_loader: DataLoader for training data (must include raw_margin)
 		val_loader: DataLoader for validation data. If None, trains for exactly config.epochs
 		            without early stopping (useful for final retraining after hyperparameter search).
 		device: Device to train on
@@ -728,21 +865,45 @@ def train_model(
 	if device is None:
 		device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-	from .models.neural_net import MLP
-
-	activation = getattr(config, "activation", "relu")
 	task_type = getattr(config, "task_type", "binary")
 	cat_config = getattr(config, "cat_config", None)
-	output_dim = 1 if task_type == "binary" else 3
+	gate_hidden_dim = getattr(config, "gate_hidden_dim", 32)
+	gate_target_budget = getattr(config, "gate_target_budget", 0.2)
+	gate_mean_weight = getattr(config, "gate_mean_weight", 0.01)
+	gate_sat_weight = getattr(config, "gate_sat_weight", 0.001)
+	lambda_repulsion = getattr(config, "lambda_repulsion", 0.0)
+	lambda_corr = getattr(config, "lambda_corr", 0.0)
 	
 	# Determine if we're doing validation/early-stopping
 	use_validation = val_loader is not None
 	
-	model = MLP(
-		config.input_dim, config.hidden_layers, config.dropout, config.norm, activation,
-		output_dim=output_dim,
-		cat_config=cat_config,
-	).to(device)
+	# Create gated model based on task type
+	if task_type == "binary":
+		model = GatedResidualModelBinary(
+			input_dim=config.input_dim,
+			hidden_layers=config.hidden_layers,
+			cat_config=cat_config,
+			gate_hidden_dim=gate_hidden_dim,
+			dropout=config.dropout,
+			norm=config.norm,
+			activation=config.activation,
+			gate_target_budget=gate_target_budget,
+		).to(device)
+		loss_fn = gated_loss_binary
+	else:
+		model = GatedResidualModel(
+			input_dim=config.input_dim,
+			hidden_layers=config.hidden_layers,
+			n_classes=3,
+			cat_config=cat_config,
+			gate_hidden_dim=gate_hidden_dim,
+			dropout=config.dropout,
+			norm=config.norm,
+			activation=config.activation,
+			gate_target_budget=gate_target_budget,
+		).to(device)
+		loss_fn = gated_loss_multiclass
+	
 	optimizer = torch.optim.AdamW(
 		model.parameters(), lr=config.lr, weight_decay=config.weight_decay, betas=(config.beta1, 0.999)
 	)
@@ -755,33 +916,33 @@ def train_model(
 	
 	# Only use early stopping when we have validation data
 	early_stopping = EarlyStopping(patience=config.patience, min_delta=1e-4) if use_validation else None
-	
-	# Select loss function based on task type
-	if task_type == "binary":
-		loss_fn = residual_market_loss_corr
-	else:
-		loss_fn = residual_market_loss_multiclass
 
-	history = {"train_loss": [], "val_loss": []}
+	history = {"train_loss": [], "val_loss": [], "gate_mean": [], "gate_std": []}
 
 	for epoch in range(1, config.epochs + 1):
 		# Training phase
 		model.train()
 		total_loss = 0.0
-		for batch_x, batch_cat, batch_implied, batch_y in train_loader:
+		for batch_x, batch_cat, batch_implied, batch_y, batch_raw_margin in train_loader:
 			batch_x = batch_x.to(device)
 			batch_cat = batch_cat.to(device)
 			batch_implied = batch_implied.to(device)
 			batch_y = batch_y.to(device)
+			batch_raw_margin = batch_raw_margin.to(device)
+			cat_in = batch_cat if cat_config is not None else None
 
 			optimizer.zero_grad()
-			residual_logits = model(batch_x, batch_cat if cat_config else None)
 			loss = loss_fn(
-				residual_logits,
+				model,
+				batch_x,
+				cat_in,
 				batch_implied,
 				batch_y,
-				lambda_repulsion=config.lambda_repulsion,
-				lambda_corr=config.lambda_corr,
+				batch_raw_margin,
+				gate_mean_weight=gate_mean_weight,
+				gate_sat_weight=gate_sat_weight,
+				lambda_repulsion=lambda_repulsion,
+				lambda_corr=lambda_corr,
 			)
 			loss.backward()
 			optimizer.step()
@@ -794,23 +955,43 @@ def train_model(
 		if use_validation:
 			model.eval()
 			val_loss = 0.0
+			all_gates = []
 			with torch.no_grad():
-				for bx, bc, bi, by in val_loader:
-					bx, bc, bi, by = bx.to(device), bc.to(device), bi.to(device), by.to(device)
-					residual_logits = model(bx, bc if cat_config else None)
-					loss = loss_fn(
-						residual_logits,
-						bi,
-						by,
-						lambda_repulsion=config.lambda_repulsion,
-						lambda_corr=config.lambda_corr,
-					)
+				for bx, bc, bi, by, b_raw_margin in val_loader:
+					bx = bx.to(device)
+					bc = bc.to(device)
+					bi = bi.to(device)
+					by = by.to(device)
+					b_raw_margin = b_raw_margin.to(device)
+					
+					# Get loss without gate regularization for fair comparison
+					cat_in = bc if cat_config is not None else None
+					pred_logits = model(bx, cat_in, bi, b_raw_margin)
+					if task_type == "binary":
+						loss = F.binary_cross_entropy_with_logits(pred_logits, by)
+					else:
+						loss = F.cross_entropy(pred_logits, by.view(-1).long())
 					val_loss += loss.item() * len(bx)
+					
+					# Collect gate values
+					gate_stats = model.get_gate_stats(bx, cat_in, bi, b_raw_margin)
+					all_gates.append(gate_stats["gate_values"])
 
 			avg_val_loss = val_loss / len(val_loader.dataset)
 			history["val_loss"].append(avg_val_loss)
 			
-			# Step cosine annealing scheduler
+			# Track gate statistics
+			all_gates = np.concatenate(all_gates, axis=0)
+			if task_type == "binary":
+				gate_mean = float(all_gates.mean())
+				gate_std = float(all_gates.std())
+			else:
+				gate_mean = all_gates.mean(axis=0).tolist()
+				gate_std = all_gates.std(axis=0).tolist()
+			history["gate_mean"].append(gate_mean)
+			history["gate_std"].append(gate_std)
+			
+			# Step scheduler
 			scheduler.step()
 			
 			early_stopping(avg_val_loss, model)
@@ -821,14 +1002,19 @@ def train_model(
 				mlflow.log_metric("val_loss", avg_val_loss, step=epoch)
 
 			if verbose and (epoch % 10 == 0 or epoch == 1):
-				print(
-					f"Epoch {epoch:03d} | Train: {avg_train_loss:.5f} | Val: {avg_val_loss:.5f}"
-				)
+				if task_type == "binary":
+					print(
+						f"Epoch {epoch:03d} | Train: {avg_train_loss:.5f} | Val: {avg_val_loss:.5f} | "
+						f"Gate: {gate_mean:.3f} +/- {gate_std:.3f}"
+					)
+				else:
+					print(
+						f"Epoch {epoch:03d} | Train: {avg_train_loss:.5f} | Val: {avg_val_loss:.5f} | "
+						f"Gate: [{gate_mean[0]:.3f}, {gate_mean[1]:.3f}, {gate_mean[2]:.3f}]"
+					)
 
 			# Optuna pruning
 			if trial is not None:
-				# Report best-so-far to avoid pruning on transient loss spikes
-				# (e.g., overfitting after hitting a good minimum).
 				trial.report(min(history["val_loss"]), epoch)
 				if trial.should_prune():
 					import optuna
@@ -839,7 +1025,7 @@ def train_model(
 					print(f"Early stopping at epoch {epoch}")
 				break
 		else:
-			# No validation: step cosine annealing scheduler
+			# No validation: step scheduler
 			scheduler.step()
 			
 			# Log to MLflow if in an active run
@@ -853,7 +1039,6 @@ def train_model(
 		early_stopping.load_best_weights(model)
 		return model, history, early_stopping.best_loss
 	else:
-		# Return final training loss when no validation
 		return model, history, history["train_loss"][-1]
 
 
@@ -896,53 +1081,3 @@ def evaluate_implied_baseline(data: Dict[str, np.ndarray], task_type: TaskType =
 			"rps": float(rps),
 			"log_loss": float(ll),
 		}
-
-
-def load_existing_model(
-	config_path: Path,
-	model_path: Path,
-	device: torch.device,
-	task_type: TaskType = "binary",
-) -> Tuple[nn.Module, Dict]:
-	"""
-	Load existing model from disk if it exists.
-	
-	Args:
-		config_path: Path to config JSON file
-		model_path: Path to model weights
-		device: Target device
-		task_type: "binary" for over/under, "multiclass" for result
-	
-	Returns (model, config_dict) or (None, None) if not found.
-	"""
-	if not config_path.exists() or not model_path.exists():
-		return None, None
-	
-	import json
-	with open(config_path) as f:
-		config_dict = json.load(f)
-	
-	output_dim = config_dict.get("output_dim", 1 if task_type == "binary" else 3)
-	
-	# Reconstruct categorical config if present
-	cat_config = None
-	if "cat_config" in config_dict and config_dict["cat_config"] is not None:
-		cat_config = CategoricalConfig(
-			num_leagues=config_dict["cat_config"]["num_leagues"],
-			league_embed_dim=config_dict["cat_config"]["league_embed_dim"],
-		)
-	
-	model = MLP(
-		input_dim=config_dict["input_dim"],
-		hidden_layers=config_dict["hidden_layers"],
-		dropout=config_dict["dropout"],
-		norm=config_dict["norm"],
-		activation=config_dict["activation"],
-		output_dim=output_dim,
-		cat_config=cat_config,
-	).to(device)
-	
-	model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-	model.eval()
-	
-	return model, config_dict

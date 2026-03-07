@@ -96,8 +96,8 @@ def load_fbref_week_data() -> pl.LazyFrame | None:
 	if fbref_mapping_path.exists():
 		with open(fbref_mapping_path, "r", encoding="utf-8") as f:
 			fbref_mapping = json.load(f)
-		# Filter out None values (unmapped teams)
-		fbref_mapping = {k: v for k, v in fbref_mapping.items() if v is not None}
+		# Use None values as identity (keep original name if not explicitly mapped)
+		fbref_mapping = {k: v if v is not None else k for k, v in fbref_mapping.items()}
 	else:
 		fbref_mapping = {}
 	
@@ -130,7 +130,7 @@ def compute_round_number(lf: pl.LazyFrame, fbref_data: pl.LazyFrame | None = Non
 	# We prefer the row with a valid week number over null
 	fbref_join = (
 		fbref_data.select([
-			pl.col("league").cast(pl.Categorical),
+			pl.col("league").cast(pl.Utf8),
 			pl.col("season").cast(pl.Utf8),
 			pl.col("home_team").cast(pl.Utf8),
 			pl.col("away_team").cast(pl.Utf8),
@@ -140,6 +140,14 @@ def compute_round_number(lf: pl.LazyFrame, fbref_data: pl.LazyFrame | None = Non
 		.sort("fbref_week", nulls_last=True)
 		.unique(subset=["league", "season", "home_team", "away_team"], keep="first")
 	)
+	
+	# Cast lf join keys to Utf8 to match fbref_join (may be Categorical from rename_and_cast)
+	lf = lf.with_columns([
+		pl.col("league").cast(pl.Utf8),
+		pl.col("season").cast(pl.Utf8),
+		pl.col("home_team").cast(pl.Utf8),
+		pl.col("away_team").cast(pl.Utf8),
+	])
 	
 	# Join on league, season, home_team, away_team (uniquely identifies each match)
 	lf = lf.join(
@@ -425,12 +433,8 @@ def build_long(base: pl.LazyFrame) -> pl.LazyFrame:
     ]
     
     # Helper to safely select columns if they exist, else null
-    # But base should have them if we filtered correctly in main.
-    # However, shots/sot might be missing now.
     
     # We need to construct the expressions dynamically based on what's available or fill nulls.
-    # Since we commented them out in BASE_STATS, we don't strictly need them in the output 
-    # unless we want to keep the column structure.
     # Let's try to keep them but fill with null if missing, so downstream code doesn't break if it expects them.
     
     available = set(base.collect_schema().names())
@@ -511,58 +515,143 @@ def build_long(base: pl.LazyFrame) -> pl.LazyFrame:
     return long_df
 
 
-def rolling_feature_exprs(scope: str, window: int):
+def _ovr_rolling_feature_exprs(window: int) -> list[pl.Expr]:
+    """
+    Compute 'ovr' (overall) rolling features over all games.
+    These are straightforward rolling stats over all matches for each team.
+    """
     gkeys = ["league_id", "season", "team"]
     exprs = []
-
-    def scoped(colname: str) -> pl.Expr:
-        base = pl.col(colname)
-        if scope == "home":
-            base = pl.when(pl.col("is_home")).then(base).otherwise(None)
-        elif scope == "away":
-            base = pl.when(~pl.col("is_home")).then(base).otherwise(None)
-        return base
-
+    
     stats = BASE_STATS_FOR + BASE_STATS_AGAINST + DERIVED_STATS
     for s in stats:
-        series = scoped(s).shift(1)
+        series = pl.col(s).shift(1)
         exprs += [
             series.rolling_mean(window_size=window, min_samples=2)
             .over(gkeys)
-            .alias(f"{scope}__{s}__r{window}"),
+            .alias(f"ovr__{s}__r{window}"),
             series.rolling_sum(window_size=window, min_samples=2)
             .over(gkeys)
-            .alias(f"{scope}__{s}__sum__r{window}"),
+            .alias(f"ovr__{s}__sum__r{window}"),
         ]
-
-    # --- per-row ones (avoid literal) ---
-    ones = (pl.col("gf") * 0 + 1).cast(pl.Int32)  # any existing column works
-
-    if scope == "ovr":
-        mask = ones
-    elif scope == "home":
-        mask = pl.when(pl.col("is_home")).then(ones).otherwise(None)
-    else:  # "away"
-        mask = pl.when(~pl.col("is_home")).then(ones).otherwise(None)
-
+    
+    # Games count
+    ones = (pl.col("gf") * 0 + 1).cast(pl.Int32)
     exprs.append(
-        mask.shift(1)
+        ones.shift(1)
         .rolling_sum(window_size=window, min_samples=1)
         .over(gkeys)
-        .alias(f"{scope}__games__r{window}")
+        .alias(f"ovr__games__r{window}")
     )
-
+    
     return exprs
 
 
-def compute_rolling_features(long_df: pl.LazyFrame) -> pl.LazyFrame:
+def _venue_rolling_feature_exprs(window: int) -> list[pl.Expr]:
+    """
+    Compute rolling features over venue-filtered data.
+    These are applied AFTER filtering to home-only or away-only matches.
+    The 'scope' prefix (home/away) will be added by the caller.
+    """
+    gkeys = ["league_id", "season", "team"]
+    exprs = []
+    
+    stats = BASE_STATS_FOR + BASE_STATS_AGAINST + DERIVED_STATS
+    for s in stats:
+        series = pl.col(s).shift(1)
+        exprs += [
+            series.rolling_mean(window_size=window, min_samples=2)
+            .over(gkeys)
+            .alias(f"_venue__{s}__r{window}"),
+            series.rolling_sum(window_size=window, min_samples=2)
+            .over(gkeys)
+            .alias(f"_venue__{s}__sum__r{window}"),
+        ]
+    
+    # Games count at this venue
+    ones = (pl.col("gf") * 0 + 1).cast(pl.Int32)
+    exprs.append(
+        ones.shift(1)
+        .rolling_sum(window_size=window, min_samples=1)
+        .over(gkeys)
+        .alias(f"_venue__games__r{window}")
+    )
+    
+    return exprs
+
+
+def _compute_venue_rolling_features(
+    long_df: pl.LazyFrame,
+    is_home: bool,
+) -> pl.LazyFrame:
+    """
+    Compute rolling features for last N home (or away) games.
+    
+    Filters to only home (or away) matches, computes rolling stats,
+    then returns a lookup table of (match_id, team) -> features.
+    
+    Args:
+        long_df: Full long-format data with all matches.
+        is_home: True for home venue features, False for away venue features.
+    
+    Returns:
+        LazyFrame with columns: match_id, team, and venue-specific rolling features.
+    """
+    scope = "home" if is_home else "away"
+    
+    # Filter to only matches at this venue
+    venue_df = long_df.filter(pl.col("is_home") == is_home)
+    
+    # Re-sort after filter to ensure correct temporal order for rolling calculations
+    # Polars filter can break row ordering in lazy evaluation
+    sort_keys = [k for k in ("league_id", "season") if k in venue_df.collect_schema().names()]
+    venue_df = venue_df.sort(sort_keys + ["team", "date", "match_id"])
+    
+    # Compute rolling features on the filtered frame
     exprs = []
     for w in ROLL_WINDOWS:
-        for scope in ("ovr", "home", "away"):
-            exprs += rolling_feature_exprs(scope, w)
+        exprs += _venue_rolling_feature_exprs(w)
+    
+    venue_df = venue_df.with_columns(exprs)
+    
+    # Rename _venue__ prefix to scope__ (home__ or away__)
+    schema = venue_df.collect_schema()
+    venue_cols = [c for c in schema.names() if c.startswith("_venue__")]
+    rename_map = {c: c.replace("_venue__", f"{scope}__") for c in venue_cols}
+    venue_df = venue_df.rename(rename_map)
+    
+    # Select only the key columns and the computed features
+    feat_cols = [c for c in venue_df.collect_schema().names() if c.startswith(f"{scope}__")]
+    return venue_df.select(["match_id", "team"] + feat_cols)
+
+
+def compute_rolling_features(long_df: pl.LazyFrame) -> pl.LazyFrame:
+    """
+    Compute all rolling features:
+    - ovr__*: Rolling stats over all matches (any venue)
+    - home__*: Rolling stats over last N HOME matches only
+    - away__*: Rolling stats over last N AWAY matches only
+    
+    Home/away features are computed on filtered frames and joined back,
+    ensuring we get "last N home games" rather than "last N games with home masked".
+    """
+    # 1. Compute overall rolling features (straightforward)
+    exprs = []
+    for w in ROLL_WINDOWS:
+        exprs += _ovr_rolling_feature_exprs(w)
     # Add Elo rolling features (only r5 window)
     exprs += compute_elo_rolling_exprs()
-    return long_df.with_columns(exprs)
+    long_df = long_df.with_columns(exprs)
+    
+    # 2. Compute home-venue rolling features (filter to home games, compute, join back)
+    home_feats = _compute_venue_rolling_features(long_df, is_home=True)
+    long_df = long_df.join(home_feats, on=["match_id", "team"], how="left")
+    
+    # 3. Compute away-venue rolling features (filter to away games, compute, join back)
+    away_feats = _compute_venue_rolling_features(long_df, is_home=False)
+    long_df = long_df.join(away_feats, on=["match_id", "team"], how="left")
+    
+    return long_df
 
 
 def compute_elo_rolling_exprs() -> list:
@@ -629,7 +718,7 @@ def compute_opponent_baselines(long_df: pl.LazyFrame) -> pl.LazyFrame:
     for stat in ADJUST_STATS_AGAINST:
         series = pl.col(stat).shift(1)
         exprs.append(
-            series.rolling_mean(window_size=ADJUSTMENT_WINDOW, min_samples=3)
+            series.rolling_mean(window_size=ADJUSTMENT_WINDOW, min_samples=2)
             .over(gkeys)
             .alias(f"baseline__{stat}")
         )
@@ -639,7 +728,7 @@ def compute_opponent_baselines(long_df: pl.LazyFrame) -> pl.LazyFrame:
     for stat in ADJUST_STATS_FOR:
         series = pl.col(stat).shift(1)
         exprs.append(
-            series.rolling_mean(window_size=ADJUSTMENT_WINDOW, min_samples=3)
+            series.rolling_mean(window_size=ADJUSTMENT_WINDOW, min_samples=2)
             .over(gkeys)
             .alias(f"baseline__{stat}")
         )
@@ -740,10 +829,8 @@ def rolling_adjusted_feature_exprs(window: int):
 
 
 def compute_adjusted_rolling_features(long_df: pl.LazyFrame) -> pl.LazyFrame:
-    """Compute rolling averages of opponent-adjusted stats."""
-    exprs = []
-    for w in ROLL_WINDOWS:
-        exprs += rolling_adjusted_feature_exprs(w)
+    """Compute rolling averages of opponent-adjusted stats (only r10 window)."""
+    exprs = rolling_adjusted_feature_exprs(ADJUSTMENT_WINDOW)
     return long_df.with_columns(exprs)
 
 
@@ -845,9 +932,6 @@ def merge_european_schedule(
     # Filter European to only teams in domestic leagues
     european_long = european_long.join(domestic_teams, on="team", how="semi")
     
-    # Select only common columns and cast to compatible types (all to Utf8/String)
-    common_cols = ["match_id", "league_id", "league", "season", "date", "team", "opponent", "is_home", "is_european"]
-    
     # Cast domestic categorical columns to Utf8 for concat
     domestic_casted = domestic_long.select([
         pl.col("match_id").cast(pl.Utf8),
@@ -882,95 +966,34 @@ def merge_european_schedule(
     return combined
 
 
-def compute_schedule_features(long_df: pl.LazyFrame) -> pl.LazyFrame:
+def compute_schedule_features(long_df: pl.LazyFrame) -> pl.DataFrame:
     """
-    Compute schedule-based features:
+    Compute schedule-based features for fixture congestion:
     - days_since_last_match: Days since team's previous game (any competition)
     - games_last_15_days: Count of games in last 15 days (excluding current match)
     
-    These features capture fixture congestion across all competitions.
-    Groups by (season, team) only - not league_id - to capture cross-competition schedule.
+    Groups by (season, team) to capture cross-competition schedule.
     Uses shift(1) to prevent data leakage.
-    """
-    # Sort by team and date first
-    long_df = long_df.sort(["season", "team", "date", "match_id"])
     
-    # Group by season and team (across all competitions)
-    gkeys = ["season", "team"]
-    
-    # Days since last match
-    # shift(1) gets the previous game's date, then compute difference
-    days_since = (
-        pl.col("date") - pl.col("date").shift(1).over(gkeys)
-    ).dt.total_days().alias("days_since_last_match")
-    
-    # Games in last 15 days
-    # We need to count games where date is within 15 days before current match
-    # Using a rolling window approach with shift to exclude current match
-    # 
-    # Polars rolling_count with a time-based window:
-    # We'll use a different approach - count dates within 15 days before current
-    # This requires a self-join or group_by_dynamic
-    # 
-    # Simpler approach: Use rolling count with shift
-    # Count how many games in last 15 calendar days (shifted to exclude current)
-    
-    long_df = long_df.with_columns([
-        days_since,
-        # For games_last_15_days, we use group_by_dynamic
-    ])
-    
-    # For games in last 15 days, we need a time-based rolling window
-    # Polars group_by_dynamic can help, but it's complex with LazyFrame
-    # Alternative: compute using a window function approach
-    # 
-    # We'll compute this by:
-    # 1. For each row, count how many rows for same team have date within (current_date - 15 days, current_date)
-    # This is tricky in pure Polars without collect
-    # 
-    # Simplified approach: Use rolling count based on row index as proxy
-    # Or accept that we compute it after collect
-    # 
-    # For now, let's use a shifted rolling count approximation
-    # Games in last N matches can proxy fixture congestion
-    # But user wants last 15 DAYS specifically
-    # 
-    # Let's use a self-join approach in a helper
-    
-    # Collect to compute games_last_15_days (requires time-based logic)
-    # We'll do this as a post-processing step
-    
-    return long_df
-
-
-def compute_games_last_15_days(long_df: pl.DataFrame) -> pl.DataFrame:
-    """
-    Compute games_last_15_days feature using a time-based approach.
-    Must be called on a collected DataFrame (not LazyFrame).
-    
-    For each game, counts how many games the team played in the 15 days before.
-    Uses shift logic to exclude the current game.
+    Note: Returns a collected DataFrame because games_last_15_days requires
+    time-based window counting that can't be done efficiently in lazy mode.
     """
     from datetime import timedelta
     
-    # Sort first
-    long_df = long_df.sort(["season", "team", "date", "match_id"])
+    # Collect and sort
+    df = long_df.collect().sort(["season", "team", "date", "match_id"])
     
-    # Add row number per team-season for efficient processing
-    long_df = long_df.with_columns(
-        pl.col("date").cum_count().over(["season", "team"]).alias("game_num")
+    # Days since last match (simple shift)
+    gkeys = ["season", "team"]
+    df = df.with_columns(
+        (pl.col("date") - pl.col("date").shift(1).over(gkeys))
+        .dt.total_days()
+        .alias("days_since_last_match")
     )
     
-    # For each row, count games where:
-    # - Same team and season
-    # - Date is within (current_date - 15 days, current_date) - exclusive of current
-    # 
-    # We'll do this with a self-join
-    
+    # Games in last 15 days (requires iterating over time windows)
     result_rows = []
-    
-    # Process by team-season groups
-    for (season, team), group in long_df.group_by(["season", "team"]):
+    for (season, team), group in df.group_by(["season", "team"]):
         group = group.sort("date")
         dates = group["date"].to_list()
         counts = []
@@ -979,23 +1002,17 @@ def compute_games_last_15_days(long_df: pl.DataFrame) -> pl.DataFrame:
             if current_date is None:
                 counts.append(None)
                 continue
-            
-            # Count games in last 15 days (excluding current)
             cutoff = current_date - timedelta(days=15)
-            count = 0
-            for j in range(i):  # Only look at previous games
-                prev_date = dates[j]
-                if prev_date is not None and prev_date >= cutoff:
-                    count += 1
+            count = sum(1 for j in range(i) if dates[j] is not None and dates[j] >= cutoff)
             counts.append(count)
         
         group = group.with_columns(pl.Series("games_last_15_days", counts))
         result_rows.append(group)
     
     if not result_rows:
-        return long_df.with_columns(pl.lit(None).cast(pl.Int64).alias("games_last_15_days"))
+        return df.with_columns(pl.lit(None).cast(pl.Int64).alias("games_last_15_days"))
     
-    return pl.concat(result_rows).drop("game_num")
+    return pl.concat(result_rows)
 
 
 def with_side_suffix(lf: pl.LazyFrame, suffix: str) -> pl.LazyFrame:
@@ -1022,19 +1039,28 @@ def build_match_level(
     We tag home features with '__h' and away with '__a' BEFORE the join to avoid collisions.
     Adds target 'Over'.
     Filters out European-only matches (keeps only domestic league games).
+    
+    Feature selection per side:
+    - Home team (__h): ovr__* and home__* features (NOT away__*)
+    - Away team (__a): ovr__* and away__* features (NOT home__*)
+    
+    This avoids creating nonsensical cross-venue features like away__*__h or home__*__a.
     """
-    # Minimal feature frames per side
-    feat_cols = [
-        c
-        for c in long_with_feats.collect_schema().names()
-        if c.startswith(("ovr__", "home__", "away__")) or c in ("days_since_last_match", "games_last_15_days", "opponent_elo_r5", "elo_diff_r5", "opponent_elo_std_r5")
-    ]
-    keep_cols = ["match_id", "team", "side"] + feat_cols
+    all_cols = long_with_feats.collect_schema().names()
+    
+    # Common features (schedule, elo)
+    common_feats = [c for c in all_cols if c in ("days_since_last_match", "games_last_15_days", "opponent_elo_r5", "elo_diff_r5", "opponent_elo_std_r5")]
+    
+    # Features for home side: ovr__* and home__* only (exclude away__*)
+    home_feat_cols = [c for c in all_cols if c.startswith(("ovr__", "home__"))] + common_feats
+    home_keep_cols = ["match_id", "team", "side"] + home_feat_cols
+    
+    # Features for away side: ovr__* and away__* only (exclude home__*)
+    away_feat_cols = [c for c in all_cols if c.startswith(("ovr__", "away__"))] + common_feats
+    away_keep_cols = ["match_id", "team", "side"] + away_feat_cols
 
-    feats = long_with_feats.select(keep_cols)
-
-    home_feats = feats.filter(pl.col("side") == "h").drop("side")
-    away_feats = feats.filter(pl.col("side") == "a").drop("side")
+    home_feats = long_with_feats.select(home_keep_cols).filter(pl.col("side") == "h").drop("side")
+    away_feats = long_with_feats.select(away_keep_cols).filter(pl.col("side") == "a").drop("side")
 
     home_feats = with_side_suffix(home_feats, "__h").rename({"team": "home_team"})
     away_feats = with_side_suffix(away_feats, "__a").rename({"team": "away_team"})

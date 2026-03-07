@@ -16,3 +16,8 @@ secrets/
 # Files
 .env
 mlruns/
+
+# Data (ignore everything besides mappings)
+data/**
+!data/mappings/
+!data/mappings/**

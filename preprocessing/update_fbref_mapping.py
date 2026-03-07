@@ -51,6 +51,8 @@ def main():
 		"West Brom": "West Bromwich Albion",
 		"Wolves": "Wolverhampton Wanderers",
 		"QPR": "Queens Park Rangers",
+		"Tottenham Hotspur": "Tottenham",
+		"West Ham United": "West Ham",
 		
 		# Spanish
 		"Atlético Madrid": "Atletico Madrid",
@@ -88,6 +90,7 @@ def main():
 		"Heidenheim": "FC Heidenheim",
 		"Karlsruher": "Karlsruher SC",  # Not in Understat - will be skipped
 		"Elversberg": "SV Elversberg",  # Not in Understat - will be skipped
+		"St Pauli": "St. Pauli",
 		
 		# Italian
 		"Milan": "AC Milan",

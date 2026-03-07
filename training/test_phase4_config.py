@@ -219,62 +219,6 @@ def main():
 		sign = "+" if diff > 0 else ""
 		print(f"{metric:<15} {baseline_val:>12.4f} {model_val:>12.4f} {sign}{diff:>11.4f} {is_better:>10}")
 	
-	# Try to compare with existing model
-	print("\n" + "=" * 60)
-	print("COMPARISON WITH EXISTING SAVED MODEL")
-	print("=" * 60)
-	
-	try:
-		from training.train_utils import load_existing_model
-		import joblib
-		
-		model_path = Path("data/models/result_arch_tuned.pt")
-		config_path = Path("data/models/result_architecture_config.json")
-		scaler_path = Path("data/models/result_scaler_arch_tuned.joblib")
-		
-		if model_path.exists():
-			existing_model, existing_config = load_existing_model(config_path, model_path, DEVICE, task_type=TASK_TYPE)
-			
-			# Check if features match
-			old_feature_cols = existing_config.get("feature_cols") if existing_config else None
-			if old_feature_cols and set(old_feature_cols) != set(feature_cols):
-				print(f"Note: Feature sets differ ({len(old_feature_cols)} vs {len(feature_cols)} features)")
-				old_scaler = joblib.load(scaler_path)
-				data_test_old = prepare_data_result(df, old_feature_cols, [test_season], scaler=old_scaler)
-			else:
-				data_test_old = data_test
-			
-			existing_metrics = evaluate_model(existing_model, data_test_old, device=DEVICE, verbose=False, task_type=TASK_TYPE)
-			
-			print(f"\n{'Metric':<15} {'Existing':>12} {'New Model':>12} {'Diff':>12} {'Better?':>10}")
-			print("-" * 68)
-			
-			for metric in ["accuracy", "brier", "rps", "log_loss"]:
-				old_val = existing_metrics[metric]
-				new_val = metrics[metric]
-				diff = new_val - old_val
-				
-				if metric == "accuracy":
-					is_better = "✓" if diff > 0 else "✗"
-				else:
-					is_better = "✓" if diff < 0 else "✗"
-				
-				sign = "+" if diff > 0 else ""
-				print(f"{metric:<15} {old_val:>12.4f} {new_val:>12.4f} {sign}{diff:>11.4f} {is_better:>10}")
-			
-			# Overall assessment
-			print("\n--- Overall Assessment ---")
-			log_loss_improvement = (existing_metrics["log_loss"] - metrics["log_loss"]) / existing_metrics["log_loss"] * 100
-			if metrics["log_loss"] < existing_metrics["log_loss"]:
-				print(f"✓ NEW MODEL IS BETTER: {log_loss_improvement:.2f}% improvement in LogLoss")
-			else:
-				print(f"✗ Existing model is still better by {-log_loss_improvement:.2f}%")
-		else:
-			print("No existing model found at data/models/result_arch_tuned.pt")
-	
-	except Exception as e:
-		print(f"Could not compare with existing model: {e}")
-	
 	print("\n" + "=" * 60)
 	print("TEST COMPLETE")
 	print("=" * 60)

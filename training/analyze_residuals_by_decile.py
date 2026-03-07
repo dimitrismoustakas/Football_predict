@@ -37,7 +37,7 @@ from training.train_utils import (
 	get_test_season,
 	get_num_leagues,
 )
-from training.models.neural_net import MLP, TaskType, CategoricalConfig
+from training.models.neural_net import GatedResidualModel, GatedResidualModelBinary, TaskType, CategoricalConfig
 import torch.nn.functional as F
 
 

@@ -640,7 +640,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=21.0.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "scikit-learn", specifier = ">=1.7.2" },
-    { name = "soccerdata", git = "https://github.com/probberechts/soccerdata.git" },
+    { name = "soccerdata", git = "https://github.com/dimitrismoustakas/soccerdata.git?branch=fix%2Ftest-improvements" },
     { name = "torch", specifier = ">=2.6.0", index = "https://download.pytorch.org/whl/cu124" },
 ]
 
@@ -2670,7 +2670,7 @@ wheels = [
 [[package]]
 name = "soccerdata"
 version = "1.8.8"
-source = { git = "https://github.com/probberechts/soccerdata.git#efeaeb8f72cafee88d815326ad6bfd7628e0da44" }
+source = { git = "https://github.com/dimitrismoustakas/soccerdata.git?branch=fix%2Ftest-improvements#3669a455a280e1f629363bdbdd76115aeaaefaaa" }
 dependencies = [
     { name = "html5lib" },
     { name = "lxml", version = "4.9.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
