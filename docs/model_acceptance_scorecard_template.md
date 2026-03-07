@@ -78,6 +78,8 @@ Mark `accept` only if all are true:
 - no severe slice collapse appears
 - seed stability check passes
 
+When evidence is contradicting between match_result and over_under, choose what is best for the match_result models. The over_under model is not that imporant.
+
 Otherwise:
 
 - mark `challenger` if CV is clearly better but held-out is inconclusive

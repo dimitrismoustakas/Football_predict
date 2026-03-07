@@ -21,7 +21,6 @@ The repo currently uses:
 
 Important clarification:
 
-- For search and research scripts, rolling CV is the main model-selection tool.
 - For the frozen source-controlled main configs, the canonical training script does not re-search hyperparameters. It uses the fixed config, picks the epoch on the final pre-test season, retrains on all pre-test seasons, and evaluates once on the latest season.
 
 ## Core Rule
@@ -147,6 +146,8 @@ Use `reject` when any of the following happens:
 - proper scoring degrades even if betting profit improves
 - the result is unstable across seeds and the delta is small
 
+When the results between match_result and over_under are in conflict, focus on the match_result outcome and ignore over_under.
+
 ### Challenger / Watchlist
 
 Use `challenger` when:
@@ -224,8 +225,6 @@ The repo should behave as follows:
 
 - optimize on rolling CV
 - use the held-out season for promotion only
-- treat the in-progress `2526` season as a noisy audit set
 - decide inclusion on proper scoring metrics first
 - require recency robustness and multi-fold consistency
 - use betting metrics only as secondary diagnostics
-
