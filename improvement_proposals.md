@@ -19,7 +19,6 @@ Relevant code anchors:
 - Data prep and feature selection: `training/train_utils.py`
 - Feature build: `preprocessing/build_understat_features.py`
 - Feature engineering: `preprocessing/feature_engineering.py`
-- Research scripts: `training/architecture_search.py`, `training/fixed_arch_sweep.py`, `training/feature_selection_search.py`
 
 ## How To Use This List
 
@@ -63,7 +62,7 @@ If I had to prioritize the first batch of experiments in this repo, I would star
 - `P008`: Compare `StandardScaler` against `RobustScaler`, `QuantileTransformer`, or rank-gaussian transforms for heavy-tailed football features.
 - `P009`: Add explicit home-away deltas, ratios, sums, and products for key features instead of forcing the model to learn those interactions from separate columns.
 - `P010`: Add post-hoc calibration on the epoch-selection season. Try temperature scaling for both tasks, plus Dirichlet or vector scaling for the multiclass result model.
-- `P011`: For over/under, compare the current `brier`-driven acceptance against candidates trained and selected more directly on `log_loss`.
+- `P011`: For over/under, compare the current `log_loss`-based promotion rule against candidates trained with alternative proper-scoring objectives such as blended `log_loss + brier`.
 - `P012`: For result prediction, compare `log_loss`-optimized training against a direct `RPS` surrogate or a blended `log_loss + RPS` objective.
 - `P013`: Weight recent seasons more heavily in training so the model adapts faster to current football environments and bookmaker behavior.
 - `P014`: Add per-league validation gates. A model that gains overall but collapses in one league may not be operationally better.
@@ -253,7 +252,7 @@ If I had to prioritize the first batch of experiments in this repo, I would star
 
 - The current canonical model is already market-aware. Many useful experiments will come from improving "when to trust the market" more than from trying to beat the market everywhere.
 - The current training parquet is much richer than the final hand-picked feature list. A lot of potential improvement may come simply from better selection and better task-specific subsets.
-- The repo already has partial support for architecture search, fixed-architecture sweeps, feature-family search, residual analysis, and player-derived features. Several of the best ideas above can be implemented by extending those paths rather than building new tooling from scratch.
+- The repo intentionally keeps permanent research tooling light. Several of the best ideas above will be cleaner as narrow branch-specific scripts built on top of the canonical pipeline rather than as new long-lived repo utilities.
 - The most promising medium-effort direction is probably: better market decomposition + better task-specific feature sets + better calibration.
 - The most promising high-effort direction is probably: move from direct classification toward a latent score-distribution model that powers both tasks jointly.
 

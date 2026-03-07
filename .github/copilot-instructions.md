@@ -25,15 +25,12 @@ Always preserve this unless the user explicitly asks to change it:
 - fixed final validation season for epoch selection
 - fixed held-out latest season for acceptance
 
-Do not treat research sweeps as the canonical merge gate.
+Do not treat ad hoc research sweeps as the canonical merge gate.
 
-## Research-only scripts
-These are optional sweep/analysis utilities, not the default workflow:
-- `training/fixed_arch_sweep.py`
-- `training/architecture_search.py`
-- `training/result_architecture_search.py`
-- `training/feature_selection_search.py`
-- `training/analyze_residuals_by_decile.py`
+## Research workflow
+Keep the repo surface small.
+
+If an experiment needs custom search or analysis code, prefer a narrow branch-specific helper over keeping many permanent research scripts in the repo.
 
 ## Production
 - `prod_run/pipeline.py` now loads both canonical model bundles from `artifacts/models/`

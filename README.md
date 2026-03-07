@@ -38,6 +38,7 @@ Generated runtime artifacts are written to `artifacts/models/` and are not meant
 ### Data refresh
 - `uv run python data_collection/collect_understat.py`
 - `uv run python data_collection/collect_full_schedule.py`
+- `uv run python data_collection/collect_match_history.py`
 - `uv run python data_collection/collect_elo.py`
 - `uv run python preprocessing/build_understat_features.py`
 
@@ -46,13 +47,10 @@ Generated runtime artifacts are written to `artifacts/models/` and are not meant
 - Result only: `TASK_TYPE=multiclass uv run python training/train_main_model.py`
 - Both models: `uv run python training/train_all_models.py`
 
-### Optional search / research scripts
-These are not the canonical acceptance path. Use them only when intentionally sweeping:
-- `training/fixed_arch_sweep.py`
-- `training/architecture_search.py`
-- `training/result_architecture_search.py`
-- `training/feature_selection_search.py`
-- `training/analyze_residuals_by_decile.py`
+### Experiments
+The repo intentionally keeps the permanent training surface small.
+
+For experiments, start from the canonical loop and add a narrow one-off helper script only when it materially improves reproducibility for that specific branch.
 
 ## Production
 
