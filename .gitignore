@@ -18,6 +18,6 @@ secrets/
 mlruns/
 
 # Data (ignore everything besides mappings)
-data/**
+data/*
 !data/mappings/
 !data/mappings/**
