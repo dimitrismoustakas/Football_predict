@@ -122,6 +122,7 @@ Typical command families include:
   - `training/architecture_search.py`
   - `training/result_architecture_search.py`
   - `training/feature_selection_search.py`
+  - `training/analyze_residuals_by_decile.py`
 
 Use the least custom path that gives credible evidence.
 If you need a one-off helper script/notebook for measurement, keep it narrowly scoped and commit it only if it materially improves reproducibility.
