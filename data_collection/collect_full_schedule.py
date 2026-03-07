@@ -27,6 +27,8 @@ import soccerdata as sd
 from pathlib import Path
 from datetime import datetime, timedelta
 import json
+import subprocess
+import sys
 import warnings
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -51,6 +53,29 @@ EUROPEAN_LEAGUES = [
 	"EUR-Europa League",
 	"EUR-Conference League",
 ]
+
+
+def cleanup_webdrivers():
+	"""Kill lingering webdriver helper processes that can lock SeleniumBase binaries."""
+	if sys.platform == "win32":
+		for proc_name in ["uc_driver.exe", "chromedriver.exe"]:
+			subprocess.run(
+				["taskkill", "/F", "/IM", proc_name],
+				check=False,
+				capture_output=True,
+			)
+	else:
+		for proc_name in ["uc_driver", "chromedriver"]:
+			subprocess.run(["pkill", "-f", proc_name], check=False, capture_output=True)
+
+
+def european_leagues_for_season(season: str) -> list[str]:
+	"""Return the European competitions available for a given season."""
+	start_year = int(season.split("-")[0])
+	leagues = ["EUR-Champions League", "EUR-Europa League"]
+	if start_year >= 2021:
+		leagues.append("EUR-Conference League")
+	return leagues
 
 
 def ensure_league_config():
@@ -158,6 +183,7 @@ def fetch_league_schedule(leagues: list[str], season: str) -> pd.DataFrame:
 	for league in leagues:
 		print(f"Fetching {league} ({season})...")
 		try:
+			cleanup_webdrivers()
 			fbref = sd.FBref(leagues=league, seasons=season)
 			df = fbref.read_schedule()
 			df = df.reset_index()
@@ -165,6 +191,8 @@ def fetch_league_schedule(leagues: list[str], season: str) -> pd.DataFrame:
 			print(f"  Found {len(df)} matches")
 		except Exception as e:
 			print(f"  Error: {e}")
+		finally:
+			cleanup_webdrivers()
 	
 	if not all_matches:
 		return pd.DataFrame()
@@ -256,7 +284,7 @@ def main():
 	print("\n--- European Competitions (Historical) ---")
 	european_dfs = []
 	for season in all_seasons:
-		season_df = fetch_league_schedule(EUROPEAN_LEAGUES, season)
+		season_df = fetch_league_schedule(european_leagues_for_season(season), season)
 		if not season_df.empty:
 			european_dfs.append(season_df)
 	

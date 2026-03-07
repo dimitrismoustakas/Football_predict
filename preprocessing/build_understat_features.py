@@ -59,13 +59,6 @@ def main():
     if mh is not None:
         print("Joining Match History data...")
         lf = join_odds(lf, mh)
-    
-    # Load Match History
-    mh = load_match_history_and_map()
-    
-    if mh is not None:
-        print("Joining Match History data...")
-        lf = join_odds(lf, mh)
 
     # Merge Elo ratings
     print("Merging Elo ratings...")

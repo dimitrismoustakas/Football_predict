@@ -56,7 +56,7 @@ from training.train_utils import (
 
 TaskType = Literal["binary", "multiclass"]
 
-DEFAULT_PARQUET = Path("data/training/understat_df.parquet")
+DEFAULT_PARQUET = Path(os.environ.get("PARQUET_PATH", "data/training/understat_df.parquet"))
 MODELS_DIR = Path("data/models")
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -67,16 +67,16 @@ os.environ["MLFLOW_TRACKING_URI"] = "mlruns"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Sweep settings
-N_TRIALS = 120
-MAX_EPOCHS = 35
-PATIENCE = 10
+N_TRIALS = int(os.environ.get("N_TRIALS", "120"))
+MAX_EPOCHS = int(os.environ.get("MAX_EPOCHS", "35"))
+PATIENCE = int(os.environ.get("PATIENCE", "10"))
 
-TOP_K_CONFIGS = 8
-SEEDS_PER_CONFIG = 5
-N_CV_FOLDS = 3
+TOP_K_CONFIGS = int(os.environ.get("TOP_K_CONFIGS", "8"))
+SEEDS_PER_CONFIG = int(os.environ.get("SEEDS_PER_CONFIG", "5"))
+N_CV_FOLDS = int(os.environ.get("N_CV_FOLDS", "3"))
 
-PRUNER_MIN_RESOURCE = 5
-PRUNER_REDUCTION_FACTOR = 3
+PRUNER_MIN_RESOURCE = int(os.environ.get("PRUNER_MIN_RESOURCE", "5"))
+PRUNER_REDUCTION_FACTOR = int(os.environ.get("PRUNER_REDUCTION_FACTOR", "3"))
 
 
 TASK_CONFIG = {

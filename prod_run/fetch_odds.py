@@ -68,7 +68,7 @@ def fetch_league_odds(sport_key: str, api_key: str) -> list[dict]:
 	return response.json()
 
 
-def get_cached_or_fetch(sport_key: str, api_key: str, date_str: str) -> list[dict]:
+def get_cached_or_fetch(sport_key: str, api_key: str | None, date_str: str) -> list[dict]:
 	"""
 	Get odds from cache if available for today, otherwise fetch from API.
 	
@@ -87,6 +87,11 @@ def get_cached_or_fetch(sport_key: str, api_key: str, date_str: str) -> list[dic
 		print(f"  Using cached odds for {sport_key} from {cache_path.name}")
 		with open(cache_path, "r", encoding="utf-8") as f:
 			return json.load(f)
+
+	if not api_key:
+		raise RuntimeError(
+			f"No cached odds found for {sport_key} on {date_str} and ODDS_API_KEY is not set."
+		)
 	
 	# Fetch from API
 	print(f"  Fetching odds for {sport_key} from API...")
@@ -101,7 +106,7 @@ def get_cached_or_fetch(sport_key: str, api_key: str, date_str: str) -> list[dic
 	return data
 
 
-def get_all_leagues_odds(api_key: str) -> list[dict]:
+def get_all_leagues_odds(api_key: str | None) -> list[dict]:
 	"""
 	Fetch odds for all supported leagues, using cache when available.
 	
