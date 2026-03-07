@@ -30,8 +30,6 @@ Relevant code anchors:
 
 ## Suggested First Pass
 
-If I had to prioritize the first batch of experiments in this repo, I would start with:
-
 1. `P001` Separate feature sets for the two tasks.
 2. `P002` Separate architecture search spaces for the two tasks.
 3. `P004` Tune gate hyperparameters again on top of the frozen architecture/config.
