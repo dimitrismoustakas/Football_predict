@@ -41,6 +41,7 @@ Use this skill for the repo's repeatable canonical model maintenance flow. Prefe
 1. Refresh raw data if the task is a full pipeline refresh:
    - `uv run python data_collection/collect_understat.py`
    - `uv run python data_collection/collect_full_schedule.py`
+   - `uv run python data_collection/collect_match_history.py`
    - `uv run python data_collection/collect_elo.py`
 2. Rebuild training features:
    - `uv run python preprocessing/build_understat_features.py`

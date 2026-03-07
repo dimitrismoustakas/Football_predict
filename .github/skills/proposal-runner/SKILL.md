@@ -110,6 +110,7 @@ Typical command families include:
 - data refresh when needed:
   - `uv run python data_collection/collect_understat.py`
   - `uv run python data_collection/collect_full_schedule.py`
+  - `uv run python data_collection/collect_match_history.py`
   - `uv run python data_collection/collect_elo.py`
 - training feature rebuild:
   - `uv run python preprocessing/build_understat_features.py`
