@@ -1,114 +1,59 @@
 # Football Prediction Pipeline - AI Agent Instructions
 
-## Project Overview
-This is a machine learning system for predicting football match outcomes (Win/Draw/Loss) and Over/Under 2.5 goals. The pipeline scrapes historical match data, engineers rolling features, trains sklearn models, and generates predictions for upcoming fixtures.
+## Project overview
+This repo trains and serves two Torch models:
+- match result (`Home/Draw/Away`)
+- over/under 2.5 goals
 
-## Architecture & Data Flow
+The canonical training/evaluation loop is fixed and should be the default path for any branch experiment.
 
-### 1. Data Collection (`data_collection/`)
-- **Understat scraping** (`collect_understat.py`): Downloads historical match data (stats and schedule) into `data/understat/<league>/<season>/matches.parquet`. Uses `soccerdata` to fetch data.
-- **Elo scraping** (`scrapp_elo.py`): Fetches ClubElo ratings at periodic snapshots, writes to `data/eloscores/`.
-- **Salary data** (`Capology_payroll_scrapping.py`): Scrapes team payroll data (stored but not yet integrated into features).
+## Canonical workflow
 
-### 2. Feature Engineering (`preprocessing/`)
-- **`feature_engineering.py`**: Shared library containing core feature engineering logic (Polars-based).
-  - `build_long`: Transforms wide match data → long format.
-  - `compute_rolling_features`: Computes rolling means/sums (windows: 3, 5, 10).
-  - `build_match_level`: Joins features back to match level.
-- **`build_understat_features.py`**: Training feature pipeline.
-  - Reads all historical `data/understat/*/*/matches.parquet`.
-  - Uses `feature_engineering` module to generate features.
-  - Output: `data/training/understat_df.parquet`.
+### Feature pipeline
+- Training features are built by `preprocessing/build_understat_features.py`
+- Shared feature logic lives in `preprocessing/feature_engineering.py`
+- Production features are built by `prod_run/build_prod_features.py`
 
-### 3. Model Training (`training/`)
-- **`models_training.py`**:
-  - Loads `data/training/understat_df.parquet`.
-  - Filters: both teams must have ≥5 prior games.
-  - Feature selection: `ovr__*__r5__h` and `ovr__*__r5__a`.
-  - Trains RandomForest (Result) and LogisticRegression (Over/Under).
-  - Outputs models to `artifacts/models/`.
+### Main training entry points
+- `training/train_main_model.py` trains one canonical model
+- `training/train_all_models.py` trains both canonical models
+- Frozen model hyperparameters live in `training/configs/main_models/`
 
-### 4. Production Inference (`prod_run/`)
-- **Workflow**:
-  1. **`pipeline.py`**: The main entry point.
-     - Calls `build_prod_features.py` to fetch data and generate features.
-     - Loads trained models (`result_model.joblib`, `over_model.joblib`).
-     - Generates predictions and probabilities for upcoming games (Today + 3 days).
-     - Calculates implied odds (1/probability).
-     - Saves results to `data/predictions/upcoming_predictions.csv`.
-     - Sends email with CSV attachment if configured in `.env`.
-  2. **`build_prod_features.py`**: 
-     - Fetches current season data (completed matches + upcoming schedule) using `soccerdata`.
-     - Computes rolling features using `feature_engineering` logic.
-     - Output: `data/prod/features_season.parquet`.
+### Evaluation protocol
+Always preserve this unless the user explicitly asks to change it:
+- rolling expanding-window CV for model selection
+- fixed final validation season for epoch selection
+- fixed held-out latest season for acceptance
 
-## Critical Conventions
+Do not treat research sweeps as the canonical merge gate.
 
-### Polars-First Design
-- **All feature engineering uses Polars** for efficiency.
-- Shared logic in `preprocessing/feature_engineering.py`.
+## Research-only scripts
+These are optional sweep/analysis utilities, not the default workflow:
+- `training/fixed_arch_sweep.py`
+- `training/architecture_search.py`
+- `training/result_architecture_search.py`
+- `training/feature_selection_search.py`
+- `training/analyze_residuals_by_decile.py`
 
-### Date Handling
-- Dates stored as **Datetime**.
-- Production filters for `date >= today`.
+## Production
+- `prod_run/pipeline.py` now loads both canonical model bundles from `artifacts/models/`
+- `prod_run/fetch_odds.py` fetches both totals and match-result prices
+- Generated model bundles under `artifacts/models/` are runtime outputs and should not be committed
 
-### Rolling Features Naming Convention
-```
-<scope>__<stat>__r<window>__<side>
-ovr__xg_for__r5__h
-```
-- **Scopes**: `ovr`, `home`, `away`
-- **Windows**: r3, r5, r10
-- **Sides**: `__h` (home), `__a` (away)
+## Betting diagnostics
+Use proper scoring metrics as the primary quality gate.
 
-### Data Leakage Prevention
-- **Always use `.shift(1)`** when computing rolling features.
-- Window calculations grouped by `["league_id", "season", "team"]`.
+Betting diagnostics are secondary and use daily fixed-budget logic:
+- fixed budget per day
+- split equally across positive-EV bets for that day
+- no minimum-games-per-day filter
 
-## Developer Workflows
+Avoid reintroducing Sharpe-based optimization as the main acceptance rule.
 
-### Training New Models
-```powershell
-# 1. Scrape historical data
-python data_collection/collect_understat.py
-
-# 2. Build training features
-python preprocessing/build_understat_features.py
-
-# 3. Train models
-python training/models_training.py --parquet data/training/understat_df.parquet
-```
-
-### Production Predictions
-```powershell
-# Run the end-to-end pipeline (fetch data -> features -> predict -> email)
-uv run python prod_run/pipeline.py
-```
-*Requires `.env` file with `EMAIL_USER`, `EMAIL_PASS`, `EMAIL_RECIPIENTS`.*
-
-### Debugging Feature Mismatches
-- If prod features don't match training: compare `features_lib.py` vs `build_understat_features.py`
-- Check `artifacts/models/features_and_meta.json` for expected feature list
-- Use `inspect_features.py` to verify null counts and column names
-
-## Key Files Reference
-- **Production Pipeline**: `prod_run/pipeline.py` (orchestrator), `prod_run/build_prod_features.py` (features)
-- **Feature engineering logic**: `preprocessing/build_understat_features.py` (training), `prod_run/features_lib.py` (prod)
-- **Scraper configs**: Leagues in `LEAGUES_DEFAULT` (hardcoded in scrapers)
-- **Model artifacts**: `artifacts/models/features_and_meta.json` (source of truth for feature list)
-- **Dependencies**: `pyproject.toml` (polars>=1.34.0, scikit-learn>=1.7.2, scraperfc>=3.4.0, soccerdata>=1.8.2)
-
-## Known Gaps
-- `current.py` uses FotMob adapter (different from training's Understat data)
-- `test_scripts/` contains exploratory notebooks but no unit tests
-- Salary data collected but not integrated into features
-
-
-## Coding Standards
-- Avoid needless defensive coding; it is prefered to let errors raise naturally for visibility.
-- Do not create needless abstractions; keep code simple and straightforward.
-- Avoid wrapper functions that do not add value.
-- Always keep in mind that we use uv instead of pip and the corresponding venv.
-- We are in development mode, we don't need about backwards compatibility, we can break stuff as needed.
-- Don't use argparse, we won't need complex CLI interfaces.
-- Spacing in Python should always be with tabs, never spaces.
+## Coding conventions
+- Keep code simple and direct
+- Prefer Polars for feature engineering
+- Use `uv` for Python commands
+- Python files should use tabs for indentation in this repo
+- Avoid defensive wrappers that add no value
+- Backwards compatibility is not required during cleanup

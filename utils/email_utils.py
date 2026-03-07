@@ -75,10 +75,9 @@ def send_email(
 	if bets_display is not None and not bets_display.empty:
 		html_body += f"""
 		<h4>Betting Recommendations (Positive EV)</h4>
-		<p>Budget allocation percentages based on Sharpe-weighted portfolio strategy:</p>
+		<p>Allocation percentages are per-day budget shares, split equally across positive EV matches on the same day.</p>
 		{bets_display[["Date", "Time", "Home", "Away", "Bet_Side", "Odds_Over", "Odds_Under", "EV", "Allocation_Pct"]].to_html(index=False, classes='bets')}
-		<p><strong>Total Allocation: {bets_df['Allocation_Pct'].sum():.2f}%</strong></p>
-		<p><em>To use: If your total budget is €10, multiply each Allocation_Pct by €0.1 to get the bet amount.</em></p>
+		<p><em>To use: choose a daily budget, then multiply each Allocation_Pct by that day's budget.</em></p>
 		"""
 	else:
 		html_body += """

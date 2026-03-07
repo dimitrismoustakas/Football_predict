@@ -16,6 +16,11 @@ secrets/
 # Files
 .env
 mlruns/
+downloaded_files/
+
+# Runtime-generated model bundles
+artifacts/models/*
+!artifacts/models/README.md
 
 # Data
 data/

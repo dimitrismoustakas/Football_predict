@@ -268,7 +268,7 @@ def generate_html_report(predictions_df: pd.DataFrame, output_path: Path) -> Non
 		
 		<div class="controls">
 			<div class="control-group">
-				<label for="bankroll">Bankroll:</label>
+				<label for="bankroll">Daily Budget:</label>
 				<input type="number" id="bankroll" value="100" min="1" step="10">
 			</div>
 			<div class="control-group">
@@ -315,8 +315,8 @@ def generate_html_report(predictions_df: pd.DataFrame, output_path: Path) -> Non
 					<div class="value" id="summaryBets">0</div>
 				</div>
 				<div class="summary-item">
-					<div class="label">Total Allocation</div>
-					<div class="value" id="summaryAlloc">0%</div>
+					<div class="label">Betting Days</div>
+					<div class="value" id="summaryAlloc">0</div>
 				</div>
 				<div class="summary-item">
 					<div class="label">Total Bet Amount</div>
@@ -447,7 +447,7 @@ def generate_html_report(predictions_df: pd.DataFrame, output_path: Path) -> Non
 			const bankroll = parseFloat(document.getElementById('bankroll').value) || 100;
 			const onlyConfirmed = document.getElementById('onlyConfirmed').checked;
 			
-			// Calculate EV and variance for each game
+			// Calculate EV for each game
 			const gameStats = data.map((row, idx) => {{
 				const p = row.Prob_Over;
 				const oddsOver = row.Odds_Over;
@@ -457,18 +457,11 @@ def generate_html_report(predictions_df: pd.DataFrame, output_path: Path) -> Non
 				const muOver = p * oddsOver - 1;
 				const muUnder = (1 - p) * oddsUnder - 1;
 				
-				// Variance
-				const eX2Over = p * Math.pow(oddsOver - 1, 2) + (1 - p) * 1;
-				const varOver = eX2Over - Math.pow(muOver, 2);
-				
-				const eX2Under = (1 - p) * Math.pow(oddsUnder - 1, 2) + p * 1;
-				const varUnder = eX2Under - Math.pow(muUnder, 2);
-				
 				// Select better side
 				const betterIsOver = muOver >= muUnder;
 				const muBest = betterIsOver ? muOver : muUnder;
-				const varBest = betterIsOver ? varOver : varUnder;
 				const betSide = betterIsOver ? 'Over' : 'Under';
+				const betDate = row.Date;
 				
 				// Check if included in calculation
 				const isIncluded = !onlyConfirmed || confirmedGames.has(idx);
@@ -484,36 +477,38 @@ def generate_html_report(predictions_df: pd.DataFrame, output_path: Path) -> Non
 				return {{
 					idx,
 					muBest,
-					varBest,
 					betSide,
+					betDate,
 					isIncluded,
 					isEligible,
 					origMuBest,
 				}};
 			}});
 			
-			// Calculate Sharpe-weighted allocations for eligible games
-			const eligible = gameStats.filter(g => g.isEligible);
-			let sumWeights = 0;
-			
-			eligible.forEach(g => {{
-				g.rawWeight = Math.max(0, g.muBest / (g.varBest + 1e-6));
-				sumWeights += g.rawWeight;
+			// Split each day's budget equally across positive EV bets for that day
+			const eligibleByDate = {{}};
+			gameStats.filter(g => g.isEligible).forEach(g => {{
+				if (!eligibleByDate[g.betDate]) {{
+					eligibleByDate[g.betDate] = [];
+				}}
+				eligibleByDate[g.betDate].push(g);
 			}});
-			
-			// Normalize weights
-			eligible.forEach(g => {{
-				g.allocPct = sumWeights > 0 ? (g.rawWeight / sumWeights) * 100 : 0;
+
+			Object.values(eligibleByDate).forEach(dayGames => {{
+				const allocPct = dayGames.length > 0 ? 100 / dayGames.length : 0;
+				dayGames.forEach(g => {{
+					g.allocPct = allocPct;
+				}});
 			}});
 			
 			// Create lookup
 			const allocByIdx = {{}};
-			eligible.forEach(g => {{
+			Object.values(eligibleByDate).flat().forEach(g => {{
 				allocByIdx[g.idx] = g.allocPct;
 			}});
 			
 			// Update UI
-			let totalAlloc = 0;
+			let bettingDays = 0;
 			let totalAmount = 0;
 			let positiveBets = 0;
 			let includedGames = 0;
@@ -560,16 +555,17 @@ def generate_html_report(predictions_df: pd.DataFrame, output_path: Path) -> Non
 					
 					if (g.muBest > 0) {{
 						positiveBets++;
-						totalAlloc += alloc;
 						totalAmount += amount;
 					}}
 				}}
 			}});
+
+			bettingDays = Object.keys(eligibleByDate).length;
 			
 			// Update summary
 			document.getElementById('summaryGames').textContent = includedGames;
 			document.getElementById('summaryBets').textContent = positiveBets;
-			document.getElementById('summaryAlloc').textContent = totalAlloc.toFixed(1) + '%';
+			document.getElementById('summaryAlloc').textContent = bettingDays;
 			document.getElementById('summaryAmount').textContent = '€' + totalAmount.toFixed(2);
 		}}
 	</script>

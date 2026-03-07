@@ -16,7 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.metrics import accuracy_score, brier_score_loss, log_loss
 
-from utils.portfolio import evaluate_portfolio
+from utils.portfolio import evaluate_daily_betting_results
 
 
 def ranked_probability_score(y_true: np.ndarray, probs: np.ndarray) -> float:
@@ -242,7 +242,7 @@ def _evaluate_model_binary(
 	corr = float(np.corrcoef(prob, implied_np)[0, 1])
 
 	profit_metrics = evaluate_profit(prob, y_true, data["odds_over"], data["odds_under"])
-	portfolio_metrics = evaluate_portfolio(
+	portfolio_metrics = evaluate_daily_betting_results(
 		prob, y_true, data["odds_over"], data["odds_under"], data["dates"]
 	)
 
@@ -255,8 +255,9 @@ def _evaluate_model_binary(
 			f"Total: {profit_metrics['total_profit']:.2f}"
 		)
 		print(
-			f"Portfolio Sharpe: {portfolio_metrics['sharpe_ratio']:.4f}, "
-			f"Total: {portfolio_metrics['sharpe_total_profit']:.2f}"
+			f"Daily Profit: avg/calendar day {portfolio_metrics['avg_profit_per_calendar_day']:.4f}, "
+			f"avg/betting day {portfolio_metrics['avg_profit_per_betting_day']:.4f}, "
+			f"total {portfolio_metrics['daily_total_profit']:.2f}"
 		)
 
 	return {

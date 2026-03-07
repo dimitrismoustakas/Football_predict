@@ -8,12 +8,13 @@ from training.evaluation.metrics import (
 	ranked_probability_score,
 	TaskType,
 )
-from utils.portfolio import evaluate_portfolio
+from utils.portfolio import evaluate_daily_betting_results, evaluate_portfolio
 
 __all__ = [
 	"evaluate_model",
 	"evaluate_profit",
 	"evaluate_profit_result",
+	"evaluate_daily_betting_results",
 	"evaluate_portfolio",
 	"plot_losses",
 	"ranked_probability_score",
