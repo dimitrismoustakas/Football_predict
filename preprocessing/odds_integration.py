@@ -1,9 +1,23 @@
 import polars as pl
 import json
 from pathlib import Path
+from utils.paths import MAPPINGS_DIR
 
 MATCH_HISTORY_PATH = Path("data/match_history/matches.parquet")
-FOOTBALLDATA_MAPPING_PATH = Path("data/mappings/footballdata_to_canonical.json")
+FOOTBALLDATA_MAPPING_PATH = MAPPINGS_DIR / "footballdata_to_canonical.json"
+
+
+def _first_valid_odds_expr(mh: pl.DataFrame, cols: list[str], alias: str) -> pl.Expr:
+    valid_cols = [c for c in cols if c in mh.columns]
+    if not valid_cols:
+        return pl.lit(None).cast(pl.Float64).alias(alias)
+
+    return pl.coalesce([
+        pl.when(pl.col(c) > 1.0)
+        .then(pl.col(c).cast(pl.Float64))
+        .otherwise(None)
+        for c in valid_cols
+    ]).alias(alias)
 
 def load_match_history_and_map():
     if not MATCH_HISTORY_PATH.exists() or not FOOTBALLDATA_MAPPING_PATH.exists():
@@ -24,9 +38,16 @@ def load_match_history_and_map():
     cols_to_select = [
         "season_year", "home_team_mapped", "away_team_mapped",
         "HS", "AS", "HST", "AST",
+        # B365 odds
         "B365H", "B365D", "B365A", "B365CH", "B365CD", "B365CA",
         "B365>2.5", "B365<2.5", "B365C>2.5", "B365C<2.5",
-        "BbAv>2.5", "BbAv<2.5", "Avg>2.5", "Avg<2.5"
+        # Pinnacle odds (fallback)
+        "PSH", "PSD", "PSA", "PSCH", "PSCD", "PSCA",
+        "P>2.5", "P<2.5", "PC>2.5", "PC<2.5",
+        # Average odds (fallback)
+        "AvgH", "AvgD", "AvgA", "AvgCH", "AvgCD", "AvgCA",
+        "Avg>2.5", "Avg<2.5", "AvgC>2.5", "AvgC<2.5",
+        "BbAv>2.5", "BbAv<2.5",
     ]
     
     existing = mh.columns
@@ -42,19 +63,15 @@ def load_match_history_and_map():
         "AST": "away_sot"
     })
 
-    def coalesce_odds_list(cols, alias):
-        # Filter cols that exist
-        valid_cols = [c for c in cols if c in mh.columns]
-        if not valid_cols:
-            return pl.lit(None).alias(alias)
-        return pl.coalesce([pl.col(c) for c in valid_cols]).alias(alias)
-
     mh = mh.with_columns([
-        coalesce_odds_list(["B365CH", "B365H"], "odds_h"),
-        coalesce_odds_list(["B365CD", "B365D"], "odds_d"),
-        coalesce_odds_list(["B365CA", "B365A"], "odds_a"),
-        coalesce_odds_list(["B365C>2.5", "B365>2.5", "Avg>2.5", "BbAv>2.5"], "odds_over"),
-        coalesce_odds_list(["B365C<2.5", "B365<2.5", "Avg<2.5", "BbAv<2.5"], "odds_under"),
+        # Home/Draw/Away odds - prefer B365, then Pinnacle, then average.
+        # Ignore invalid values (<= 1.0) so broken closing prices don't mask valid fallbacks.
+        _first_valid_odds_expr(mh, ["B365H", "B365CH", "PSH", "PSCH", "AvgH", "AvgCH"], "odds_h"),
+        _first_valid_odds_expr(mh, ["B365D", "B365CD", "PSD", "PSCD", "AvgD", "AvgCD"], "odds_d"),
+        _first_valid_odds_expr(mh, ["B365A", "B365CA", "PSA", "PSCA", "AvgA", "AvgCA"], "odds_a"),
+        # Over/Under odds
+        _first_valid_odds_expr(mh, ["B365>2.5", "B365C>2.5", "P>2.5", "PC>2.5", "Avg>2.5", "AvgC>2.5", "BbAv>2.5"], "odds_over"),
+        _first_valid_odds_expr(mh, ["B365<2.5", "B365C<2.5", "P<2.5", "PC<2.5", "Avg<2.5", "AvgC<2.5", "BbAv<2.5"], "odds_under"),
     ])
     
     return mh

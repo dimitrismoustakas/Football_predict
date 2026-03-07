@@ -1,23 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Robust production ClubElo fetcher.
-
-- Stays inside ClubElo (no cross-site joins).
-- Filters by country (reliable), not by league (often missing for RUS, etc.).
-- If 'level' is present, takes top division (level == 1).
-- If 'level' is missing, falls back to selecting the expected number of
-  top-division teams per country by best available ordering (rank asc, then elo desc).
-- Writes compact as-of snapshot and optional per-team histories to data/prod/eloscores.
-- Safe to import & call from other scripts.
-
-Example:
-    from elo_prod import build_prod_elo
-    paths = build_prod_elo(
-        target_countries={"ENG","ESP","GER","ITA","FRA","RUS"},
-        as_of=None,
-        write_histories=False,
-    )
-    print(paths)
 """
 
 from __future__ import annotations
@@ -38,8 +21,6 @@ PROD_DIR.mkdir(parents=True, exist_ok=True)
 # Your six target countries
 DEFAULT_COUNTRIES = {"ENG", "ESP", "GER", "ITA", "FRA", "RUS"}
 
-# Fallback top-division team counts when 'level' column is absent.
-# Adjust if needed.
 DEFAULT_TOP_COUNTS = {
     "ENG": 20,  # Premier League
     "ESP": 20,  # La Liga
@@ -194,16 +175,6 @@ def build_prod_elo(
 ) -> Dict[str, str]:
     """
     Build minimal Elo payload for production.
-
-    Args:
-        target_countries: iterable of 3-letter country codes (ClubElo style), e.g., {"ENG","ESP","GER","ITA","FRA","RUS"}.
-        as_of: None for today or 'YYYY-MM-DD' or datetime.
-        write_histories: if True, also persist per-team full Elo histories for selected teams.
-        out_dir: output directory (default data/prod/eloscores).
-        top_counts_override: optional per-country dict of expected top-flight team counts when 'level' is missing.
-
-    Returns:
-        dict with keys: 'elo_asof', 'roster', and optionally 'elo_history'.
     """
     as_of_dt = _parse_as_of(as_of)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -268,10 +239,6 @@ def build_prod_elo(
 
     return paths
 
-
-# --------------------------
-# CLI entry (optional)
-# --------------------------
 if __name__ == "__main__":
     # Default run: today, default 6 countries, no histories
     out = build_prod_elo(write_histories=False)

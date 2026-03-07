@@ -1,0 +1,41 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Python: Debug Current File",
+			"type": "debugpy",
+			"request": "launch",
+			"python": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"program": "${file}",
+			"console": "integratedTerminal",
+			"justMyCode": false
+		},
+		{
+			"name": "Debug: Architecture Search",
+			"type": "debugpy",
+			"request": "launch",
+			"python": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"program": "${workspaceFolder}/training/architecture_search.py",
+			"console": "integratedTerminal",
+			"justMyCode": false
+		},
+		{
+			"name": "Debug: Build Features",
+			"type": "debugpy",
+			"request": "launch",
+			"python": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"program": "${workspaceFolder}/preprocessing/build_understat_features.py",
+			"console": "integratedTerminal",
+			"justMyCode": false
+		},
+		{
+			"name": "Debug: Production Pipeline",
+			"type": "debugpy",
+			"request": "launch",
+			"python": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"program": "${workspaceFolder}/prod_run/pipeline.py",
+			"console": "integratedTerminal",
+			"justMyCode": false
+		}
+	]
+}

@@ -11,9 +11,16 @@ wheels/
 .venv
 
 # Folders
-data/
-test_scripts/
+secrets/
 
 # Files
-main.py
 .env
+mlruns/
+downloaded_files/
+
+# Runtime-generated model bundles
+artifacts/models/*
+!artifacts/models/README.md
+
+# Data
+data/

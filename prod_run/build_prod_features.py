@@ -14,15 +14,30 @@ from preprocessing.feature_engineering import (
     rename_and_cast,
     build_long,
     compute_rolling_features,
+    compute_opponent_baselines,
+    join_opponent_baselines,
+    compute_adjusted_stats,
+    compute_adjusted_rolling_features,
     build_match_level,
+    merge_european_schedule,
+    compute_schedule_features,
+    add_categorical_features,
+    load_promoted_teams,
+    build_promoted_teams_set,
 )
 from preprocessing.odds_integration import load_match_history_and_map, join_odds
 from preprocessing.elo_integration import merge_elo_features
+from preprocessing.player_feature_engineering import (
+    load_all_player_data,
+    build_player_team_features,
+)
 from prod_run.elo_scrap import build_prod_elo
+from utils.paths import MAPPINGS_DIR
 
 LEAGUES = ["ENG-Premier League", "ESP-La Liga", "GER-Bundesliga", "ITA-Serie A", "FRA-Ligue 1"]
 OUTPUT_DIR = Path("data/prod")
 OUTPUT_PARQUET = OUTPUT_DIR / "features_season.parquet"
+EUROPEAN_SCHEDULE_PATH = Path("data/full_schedule/european_all.csv")
 
 def get_current_season_str():
     now = datetime.now()
@@ -108,7 +123,7 @@ def main():
     lf = rename_and_cast(lf)
     
     # Apply Canonical Mapping to Production Data
-    UNDERSTAT_MAPPING_PATH = Path("data/mappings/understat_to_canonical.json")
+    UNDERSTAT_MAPPING_PATH = MAPPINGS_DIR / "understat_to_canonical.json"
     if UNDERSTAT_MAPPING_PATH.exists():
         with open(UNDERSTAT_MAPPING_PATH, "r") as f:
             u_mapping = json.load(f)
@@ -138,7 +153,7 @@ def main():
             elo_asof_path = elo_paths["elo_asof"]
             elo_current = pl.read_parquet(elo_asof_path)
             
-            with open("data/mappings/clubelo_to_canonical.json", "r") as f:
+            with open(MAPPINGS_DIR / "clubelo_to_canonical.json", "r") as f:
                 mapping = json.load(f)
             
             mapping_df = pl.DataFrame([{"team_clubelo": k, "team_canonical": v} for k, v in mapping.items()])
@@ -184,6 +199,9 @@ def main():
         "date",
         "home_team",
         "away_team",
+        "home_team_id",
+        "away_team_id",
+        "game_id",
         "home_goals",
         "away_goals",
         "home_xg",
@@ -207,7 +225,7 @@ def main():
         "away_elo",
         "elo_diff",
         "elo_sum",
-        "elo_mean"
+        "elo_mean",
     ]
     
     schema = lf.collect_schema()
@@ -220,9 +238,89 @@ def main():
 
     # Rolling features (within league+season; shift(1) prevents leakage)
     long_feats = compute_rolling_features(long_df)
+    
+    # Opponent-adjusted features
+    long_feats = compute_opponent_baselines(long_feats)
+    long_feats = join_opponent_baselines(long_feats)
+    long_feats = compute_adjusted_stats(long_feats)
+    long_feats = compute_adjusted_rolling_features(long_feats)
+    
+    # Merge European schedule for fixture congestion features
+    if EUROPEAN_SCHEDULE_PATH.exists():
+        print("Merging European schedule for fixture congestion features...")
+        combined_long = merge_european_schedule(long_feats, EUROPEAN_SCHEDULE_PATH)
+        
+        # Compute schedule features (days_since_last_match, games_last_15_days)
+        print("Computing schedule features...")
+        combined_df = compute_schedule_features(combined_long)
+        
+        # Filter back to domestic games only and join schedule features to long_feats
+        domestic_with_schedule = combined_df.filter(pl.col("is_european") == False)
+        schedule_cols = ["match_id", "team", "days_since_last_match", "games_last_15_days"]
+        schedule_feats = domestic_with_schedule.select(schedule_cols)
+        
+        long_feats = long_feats.collect().join(
+            schedule_feats,
+            on=["match_id", "team"],
+            how="left"
+        ).lazy()
+    else:
+        print("No European schedule found, skipping fixture congestion features")
+        long_feats = long_feats.with_columns([
+            pl.lit(None).cast(pl.Float64).alias("days_since_last_match"),
+            pl.lit(None).cast(pl.Int64).alias("games_last_15_days"),
+        ])
 
-    # Rejoin to match level and write
+    # Rejoin to match level
     final_df = build_match_level(base_matches, long_feats)
+
+    # Add player-derived team features using the latest available rolling window per team
+    print("Building player-derived team features...")
+    player_df = load_all_player_data()
+    player_team_features = build_player_team_features(player_df)
+
+    player_feature_cols = [c for c in player_team_features.columns if "_r15" in c or "_r5_sum" in c]
+    final_df_collected = final_df.collect()
+
+    if "home_team_id" in final_df_collected.columns and "away_team_id" in final_df_collected.columns:
+        print(f"Joining {len(player_feature_cols)} player features for home and away teams...")
+
+        final_df_collected = final_df_collected.with_columns([
+            pl.col("league").cast(pl.Utf8),
+            pl.col("date").cast(pl.Datetime),
+        ])
+
+        home_player_feats = player_team_features.select(
+            ["league", "team_id", "date"] + player_feature_cols
+        ).rename({"team_id": "home_team_id"})
+        home_player_feats = home_player_feats.rename({col: f"home_{col}" for col in player_feature_cols})
+
+        away_player_feats = player_team_features.select(
+            ["league", "team_id", "date"] + player_feature_cols
+        ).rename({"team_id": "away_team_id"})
+        away_player_feats = away_player_feats.rename({col: f"away_{col}" for col in player_feature_cols})
+
+        final_df_collected = final_df_collected.sort(["league", "home_team_id", "date"]).join_asof(
+            home_player_feats.sort(["league", "home_team_id", "date"]),
+            on="date",
+            by=["league", "home_team_id"],
+            strategy="backward",
+        )
+
+        final_df_collected = final_df_collected.sort(["league", "away_team_id", "date"]).join_asof(
+            away_player_feats.sort(["league", "away_team_id", "date"]),
+            on="date",
+            by=["league", "away_team_id"],
+            strategy="backward",
+        )
+    else:
+        print("Warning: Missing team_id columns, skipping player feature join")
+
+    # Add categorical features (league_idx, round_number, season_progress, promoted flags)
+    print("Adding categorical features...")
+    promoted_data = load_promoted_teams()
+    promoted_lookup = build_promoted_teams_set(promoted_data)
+    final_df = add_categorical_features(final_df_collected.lazy(), promoted_lookup)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     final_df.collect().write_parquet(OUTPUT_PARQUET, compression="zstd")

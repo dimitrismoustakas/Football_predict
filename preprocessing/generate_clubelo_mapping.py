@@ -2,8 +2,8 @@ import json
 import difflib
 from pathlib import Path
 import pandas as pd
+from utils.paths import MAPPINGS_DIR
 
-MAPPINGS_DIR = Path("data/mappings")
 ELO_UNIVERSE_PATH = Path("data/eloscores/team_universe.parquet")
 UNDERSTAT_MAPPING_PATH = MAPPINGS_DIR / "understat_to_canonical.json"
 OUTPUT_MAPPING_PATH = MAPPINGS_DIR / "clubelo_to_canonical.json"

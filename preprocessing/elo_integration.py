@@ -1,9 +1,10 @@
 import polars as pl
 import json
 from pathlib import Path
+from utils.paths import MAPPINGS_DIR
 
 ELO_HISTORY_PATH = Path("data/eloscores/elo_history.parquet")
-MAPPING_PATH = Path("data/mappings/clubelo_to_canonical.json")
+MAPPING_PATH = MAPPINGS_DIR / "clubelo_to_canonical.json"
 
 def load_elo_data():
     if not ELO_HISTORY_PATH.exists():
