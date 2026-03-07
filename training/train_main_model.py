@@ -63,7 +63,7 @@ TASK_CONFIG = {
 		"add_targets_fn": add_targets_and_implied,
 		"prepare_fn": prepare_data,
 		"odds_cols": ["odds_over", "odds_under"],
-		"comparison_metric": "brier",
+		"comparison_metric": "log_loss",
 		"experiment_name": "over_under_main_model",
 		"artifact_model_path": MODELS_DIR / "over_under_model.pt",
 		"artifact_config_path": MODELS_DIR / "over_under_model_config.json",

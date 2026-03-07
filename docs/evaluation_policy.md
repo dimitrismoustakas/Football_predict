@@ -53,9 +53,7 @@ It should not answer:
 
 ## Latest-Season Rule
 
-As of March 7, 2026, the repo's current held-out season is `2526`, and that season is still in progress.
-
-That means `2526` should be treated as:
+Season `2526` should be treated as:
 
 - a held-out audit set
 - a forward-monitoring set
@@ -67,8 +65,6 @@ Practical implication:
 - strong CV win plus strong `2526` win: promote
 - strong CV win plus clear `2526` loss: reject
 - weak CV win plus good `2526` result: do not trust it; likely noise
-
-Once `2526` is complete, freeze it as a true acceptance season and use the next season as the forward-monitoring season.
 
 ## Metrics Policy
 
@@ -87,17 +83,6 @@ Betting metrics are diagnostics only.
 - Primary metric: `log_loss`
 - Secondary metric: `rps`
 - Diagnostics: classwise calibration, number of bets, profit
-
-## Important Implementation Note
-
-The current code still labels binary comparison with `brier` in the canonical config metadata.
-
-Policy-wise, this repo should still judge binary challengers using:
-
-- `log_loss` as the main promotion metric
-- `brier` as a required secondary check
-
-If code and policy disagree, follow the policy for promotion decisions until the implementation is updated.
 
 ## Research-Time Selection Rule
 

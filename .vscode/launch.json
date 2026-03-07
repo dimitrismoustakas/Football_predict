@@ -11,11 +11,11 @@
 			"justMyCode": false
 		},
 		{
-			"name": "Debug: Architecture Search",
+			"name": "Debug: Train Main Model",
 			"type": "debugpy",
 			"request": "launch",
 			"python": "${workspaceFolder}/.venv/Scripts/python.exe",
-			"program": "${workspaceFolder}/training/architecture_search.py",
+			"program": "${workspaceFolder}/training/train_main_model.py",
 			"console": "integratedTerminal",
 			"justMyCode": false
 		},
