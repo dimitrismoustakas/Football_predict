@@ -132,13 +132,13 @@ def get_all_leagues_odds(api_key: str | None) -> list[dict]:
 def parse_odds_data(games: list[dict]) -> list[dict]:
 	"""
 	Parse raw API response into structured odds data.
-	Extracts best over/under 2.5 odds across all bookmakers.
+	Extracts best over/under 2.5 odds and best home/draw/away odds across all bookmakers.
 	
 	Args:
 		games: List of game dicts from The-Odds-API
 	
 	Returns:
-		List of dicts with: home_team, away_team, league_id, commence_time, odds_over, odds_under
+		List of dicts with canonical team names, league, kickoff time, totals odds, and result odds.
 	"""
 	parsed = []
 	
@@ -155,9 +155,26 @@ def parse_odds_data(games: list[dict]) -> list[dict]:
 		# Find best over/under odds across all bookmakers
 		best_over = None
 		best_under = None
+		best_home = None
+		best_draw = None
+		best_away = None
 		
 		for bookmaker in game.get("bookmakers", []):
 			for market in bookmaker.get("markets", []):
+				if market["key"] == "h2h":
+					for outcome in market["outcomes"]:
+						price = outcome.get("price")
+						if price is None:
+							continue
+						if outcome["name"] == home_team_raw:
+							if best_home is None or price > best_home:
+								best_home = price
+						elif outcome["name"] == away_team_raw:
+							if best_away is None or price > best_away:
+								best_away = price
+						elif outcome["name"].lower() == "draw":
+							if best_draw is None or price > best_draw:
+								best_draw = price
 				if market["key"] == "totals":
 					for outcome in market["outcomes"]:
 						if outcome.get("point") == 2.5:
@@ -168,7 +185,7 @@ def parse_odds_data(games: list[dict]) -> list[dict]:
 								if best_under is None or outcome["price"] > best_under:
 									best_under = outcome["price"]
 		
-		if best_over is not None and best_under is not None:
+		if any(value is not None for value in [best_over, best_under, best_home, best_draw, best_away]):
 			parsed.append({
 				"home_team": home_team,
 				"away_team": away_team,
@@ -178,6 +195,9 @@ def parse_odds_data(games: list[dict]) -> list[dict]:
 				"commence_time": commence_time,
 				"odds_over": best_over,
 				"odds_under": best_under,
+				"odds_home": best_home,
+				"odds_draw": best_draw,
+				"odds_away": best_away,
 			})
 	
 	return parsed

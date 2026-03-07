@@ -3,8 +3,34 @@ Portfolio and betting allocation utilities.
 """
 
 from typing import Dict
+
 import numpy as np
 import pandas as pd
+
+
+def _build_binary_bet_frame(
+	probs: np.ndarray,
+	odds_over: np.ndarray,
+	odds_under: np.ndarray,
+	dates: np.ndarray | list,
+) -> pd.DataFrame:
+	df = pd.DataFrame({
+		"date": pd.to_datetime(dates, utc=True, errors="coerce"),
+		"prob_over": probs,
+		"odds_over": odds_over,
+		"odds_under": odds_under,
+	})
+
+	mu_over = df["prob_over"] * df["odds_over"] - 1
+	mu_under = (1 - df["prob_over"]) * df["odds_under"] - 1
+	better_is_over = mu_over >= mu_under
+
+	df["bet_side"] = np.where(better_is_over, "Over", "Under")
+	df["mu"] = np.where(better_is_over, mu_over, mu_under)
+	df["selected_odds"] = np.where(better_is_over, df["odds_over"], df["odds_under"])
+	df["bet_date"] = df["date"].dt.strftime("%Y-%m-%d")
+
+	return df
 
 
 def calculate_betting_allocations(
@@ -18,86 +44,86 @@ def calculate_betting_allocations(
 	min_edge: float = 0.0,
 ) -> pd.DataFrame:
 	"""
-	Calculate betting allocations using Sharpe-weighted portfolio strategy.
-	
-	Args:
-		probs: Predicted probabilities for over 2.5 goals
-		odds_over: Bookmaker odds for over 2.5 goals
-		odds_under: Bookmaker odds for under 2.5 goals
-		home_teams: List of home team names
-		away_teams: List of away team names
-		dates: List of match dates
-		budget: Total budget for allocation (percentage)
-		min_edge: Minimum expected value (mu) required to place a bet.
-	
-	Returns:
-		DataFrame with betting allocations and metrics
+	Allocate each day's fixed budget equally across all positive-EV bets for that day.
+
+	`allocation_pct` is the share of that day's budget, not a share of the full multi-day window.
 	"""
-	df = pd.DataFrame({
-		"home_team": home_teams,
-		"away_team": away_teams,
-		"date": dates,
-		"prob_over": probs,
-		"odds_over": odds_over,
-		"odds_under": odds_under,
-	})
-	
-	p = df["prob_over"]
-	o_over = df["odds_over"]
-	o_under = df["odds_under"]
-	
-	# Expected value calculations
-	# For Over bet: E[profit] = p * (odds - 1) + (1-p) * (-1) = p * odds - 1
-	mu_over = p * o_over - 1
-	# For Under bet: E[profit] = (1-p) * (odds - 1) + p * (-1) = (1-p) * odds - 1
-	mu_under = (1 - p) * o_under - 1
-	
-	# Variance calculations
-	# Var(profit) = E[profit^2] - E[profit]^2
-	# For Over: outcomes are (odds-1) with prob p, or -1 with prob (1-p)
-	e_x2_over = p * (o_over - 1) ** 2 + (1 - p) * 1
-	var_over = e_x2_over - mu_over ** 2
-	
-	e_x2_under = (1 - p) * (o_under - 1) ** 2 + p * 1
-	var_under = e_x2_under - mu_under ** 2
-	
-	# Determine better side for each game
-	better_is_over = mu_over >= mu_under
-	mu_best = np.where(better_is_over, mu_over, mu_under)
-	var_best = np.where(better_is_over, var_over, var_under)
-	odds_best = np.where(better_is_over, o_over, o_under)
-	
-	df["bet_side"] = np.where(better_is_over, "Over", "Under")
-	df["mu"] = mu_best
-	df["var"] = var_best
-	df["odds_selected"] = odds_best
-	df["eligible"] = df["mu"] > min_edge  # Only bet above EV threshold
-	
-	# Calculate Sharpe-weighted allocations
-	eligible_df = df[df["eligible"]].copy()
-	
-	if len(eligible_df) > 0:
-		# Sharpe weight = mu / var (capped variance at small value for stability)
-		vars_ = eligible_df["var"].values + 1e-6
-		mus = eligible_df["mu"].values
-		raw_weights = np.maximum(0, mus / vars_)
-		sum_weights = raw_weights.sum()
-		
-		if sum_weights > 0:
-			norm_weights = raw_weights / sum_weights
-			eligible_df["allocation_pct"] = (norm_weights * 100).round(2)
-		else:
-			eligible_df["allocation_pct"] = 0.0
-	
-	# Merge back
-	df = df.merge(
-		eligible_df[["home_team", "away_team", "allocation_pct"]],
-		on=["home_team", "away_team"],
-		how="left"
-	)
-	df["allocation_pct"] = df["allocation_pct"].fillna(0.0)
-	
+	df = _build_binary_bet_frame(probs, odds_over, odds_under, dates)
+	df["home_team"] = home_teams
+	df["away_team"] = away_teams
+	df["eligible"] = df["mu"] > min_edge
+	df["allocation_pct"] = 0.0
+	df["daily_budget"] = float(budget)
+
+	for bet_date, group in df.groupby("bet_date", dropna=False):
+		eligible_idx = group.index[group["eligible"]].tolist()
+		if not eligible_idx:
+			continue
+		allocation_pct = round(100.0 / len(eligible_idx), 2)
+		df.loc[eligible_idx, "allocation_pct"] = allocation_pct
+
 	return df
+
+
+def evaluate_daily_betting_results(
+	probs: np.ndarray,
+	y_true: np.ndarray,
+	odds_over: np.ndarray,
+	odds_under: np.ndarray,
+	dates: np.ndarray,
+	budget_per_day: float = 10.0,
+	min_edge: float = 0.0,
+) -> Dict:
+	"""
+	Evaluate betting performance with a fixed budget per calendar day.
+
+	For each day, the budget is split equally across all positive-EV bets.
+	No minimum number of games per day is required.
+	"""
+	df = _build_binary_bet_frame(probs, odds_over, odds_under, dates)
+	df["y_true"] = y_true
+	df["eligible"] = df["mu"] > min_edge
+	df["won"] = np.where(df["bet_side"] == "Over", df["y_true"] == 1, df["y_true"] == 0)
+
+	calendar_days = [day for day in df["bet_date"].dropna().unique().tolist()]
+	calendar_days.sort()
+	daily_profits = []
+	betting_day_profits = []
+	total_bets = 0
+
+	for bet_date in calendar_days:
+		group = df[df["bet_date"] == bet_date]
+		eligible = group[group["eligible"]]
+		if eligible.empty:
+			daily_profits.append(0.0)
+			continue
+
+		stake = budget_per_day / len(eligible)
+		profits = np.where(
+			eligible["won"].to_numpy(),
+			stake * (eligible["selected_odds"].to_numpy() - 1),
+			-stake,
+		)
+		daily_profit = float(np.sum(profits))
+		daily_profits.append(daily_profit)
+		betting_day_profits.append(daily_profit)
+		total_bets += int(len(eligible))
+
+	daily_profits_np = np.array(daily_profits, dtype=float)
+	betting_day_profits_np = np.array(betting_day_profits, dtype=float)
+	invested_capital = budget_per_day * len(betting_day_profits)
+
+	return {
+		"daily_total_profit": float(daily_profits_np.sum()),
+		"avg_profit_per_calendar_day": float(daily_profits_np.mean()) if len(daily_profits_np) > 0 else 0.0,
+		"avg_profit_per_betting_day": float(betting_day_profits_np.mean()) if len(betting_day_profits_np) > 0 else 0.0,
+		"median_profit_per_betting_day": float(np.median(betting_day_profits_np)) if len(betting_day_profits_np) > 0 else 0.0,
+		"daily_profit_std": float(daily_profits_np.std()) if len(daily_profits_np) > 0 else 0.0,
+		"daily_roi": float(daily_profits_np.sum() / invested_capital) if invested_capital > 0 else 0.0,
+		"n_calendar_days": int(len(calendar_days)),
+		"n_betting_days": int(len(betting_day_profits)),
+		"n_bets": int(total_bets),
+	}
 
 
 def evaluate_portfolio(
@@ -109,93 +135,13 @@ def evaluate_portfolio(
 	budget_per_day: float = 10.0,
 	min_edge: float = 0.0,
 ) -> Dict:
-	"""
-	Portfolio-style evaluation with Sharpe-weighted betting.
-	
-	Args:
-		probs: Predicted probabilities for over 2.5 goals
-		y_true: Actual outcomes (1 for over, 0 for under)
-		odds_over: Bookmaker odds for over 2.5 goals
-		odds_under: Bookmaker odds for under 2.5 goals
-		dates: Match dates for grouping
-		budget_per_day: Daily budget allocation
-		min_edge: Minimum expected value (mu) required to place a bet.
-	
-	Returns:
-		Dictionary with portfolio performance metrics
-	"""
-	df = pd.DataFrame(
-		{
-			"date": dates,
-			"prob_over": probs,
-			"y_true": y_true,
-			"odds_over": odds_over,
-			"odds_under": odds_under,
-		}
+	"""Backward-compatible alias for daily fixed-budget betting evaluation."""
+	return evaluate_daily_betting_results(
+		probs=probs,
+		y_true=y_true,
+		odds_over=odds_over,
+		odds_under=odds_under,
+		dates=dates,
+		budget_per_day=budget_per_day,
+		min_edge=min_edge,
 	)
-
-	p = df["prob_over"]
-	o_over = df["odds_over"]
-	o_under = df["odds_under"]
-
-	# Expected value calculations
-	mu_over = p * o_over - 1
-	mu_under = (1 - p) * o_under - 1
-
-	# Variance calculations
-	e_x2_over = p * (o_over - 1) ** 2 + (1 - p) * 1
-	var_over = e_x2_over - mu_over**2
-	e_x2_under = (1 - p) * (o_under - 1) ** 2 + p * 1
-	var_under = e_x2_under - mu_under**2
-
-	better_is_over = mu_over >= mu_under
-	mu_best = np.where(better_is_over, mu_over, mu_under)
-	var_best = np.where(better_is_over, var_over, var_under)
-	odds_best = np.where(better_is_over, o_over, o_under)
-
-	df["bet_over"] = better_is_over
-	df["mu"] = mu_best
-	df["var"] = var_best
-	df["odds"] = odds_best
-	df["won"] = np.where(df["bet_over"], df["y_true"] == 1, df["y_true"] == 0)
-	df["eligible"] = df["mu"] > min_edge
-
-	daily_results_sharpe = []
-
-	for _, group in df.groupby("date"):
-		group = group[group["eligible"]]
-		if len(group) <= 1:
-			daily_results_sharpe.append(0.0)
-			continue
-
-		mus = group["mu"].values
-		vars_ = group["var"].values + 1e-6
-		raw_weights = np.maximum(0, mus / vars_)
-		sum_weights = raw_weights.sum()
-
-		if sum_weights > 0:
-			norm_weights = raw_weights / sum_weights
-			bets_sharpe = budget_per_day * norm_weights
-			profits = np.where(
-				group["won"].values,
-				bets_sharpe * (group["odds"].values - 1),
-				-bets_sharpe,
-			)
-			daily_results_sharpe.append(profits.sum())
-		else:
-			daily_results_sharpe.append(0.0)
-
-	daily = np.array(daily_results_sharpe)
-
-	def sharpe_ratio(x):
-		if len(x) == 0:
-			return 0.0
-		std = x.std()
-		return float(x.mean() / std) if std > 0 else 0.0
-
-	return {
-		"sharpe_total_profit": float(daily.sum()),
-		"sharpe_avg_daily_profit": float(daily.mean()) if len(daily) > 0 else 0.0,
-		"sharpe_ratio": sharpe_ratio(daily),
-		"n_days": int(len(daily)),
-	}
