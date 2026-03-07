@@ -16,7 +16,9 @@ Given a completed experiment branch:
 3. apply the acceptance policy
 4. assign one status: `accept`, `reject`, or `challenger`
 5. update source-controlled acceptance records only if the candidate is accepted
-6. open a PR only for accepted experiments
+6. for `reject` or `challenger`, carry a minimal record of the outcome onto `main`
+7. delete the local experiment branch after non-accepted outcomes are recorded on `main`
+8. open a PR only for accepted experiments
 
 ## Required context to read first
 
@@ -81,12 +83,27 @@ Use:
 - update the report decision section to `challenger`
 - do not update `training/configs/main_models/baselines.json`
 - do not open a PR
+- commit the finalized report on the experiment branch if needed
+- switch to `main` and bring over only the minimal outcome record needed to show the experiment was reviewed and not promoted
+- delete the local experiment branch after the `main` update is committed
 
 ### If `reject`
 
 - update the report decision section to `reject`
 - do not update `training/configs/main_models/baselines.json`
 - do not open a PR
+- commit the finalized report on the experiment branch if needed
+- switch to `main` and bring over only the minimal outcome record needed to show the experiment was reviewed and rejected
+- delete the local experiment branch after the `main` update is committed
+
+## Minimal `main` update for non-accepted outcomes
+
+For `reject` and `challenger` outcomes, keep the `main` update small:
+
+- prefer carrying over the finalized experiment report only
+- do not merge the experimental code onto `main`
+- use a short commit message that makes the outcome obvious
+- if branch deletion is blocked, state that clearly
 
 ## PR requirements for accepted experiments
 
@@ -111,4 +128,6 @@ This skill is complete only when:
 - the report has a final decision
 - accepted branches have updated baseline history
 - rejected/challenger branches leave baseline history untouched
+- rejected/challenger branches have a minimal outcome record committed on `main`
+- rejected/challenger local branches are deleted after the `main` update
 - accepted branches have an opened PR or a clear note explaining why opening the PR was blocked
