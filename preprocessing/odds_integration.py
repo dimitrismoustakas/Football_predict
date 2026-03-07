@@ -6,6 +6,19 @@ from utils.paths import MAPPINGS_DIR
 MATCH_HISTORY_PATH = Path("data/match_history/matches.parquet")
 FOOTBALLDATA_MAPPING_PATH = MAPPINGS_DIR / "footballdata_to_canonical.json"
 
+
+def _first_valid_odds_expr(mh: pl.DataFrame, cols: list[str], alias: str) -> pl.Expr:
+    valid_cols = [c for c in cols if c in mh.columns]
+    if not valid_cols:
+        return pl.lit(None).cast(pl.Float64).alias(alias)
+
+    return pl.coalesce([
+        pl.when(pl.col(c) > 1.0)
+        .then(pl.col(c).cast(pl.Float64))
+        .otherwise(None)
+        for c in valid_cols
+    ]).alias(alias)
+
 def load_match_history_and_map():
     if not MATCH_HISTORY_PATH.exists() or not FOOTBALLDATA_MAPPING_PATH.exists():
         print("Warning: Match history or mapping not found. Skipping join.")
@@ -50,21 +63,15 @@ def load_match_history_and_map():
         "AST": "away_sot"
     })
 
-    def coalesce_odds_list(cols, alias):
-        # Filter cols that exist
-        valid_cols = [c for c in cols if c in mh.columns]
-        if not valid_cols:
-            return pl.lit(None).alias(alias)
-        return pl.coalesce([pl.col(c) for c in valid_cols]).alias(alias)
-
     mh = mh.with_columns([
-        # Home/Draw/Away odds - prefer B365, then Pinnacle, then average
-        coalesce_odds_list(["B365H", "B365CH", "PSH", "PSCH", "AvgH", "AvgCH"], "odds_h"),
-        coalesce_odds_list(["B365D", "B365CD", "PSD", "PSCD", "AvgD", "AvgCD"], "odds_d"),
-        coalesce_odds_list(["B365A", "B365CA", "PSA", "PSCA", "AvgA", "AvgCA"], "odds_a"),
+        # Home/Draw/Away odds - prefer B365, then Pinnacle, then average.
+        # Ignore invalid values (<= 1.0) so broken closing prices don't mask valid fallbacks.
+        _first_valid_odds_expr(mh, ["B365H", "B365CH", "PSH", "PSCH", "AvgH", "AvgCH"], "odds_h"),
+        _first_valid_odds_expr(mh, ["B365D", "B365CD", "PSD", "PSCD", "AvgD", "AvgCD"], "odds_d"),
+        _first_valid_odds_expr(mh, ["B365A", "B365CA", "PSA", "PSCA", "AvgA", "AvgCA"], "odds_a"),
         # Over/Under odds
-        coalesce_odds_list(["B365>2.5", "B365C>2.5", "P>2.5", "PC>2.5", "Avg>2.5", "AvgC>2.5", "BbAv>2.5"], "odds_over"),
-        coalesce_odds_list(["B365<2.5", "B365C<2.5", "P<2.5", "PC<2.5", "Avg<2.5", "AvgC<2.5", "BbAv<2.5"], "odds_under"),
+        _first_valid_odds_expr(mh, ["B365>2.5", "B365C>2.5", "P>2.5", "PC>2.5", "Avg>2.5", "AvgC>2.5", "BbAv>2.5"], "odds_over"),
+        _first_valid_odds_expr(mh, ["B365<2.5", "B365C<2.5", "P<2.5", "PC<2.5", "Avg<2.5", "AvgC<2.5", "BbAv<2.5"], "odds_under"),
     ])
     
     return mh

@@ -450,21 +450,65 @@ def _prepare_base(
 	part = df.filter(pl.col("season").cast(pl.Utf8).is_in(list(season_list)))
 
 	initial_count = len(part)
-	part = part.filter(filter_expr).drop_nulls(subset=req_cols)
-	final_count = len(part)
+	filtered = part.filter(filter_expr)
+	invalid_count = initial_count - len(filtered)
 
-	if initial_count != final_count:
+	part = filtered.drop_nulls(subset=req_cols)
+	missing_required_count = len(filtered) - len(part)
+
+	if invalid_count:
 		print(
-			f"Dropped {initial_count - final_count} rows due to invalid odds/missing data in {season_list}"
+			f"Dropped {invalid_count} rows due to invalid odds/non-finite implied values in {season_list}"
 		)
 
-	X = part.select(feature_cols).to_pandas().values
+	if missing_required_count:
+		null_counts_row = (
+			filtered.select([
+				pl.col(col).is_null().sum().alias(col)
+				for col in req_cols
+			])
+			.to_dicts()[0]
+		)
+		top_missing = [
+			(col, count)
+			for col, count in sorted(
+				null_counts_row.items(), key=lambda item: (-item[1], item[0])
+			)
+			if count > 0
+		][:8]
+		print(
+			f"Dropped {missing_required_count} rows due to missing required features in {season_list}: {top_missing}"
+		)
+
+	feature_frame = part.select([
+		pl.col(c).cast(pl.Float64).alias(c)
+		for c in feature_cols
+	])
+	feature_missing_cells = int(
+		feature_frame.select([
+			pl.col(c).is_null().sum().alias(c)
+			for c in feature_cols
+		]).sum_horizontal().item()
+	)
+	feature_missing_rows = feature_frame.filter(
+		pl.any_horizontal([pl.col(c).is_null() for c in feature_cols])
+	).height
+
+	if feature_missing_rows:
+		print(
+			f"Keeping {feature_missing_rows} rows with missing feature values in {season_list} "
+			f"({feature_missing_cells} missing cells total)"
+		)
+
+	X = feature_frame.to_pandas().to_numpy(dtype=np.float64)
 
 	if fit_scaler:
 		scaler = StandardScaler()
 		X = scaler.fit_transform(X)
 	elif scaler is not None:
 		X = scaler.transform(X)
+
+	X = np.nan_to_num(X, nan=0.0)
 
 	cat_features = extract_categorical_features(part)
 
@@ -480,8 +524,7 @@ def prepare_data(
 ) -> Dict[str, np.ndarray]:
 	"""Selects data, scales features, extracts categorical features, returns a dictionary of arrays."""
 	req_cols = list(
-		set(feature_cols)
-		| {"Over", "implied_over_prob", "odds_over", "odds_under", "date", "raw_margin_ou"}
+		{"Over", "implied_over_prob", "odds_over", "odds_under", "date", "raw_margin_ou"}
 		| set(CAT_COLS)
 	)
 
@@ -533,8 +576,7 @@ def prepare_data_result(
 		- scaler: fitted StandardScaler
 	"""
 	req_cols = list(
-		set(feature_cols)
-		| {"result_label", "implied_home", "implied_draw", "implied_away",
+		{"result_label", "implied_home", "implied_draw", "implied_away",
 		   "odds_home", "odds_draw", "odds_away", "date", "raw_margin"}
 		| set(CAT_COLS)
 	)
