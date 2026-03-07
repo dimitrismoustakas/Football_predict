@@ -77,7 +77,7 @@ def send_email(
 		<h4>Betting Recommendations (Positive EV)</h4>
 		<p>Allocation percentages are per-day budget shares, split equally across positive EV matches on the same day.</p>
 		{bets_display[["Date", "Time", "Home", "Away", "Bet_Side", "Odds_Over", "Odds_Under", "EV", "Allocation_Pct"]].to_html(index=False, classes='bets')}
-		<p><em>To use: choose a daily budget, then multiply each Allocation_Pct by that day's budget.</em></p>
+		<p><em>To use: choose a daily budget, then calculate each stake as (Allocation_Pct / 100) * that day's budget.</em></p>
 		"""
 	else:
 		html_body += """
