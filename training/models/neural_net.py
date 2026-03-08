@@ -122,11 +122,13 @@ class GatedResidualModel(nn.Module):
 		activation: str = "relu",
 		gate_target_budget: float = 0.2,
 		shared_gate: bool = False,
+		linear_gate: bool = False,
 	):
 		super().__init__()
 		self.n_classes = n_classes
 		self.gate_target_budget = gate_target_budget
 		self.shared_gate = shared_gate
+		self.linear_gate = linear_gate
 
 		self.base_model = MLPWithHiddenAccess(
 			input_dim=input_dim,
@@ -140,12 +142,15 @@ class GatedResidualModel(nn.Module):
 
 		self.market_feature_dim = market_feature_dim + 3
 		gate_input_dim = self.base_model.hidden_dim + self.market_feature_dim
-		self.gate_head = nn.Sequential(
-			nn.Linear(gate_input_dim, gate_hidden_dim),
-			nn.ReLU(),
-			nn.Dropout(dropout * 0.5),
-			nn.Linear(gate_hidden_dim, 1 if shared_gate else n_classes),
-		)
+		if linear_gate:
+			self.gate_head = nn.Linear(gate_input_dim, 1 if shared_gate else n_classes)
+		else:
+			self.gate_head = nn.Sequential(
+				nn.Linear(gate_input_dim, gate_hidden_dim),
+				nn.ReLU(),
+				nn.Dropout(dropout * 0.5),
+				nn.Linear(gate_hidden_dim, 1 if shared_gate else n_classes),
+			)
 
 		init_bias = math.log(gate_target_budget / (1 - gate_target_budget))
 		self.gate_bias = nn.Parameter(torch.full((1 if shared_gate else n_classes,), init_bias))
@@ -158,6 +163,7 @@ class GatedResidualModel(nn.Module):
 		self.cat_config = cat_config
 		self.gate_hidden_dim = gate_hidden_dim
 		self.shared_gate = shared_gate
+		self.linear_gate = linear_gate
 
 	def _compute_market_features(
 		self,
