@@ -219,8 +219,6 @@ def main():
         "odds_h",
         "odds_d",
         "odds_a",
-        "odds_over",
-        "odds_under",
         "home_elo",
         "away_elo",
         "elo_diff",

@@ -1,5 +1,5 @@
 {
-  "description": "Simple log of accepted baselines and later evaluated replacements for the canonical models.",
+  "description": "Simple log of accepted baselines and later evaluated replacements for the canonical match-result model.",
   "how_to_use": [
     "Keep the first entry as the starting baseline.",
     "When a new model is assessed, append a new entry with a short description of the change and the new metrics.",
@@ -13,57 +13,30 @@
     {
       "date": "2026-03-07",
       "kind": "baseline",
-      "description": "Starting canonical baseline. Current production models before any new experiments are assessed.",
-      "models": {
-        "over_under": {
-          "config": "training/configs/main_models/over_under.json",
-          "epoch_selection_season": "2425",
-          "held_out_test_season": "2526",
-          "best_epoch": 2,
-          "best_val_loss": 0.6678138309054904,
-          "val_metrics": {
-            "accuracy": 0.5833333333333334,
-            "brier": 0.23768122973142738,
-            "log_loss": 0.6678138424293677,
-            "total_profit": -23.27,
-            "daily_total_profit": -115.7902380952381,
-            "daily_roi": -0.1218844611528822,
-            "n_bets": 218
-          },
-          "test_metrics": {
-            "accuracy": 0.5612648221343873,
-            "brier": 0.24355032318983477,
-            "log_loss": 0.6796390138645275,
-            "total_profit": -5.38,
-            "daily_total_profit": -27.574999999999996,
-            "daily_roi": -0.12534090909090906,
-            "n_bets": 32
-          }
+      "description": "Starting canonical baseline for the production match-result model.",
+      "model": {
+        "config": "training/configs/main_models/result.json",
+        "epoch_selection_season": "2425",
+        "held_out_test_season": "2526",
+        "best_epoch": 1,
+        "best_val_loss": 0.9647655663666902,
+        "val_metrics": {
+          "accuracy": 0.5376984126984127,
+          "brier": 0.5734482026604776,
+          "rps": 0.19571025035922518,
+          "log_loss": 0.9647655323193982,
+          "total_profit": -38.53999999999999,
+          "avg_profit": -0.08079664570230606,
+          "n_bets": 477
         },
-        "match_result": {
-          "config": "training/configs/main_models/result.json",
-          "epoch_selection_season": "2425",
-          "held_out_test_season": "2526",
-          "best_epoch": 1,
-          "best_val_loss": 0.9647655663666902,
-          "val_metrics": {
-            "accuracy": 0.5376984126984127,
-            "brier": 0.5734482026604776,
-            "rps": 0.19571025035922518,
-            "log_loss": 0.9647655323193982,
-            "total_profit": -38.53999999999999,
-            "avg_profit": -0.08079664570230606,
-            "n_bets": 477
-          },
-          "test_metrics": {
-            "accuracy": 0.5395256916996047,
-            "brier": 0.578903670492406,
-            "rps": 0.1955493240420837,
-            "log_loss": 0.9732036988839756,
-            "total_profit": 20.610000000000003,
-            "avg_profit": 0.11982558139534885,
-            "n_bets": 172
-          }
+        "test_metrics": {
+          "accuracy": 0.5395256916996047,
+          "brier": 0.578903670492406,
+          "rps": 0.1955493240420837,
+          "log_loss": 0.9732036988839756,
+          "total_profit": 20.610000000000003,
+          "avg_profit": 0.11982558139534885,
+          "n_bets": 172
         }
       }
     }

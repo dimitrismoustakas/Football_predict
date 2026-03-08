@@ -40,14 +40,10 @@ def load_match_history_and_map():
         "HS", "AS", "HST", "AST",
         # B365 odds
         "B365H", "B365D", "B365A", "B365CH", "B365CD", "B365CA",
-        "B365>2.5", "B365<2.5", "B365C>2.5", "B365C<2.5",
         # Pinnacle odds (fallback)
         "PSH", "PSD", "PSA", "PSCH", "PSCD", "PSCA",
-        "P>2.5", "P<2.5", "PC>2.5", "PC<2.5",
         # Average odds (fallback)
         "AvgH", "AvgD", "AvgA", "AvgCH", "AvgCD", "AvgCA",
-        "Avg>2.5", "Avg<2.5", "AvgC>2.5", "AvgC<2.5",
-        "BbAv>2.5", "BbAv<2.5",
     ]
     
     existing = mh.columns
@@ -69,9 +65,6 @@ def load_match_history_and_map():
         _first_valid_odds_expr(mh, ["B365H", "B365CH", "PSH", "PSCH", "AvgH", "AvgCH"], "odds_h"),
         _first_valid_odds_expr(mh, ["B365D", "B365CD", "PSD", "PSCD", "AvgD", "AvgCD"], "odds_d"),
         _first_valid_odds_expr(mh, ["B365A", "B365CA", "PSA", "PSCA", "AvgA", "AvgCA"], "odds_a"),
-        # Over/Under odds
-        _first_valid_odds_expr(mh, ["B365>2.5", "B365C>2.5", "P>2.5", "PC>2.5", "Avg>2.5", "AvgC>2.5", "BbAv>2.5"], "odds_over"),
-        _first_valid_odds_expr(mh, ["B365<2.5", "B365C<2.5", "P<2.5", "PC<2.5", "Avg<2.5", "AvgC<2.5", "BbAv<2.5"], "odds_under"),
     ])
     
     return mh

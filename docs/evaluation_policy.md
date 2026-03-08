@@ -1,230 +1,37 @@
 # Evaluation Policy
 
-## Purpose
+## Scope
 
-This document defines how model changes are evaluated, what metrics decide promotion, and how the repo should handle iterative experimentation without overfitting to the latest held-out season.
+This repo evaluates one canonical production model: match result (`Home/Draw/Away`).
 
-This policy is meant to sit on top of the current canonical workflow implemented in:
+## Canonical workflow
 
-- `training/train_main_model.py`
-- `training/train_all_models.py`
-- `training/train_utils.py`
-- `training/configs/main_models/baselines.json`
+Use the fixed trainer in `training/train_main_model.py`.
+The acceptance path is:
+1. rolling expanding-window CV for model selection
+2. fixed epoch-selection season for picking the training length
+3. fixed held-out latest season for the final acceptance check
 
-## Current Canonical Structure
+Do not replace this with ad hoc sweeps when deciding whether a branch is better.
 
-The repo currently uses:
+## Primary metrics
 
-- rolling expanding-window CV as the research-time selection protocol
-- one fixed pre-test season for epoch selection
-- the latest season as the held-out acceptance season
+Acceptance is driven by proper scoring metrics first:
+- `log_loss`
+- `rps`
+- `brier`
 
-Important clarification:
+## Secondary diagnostics
 
-- For the frozen source-controlled main configs, the canonical training script does not re-search hyperparameters. It uses the fixed config, picks the epoch on the final pre-test season, retrains on all pre-test seasons, and evaluates once on the latest season.
+Betting diagnostics are secondary only:
+- total profit
+- average profit per bet
+- number of bets
+- bet mix by outcome class
 
-## Core Rule
+A branch should not be accepted just because short-run betting profit improved while proper scoring got worse.
 
-Optimize on rolling CV.
+## Promotion record
 
-Use the held-out season only as a promotion gate.
-
-Do not tune against the held-out season. If a model change is repeatedly selected because it looked best on the held-out season, that season is no longer held out.
-
-## Why
-
-Rolling CV should drive iteration because:
-
-- it gives more than one time split
-- it reduces variance relative to a single season
-- it tests whether gains are persistent across time
-- it is the only safe place to compare many candidate ideas
-
-The held-out season should only answer:
-
-- "After the candidate was frozen, does it still hold up on unseen recent data?"
-
-It should not answer:
-
-- which of several close variants to prefer
-- which hyperparameter value to use
-- which feature family edge case to keep
-
-## Latest-Season Rule
-
-Season `2526` should be treated as:
-
-- a held-out audit set
-- a forward-monitoring set
-- not the sole authority for promotion if the signal is weak
-
-Practical implication:
-
-- strong CV win plus neutral `2526` result: challenger or cautious promotion
-- strong CV win plus strong `2526` win: promote
-- strong CV win plus clear `2526` loss: reject
-- weak CV win plus good `2526` result: do not trust it; likely noise
-
-## Metrics Policy
-
-Model inclusion is decided by proper scoring metrics first.
-
-Betting metrics are diagnostics only.
-
-### Over/Under
-
-- Primary metric: `log_loss`
-- Secondary metric: `brier`
-- Diagnostics: calibration, daily-budget ROI, number of bets, profit
-
-### Match Result
-
-- Primary metric: `log_loss`
-- Secondary metric: `rps`
-- Diagnostics: classwise calibration, number of bets, profit
-
-## Research-Time Selection Rule
-
-During iterative development, choose candidates using rolling CV only.
-
-Recommended ranking rule for 3 folds:
-
-- oldest fold weight: `0.2`
-- middle fold weight: `0.3`
-- most recent fold weight: `0.5`
-
-Use:
-
-- weighted mean of the primary metric as the main ranker
-- latest fold as a guardrail
-
-Reason:
-
-- deployment resembles recent seasons more than old seasons
-- but a model that only works on one recent slice is not robust enough
-
-## Promotion Rule
-
-A candidate is accepted only if all of the following are true.
-
-### Mandatory checks
-
-1. The weighted rolling-CV primary metric improves versus the current champion.
-2. At least 2 of the 3 CV folds improve on the primary metric.
-3. The most recent CV fold does not show a material regression.
-4. The secondary proper metric is non-worse in rolling CV.
-5. The held-out season does not show a clear regression.
-6. No major league-level collapse appears in the evaluation slices.
-
-### Stability check
-
-For any serious promotion candidate:
-
-7. Re-run with at least 3 seeds.
-8. If the gain disappears or flips sign across seeds, do not promote.
-
-## Candidate Statuses
-
-Every experiment should end in one of three states.
-
-### Accept
-
-Use `accept` when:
-
-- CV is clearly better
-- latest-fold guardrail passes
-- held-out is non-worse or better
-- the result is stable enough across seeds
-
-### Reject
-
-Use `reject` when any of the following happens:
-
-- the gain comes from only one fold
-- the latest CV fold is clearly worse
-- the held-out season is clearly worse
-- proper scoring degrades even if betting profit improves
-- the result is unstable across seeds and the delta is small
-
-When the results between match_result and over_under are in conflict, focus on the match_result outcome and ignore over_under.
-
-### Challenger / Watchlist
-
-Use `challenger` when:
-
-- CV is clearly better
-- held-out is inconclusive because the season is partial or the delta is tiny
-
-This is the correct bucket for many in-season candidates.
-
-## What Counts As "Clearly Better"
-
-Best practice:
-
-- compare paired per-match loss deltas
-- bootstrap confidence intervals
-- promote only when uncertainty supports the gain
-
-Practical minimum if bootstrap is not yet implemented:
-
-- weighted CV primary metric improves
-- at least 2 of 3 folds improve
-- most recent fold is non-worse
-- held-out is non-worse
-
-## Recommended Slices To Always Review
-
-Do not look only at aggregate metrics. Review:
-
-- by league
-- by season
-- by month or season phase
-- by market-confidence decile
-- by favorite / balanced / underdog segment
-- for result: by class, especially draws
-
-Any candidate with one severe slice regression should be treated cautiously even if the aggregate metric improved.
-
-## What Must Not Decide Promotion
-
-Do not promote a candidate because:
-
-- profit improved over a small sample
-- one held-out season looked lucky
-- one bookmaker or one league carried the entire gain
-- the model placed fewer bets and therefore looked "safer"
-- accuracy improved while log-loss worsened
-
-## Operating Workflow
-
-Use this workflow for each idea:
-
-1. Run the experiment against rolling CV.
-2. Compare against the current champion on the primary and secondary proper metrics.
-3. If it wins in CV, run the canonical retrain and score the held-out season.
-4. If it still passes, rerun with 3 seeds for stability.
-5. Mark the candidate as `accept`, `reject`, or `challenger`.
-6. Only accepted candidates should replace the source-controlled baseline entry.
-
-## Baseline Logging Rule
-
-When a candidate is accepted:
-
-- copy the metrics into `training/configs/main_models/baselines.json`
-- record a short description of the change
-- keep the previous accepted model in history
-
-When a candidate is not accepted:
-
-- do not overwrite the accepted baseline
-- keep the challenger result in runtime artifacts or experiment logs only
-
-## Summary
-
-The repo should behave as follows:
-
-- optimize on rolling CV
-- use the held-out season for promotion only
-- decide inclusion on proper scoring metrics first
-- require recency robustness and multi-fold consistency
-- use betting metrics only as secondary diagnostics
+Record accepted baselines and new challengers in `training/configs/main_models/baselines.json`.
+Use `artifacts/models/latest_main_model_metrics.json` as the runtime-generated source for the latest candidate metrics.

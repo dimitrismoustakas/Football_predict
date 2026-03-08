@@ -69,7 +69,6 @@ Record the chosen proposal ID and exact proposal text in the final report.
   - `preprocessing/feature_engineering.py`
 - Canonical training entry points:
   - `training/train_main_model.py`
-  - `training/train_all_models.py`
 - Frozen main configs live in `training/configs/main_models/`.
 - Runtime model outputs under `artifacts/models/` are generated outputs and must not be committed.
 
