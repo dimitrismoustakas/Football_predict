@@ -1,12 +1,10 @@
 """
-Canonical training entry point for the two production models.
+Canonical training entry point for the production match-result model.
 
-This script keeps the evaluation loop fixed:
+The evaluation loop is fixed:
 - frozen rolling CV folds for model selection
 - fixed epoch-selection season for epoch selection
 - fixed held-out latest season for acceptance
-
-Use search scripts only when you explicitly want to sweep hyperparameters.
 """
 
 import json
@@ -15,7 +13,7 @@ import random
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Literal
+from typing import Any, Dict
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -28,7 +26,6 @@ from training.evaluation import evaluate_model
 from training.models import CategoricalConfig, TrainConfig
 from training.train_utils import (
 	add_targets_and_implied,
-	add_targets_and_implied_result,
 	evaluate_implied_baseline,
 	filter_min_history,
 	generate_rolling_cv_folds,
@@ -36,53 +33,30 @@ from training.train_utils import (
 	get_test_season,
 	load_frame,
 	prepare_data,
-	prepare_data_result,
 	select_feature_columns,
 	to_loader,
 	train_model,
 )
 from utils.paths import MODELS_DIR, PROJECT_ROOT
 
-TaskType = Literal["binary", "multiclass"]
-
 DEFAULT_PARQUET = Path(os.environ.get("PARQUET_PATH", "data/training/understat_df.parquet"))
-MODEL_CONFIGS_DIR = PROJECT_ROOT / "training" / "configs" / "main_models"
+MODEL_CONFIG_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "result.json"
 LATEST_MAIN_METRICS_PATH = MODELS_DIR / "latest_main_model_metrics.json"
-TASK_TYPE: TaskType = os.environ.get("TASK_TYPE", "binary")
 N_CV_FOLDS = int(os.environ.get("N_CV_FOLDS", "3"))
 TRAINING_SEED = int(os.environ.get("TRAINING_SEED", "42"))
 
+RESULT_TASK = {
+	"label": "result",
+	"display_name": "Match Result",
+	"comparison_metric": "log_loss",
+	"experiment_name": "result_main_model",
+	"artifact_model_path": MODELS_DIR / "result_model.pt",
+	"artifact_config_path": MODELS_DIR / "result_model_config.json",
+	"artifact_scaler_path": MODELS_DIR / "result_model_scaler.joblib",
+}
+
 os.environ["MLFLOW_TRACKING_URI"] = "mlruns"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-TASK_CONFIG = {
-	"binary": {
-		"label": "over_under",
-		"display_name": "Over/Under 2.5 Goals",
-		"config_path": MODEL_CONFIGS_DIR / "over_under.json",
-		"add_targets_fn": add_targets_and_implied,
-		"prepare_fn": prepare_data,
-		"odds_cols": ["odds_over", "odds_under"],
-		"comparison_metric": "log_loss",
-		"experiment_name": "over_under_main_model",
-		"artifact_model_path": MODELS_DIR / "over_under_model.pt",
-		"artifact_config_path": MODELS_DIR / "over_under_model_config.json",
-		"artifact_scaler_path": MODELS_DIR / "over_under_model_scaler.joblib",
-	},
-	"multiclass": {
-		"label": "result",
-		"display_name": "Match Result",
-		"config_path": MODEL_CONFIGS_DIR / "result.json",
-		"add_targets_fn": add_targets_and_implied_result,
-		"prepare_fn": prepare_data_result,
-		"odds_cols": ["odds_home", "odds_draw", "odds_away"],
-		"comparison_metric": "log_loss",
-		"experiment_name": "result_main_model",
-		"artifact_model_path": MODELS_DIR / "result_model.pt",
-		"artifact_config_path": MODELS_DIR / "result_model_config.json",
-		"artifact_scaler_path": MODELS_DIR / "result_model_scaler.joblib",
-	},
-}
 
 
 def set_seed(seed: int = 42, deterministic: bool = False):
@@ -90,7 +64,6 @@ def set_seed(seed: int = 42, deterministic: bool = False):
 	np.random.seed(seed)
 	torch.manual_seed(seed)
 	torch.cuda.manual_seed_all(seed)
-
 	if deterministic:
 		torch.backends.cudnn.deterministic = True
 		torch.backends.cudnn.benchmark = False
@@ -105,11 +78,9 @@ def print_header(text: str):
 	print("=" * 60)
 
 
-def load_training_config(task_type: TaskType) -> Dict[str, Any]:
-	config_path = TASK_CONFIG[task_type]["config_path"]
-	with open(config_path, "r", encoding="utf-8") as f:
-		config = json.load(f)
-	return config
+def load_training_config() -> Dict[str, Any]:
+	with open(MODEL_CONFIG_PATH, "r", encoding="utf-8") as file:
+		return json.load(file)
 
 
 def to_builtin(value: Any) -> Any:
@@ -124,49 +95,23 @@ def to_builtin(value: Any) -> Any:
 	return value
 
 
-def summarize_metrics(task_type: TaskType, metrics: Dict[str, Any]) -> Dict[str, Any]:
-	if task_type == "binary":
-		keys = [
-			"accuracy",
-			"brier",
-			"log_loss",
-			"total_profit",
-			"daily_total_profit",
-			"daily_roi",
-			"n_bets",
-		]
-	else:
-		keys = [
-			"accuracy",
-			"brier",
-			"rps",
-			"log_loss",
-			"total_profit",
-			"avg_profit",
-			"n_bets",
-		]
-
+def summarize_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
+	keys = ["accuracy", "brier", "rps", "log_loss", "total_profit", "avg_profit", "n_bets"]
 	return to_builtin({key: metrics[key] for key in keys if key in metrics})
 
 
 def write_json(path: Path, payload: Dict[str, Any]):
 	path.parent.mkdir(parents=True, exist_ok=True)
-	with open(path, "w", encoding="utf-8") as f:
-		json.dump(payload, f, indent=2)
+	with open(path, "w", encoding="utf-8") as file:
+		json.dump(payload, file, indent=2)
 
 
-def update_latest_run_record(task_type: TaskType, run_record: Dict[str, Any]):
-	if LATEST_MAIN_METRICS_PATH.exists():
-		with open(LATEST_MAIN_METRICS_PATH, "r", encoding="utf-8") as f:
-			payload = json.load(f)
-	else:
-		payload = {
-			"schema_version": 1,
-			"description": "Latest evaluated main-model candidates. Runtime-generated; compare with training/configs/main_models/baselines.json.",
-			"models": {},
-		}
-
-	payload["models"][task_type] = run_record
+def update_latest_run_record(run_record: Dict[str, Any]):
+	payload = {
+		"schema_version": 1,
+		"description": "Latest evaluated match-result candidate. Runtime-generated; compare with training/configs/main_models/baselines.json.",
+		"model": run_record,
+	}
 	write_json(LATEST_MAIN_METRICS_PATH, payload)
 
 
@@ -177,7 +122,6 @@ def log_metric_group(prefix: str, metrics: Dict[str, Any]):
 
 
 def build_latest_run_record(
-	task_type: TaskType,
 	epoch_selection_season: str,
 	test_season: str,
 	best_epoch: int,
@@ -185,20 +129,18 @@ def build_latest_run_record(
 	validation_metrics: Dict[str, Any],
 	test_metrics: Dict[str, Any],
 ) -> Dict[str, Any]:
-	task_cfg = TASK_CONFIG[task_type]
 	return to_builtin({
 		"recorded_at_utc": datetime.now(timezone.utc).isoformat(),
-		"task_type": task_type,
-		"display_name": task_cfg["display_name"],
+		"display_name": RESULT_TASK["display_name"],
 		"description": "Latest evaluated candidate. If accepted, copy the numbers into training/configs/main_models/baselines.json with a short description of the change.",
-		"comparison_metric": task_cfg["comparison_metric"],
-		"training_config_source": str(task_cfg["config_path"].relative_to(PROJECT_ROOT)),
+		"comparison_metric": RESULT_TASK["comparison_metric"],
+		"training_config_source": str(MODEL_CONFIG_PATH.relative_to(PROJECT_ROOT)),
 		"epoch_selection_season": epoch_selection_season,
 		"held_out_test_season": test_season,
 		"best_epoch": best_epoch,
 		"best_val_loss": float(best_val_loss),
-		"val_metrics": summarize_metrics(task_type, validation_metrics),
-		"test_metrics": summarize_metrics(task_type, test_metrics),
+		"val_metrics": summarize_metrics(validation_metrics),
+		"test_metrics": summarize_metrics(test_metrics),
 	})
 
 
@@ -223,7 +165,6 @@ def build_train_config(
 		epochs=epochs,
 		patience=training_config["patience"],
 		batch_size=training_config["batch_size"],
-		task_type=training_config["task_type"],
 		cat_config=cat_config,
 		scheduler_name=training_config.get("scheduler_name", "cosine"),
 		scheduler_warmup_epochs=training_config.get("scheduler_warmup_epochs", 0),
@@ -246,22 +187,20 @@ def build_train_config(
 
 
 def resolve_final_training_epochs(training_config: Dict[str, Any], best_epoch: int) -> int:
-	"""Translate the epoch-selection result into the final retraining epoch count."""
+	"""Translate epoch selection into the final retraining epoch count."""
+
 	mode = training_config.get("final_epoch_mode", "best")
 	max_epochs = int(training_config["max_epochs"])
-
 	if mode == "best":
 		final_epochs = best_epoch
 	elif mode == "best_plus_buffer":
 		final_epochs = best_epoch + int(training_config.get("final_epoch_buffer", 0))
 	else:
 		raise ValueError(f"Unsupported final_epoch_mode={mode}")
-
 	return max(1, min(max_epochs, int(final_epochs)))
 
 
 def save_model_bundle(
-	task_type: TaskType,
 	model: Any,
 	scaler: Any,
 	train_config: TrainConfig,
@@ -278,10 +217,10 @@ def save_model_bundle(
 	final_train_epochs: int,
 	best_val_loss: float,
 ):
-	task_cfg = TASK_CONFIG[task_type]
-	artifact_model_path = task_cfg["artifact_model_path"]
-	artifact_config_path = task_cfg["artifact_config_path"]
-	artifact_scaler_path = task_cfg["artifact_scaler_path"]
+	artifact_model_path = RESULT_TASK["artifact_model_path"]
+	artifact_config_path = RESULT_TASK["artifact_config_path"]
+	artifact_scaler_path = RESULT_TASK["artifact_scaler_path"]
+	artifact_model_path.parent.mkdir(parents=True, exist_ok=True)
 	artifact_model_path.parent.mkdir(parents=True, exist_ok=True)
 
 	torch.save(model.state_dict(), artifact_model_path)
@@ -295,11 +234,10 @@ def save_model_bundle(
 		}
 
 	metadata = {
-		"task_type": task_type,
 		"model_family": "main",
-		"display_name": task_cfg["display_name"],
-		"comparison_metric": task_cfg["comparison_metric"],
-		"training_config_source": str(task_cfg["config_path"].relative_to(PROJECT_ROOT)),
+		"display_name": RESULT_TASK["display_name"],
+		"comparison_metric": RESULT_TASK["comparison_metric"],
+		"training_config_source": str(MODEL_CONFIG_PATH.relative_to(PROJECT_ROOT)),
 		"input_dim": train_config.input_dim,
 		"hidden_layers": train_config.hidden_layers,
 		"activation": train_config.activation,
@@ -327,7 +265,7 @@ def save_model_bundle(
 		"final_epoch_mode": training_config.get("final_epoch_mode", "best"),
 		"final_epoch_buffer": training_config.get("final_epoch_buffer", 0),
 		"feature_cols": feature_cols,
-		"output_dim": 1 if task_type == "binary" else 3,
+		"output_dim": 3,
 		"cat_config": cat_cfg,
 		"gate_hidden_dim": train_config.gate_hidden_dim,
 		"gate_target_budget": train_config.gate_target_budget,
@@ -338,7 +276,7 @@ def save_model_bundle(
 		"evaluation_protocol": {
 			"cv_strategy": "rolling_origin_expanding_window",
 			"n_cv_folds": N_CV_FOLDS,
-			"selection_metric": task_cfg["comparison_metric"],
+			"selection_metric": RESULT_TASK["comparison_metric"],
 			"cv_seasons": all_cv_seasons,
 			"epoch_selection_season": final_val_season,
 			"held_out_test_season": test_season,
@@ -357,42 +295,32 @@ def save_model_bundle(
 		"frozen_training_config": training_config,
 	}
 
-	with open(artifact_config_path, "w", encoding="utf-8") as f:
-		json.dump(metadata, f, indent=2)
+	with open(artifact_config_path, "w", encoding="utf-8") as file:
+		json.dump(metadata, file, indent=2)
 
 	mlflow.log_artifact(str(artifact_model_path))
 	mlflow.log_artifact(str(artifact_scaler_path))
 	mlflow.log_artifact(str(artifact_config_path))
 
 
-
-def train_task(task_type: TaskType) -> Dict[str, Any]:
-	if task_type not in TASK_CONFIG:
-		raise ValueError(f"Unknown TASK_TYPE={task_type}")
-
-	task_cfg = TASK_CONFIG[task_type]
-	training_config = load_training_config(task_type)
-	prepare_fn = task_cfg["prepare_fn"]
-
-	print_header(f"TRAIN MAIN MODEL: {task_cfg['display_name']}")
+def train_main_model() -> Dict[str, Any]:
+	training_config = load_training_config()
+	print_header(f"TRAIN MAIN MODEL: {RESULT_TASK['display_name']}")
 	print(f"Device: {DEVICE}")
-	print(f"Training config: {task_cfg['config_path']}")
+	print(f"Training config: {MODEL_CONFIG_PATH}")
 
 	set_seed(TRAINING_SEED, deterministic=False)
-
 	print(f"\nLoading data from {DEFAULT_PARQUET}")
 	df = load_frame(DEFAULT_PARQUET)
 	df = filter_min_history(df)
-	df = task_cfg["add_targets_fn"](df)
-	df = df.drop_nulls(subset=task_cfg["odds_cols"])
+	df = add_targets_and_implied(df)
+	df = df.drop_nulls(subset=["odds_home", "odds_draw", "odds_away"])
 	print(f"Total rows with odds: {len(df)}")
 
 	feature_cols = select_feature_columns(df)
 	print(f"Features: {len(feature_cols)}")
-
-	num_leagues = get_num_leagues(df)
-	cat_config = CategoricalConfig(num_leagues=num_leagues, league_embed_dim=3)
-	print(f"Categorical: {num_leagues} leagues (embed_dim=3)")
+	cat_config = CategoricalConfig(num_leagues=get_num_leagues(df), league_embed_dim=3)
+	print(f"Categorical: {cat_config.num_leagues} leagues (embed_dim=3)")
 
 	print(f"\nGenerating {N_CV_FOLDS}-fold rolling CV splits...")
 	folds = generate_rolling_cv_folds(df, n_folds=N_CV_FOLDS)
@@ -402,15 +330,14 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 	all_cv_seasons = sorted({season for train_seasons, val_season in folds for season in [*train_seasons, val_season]})
 	epoch_selection_season = all_cv_seasons[-1]
 	initial_train_seasons = all_cv_seasons[:-1]
-
 	print(f"Step 1: train on {initial_train_seasons[0]}..{initial_train_seasons[-1]} | epoch selection on {epoch_selection_season}")
 	print(f"Step 2: retrain on {all_cv_seasons[0]}..{all_cv_seasons[-1]} | test on {test_season}")
 
-	mlflow.set_experiment(task_cfg["experiment_name"])
-	with mlflow.start_run(run_name=f"{task_cfg['label']}_main"):
+	mlflow.set_experiment(RESULT_TASK["experiment_name"])
+	with mlflow.start_run(run_name=f"{RESULT_TASK['label']}_main"):
 		mlflow.log_params({
-			"task": task_type,
-			"training_config": str(task_cfg["config_path"].relative_to(PROJECT_ROOT)),
+			"task": "match_result",
+			"training_config": str(MODEL_CONFIG_PATH.relative_to(PROJECT_ROOT)),
 			"parquet_path": str(DEFAULT_PARQUET),
 			"n_cv_folds": N_CV_FOLDS,
 			"held_out_test_season": test_season,
@@ -420,82 +347,42 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 		})
 
 		set_seed(TRAINING_SEED, deterministic=True)
-		data_initial_train = prepare_fn(df, feature_cols, initial_train_seasons, fit_scaler=True)
-		data_final_val = prepare_fn(df, feature_cols, [epoch_selection_season], scaler=data_initial_train["scaler"])
+		data_initial_train = prepare_data(df, feature_cols, initial_train_seasons, fit_scaler=True)
+		data_final_val = prepare_data(df, feature_cols, [epoch_selection_season], scaler=data_initial_train["scaler"])
+		initial_train_loader = to_loader(data_initial_train, training_config["batch_size"], device=DEVICE)
+		final_val_loader = to_loader(data_final_val, training_config["batch_size"], shuffle=False, device=DEVICE)
 
-		initial_train_loader = to_loader(
-			data_initial_train,
-			training_config["batch_size"],
-			device=DEVICE,
-			task_type=task_type,
-		)
-		final_val_loader = to_loader(
-			data_final_val,
-			training_config["batch_size"],
-			shuffle=False,
-			device=DEVICE,
-			task_type=task_type,
-		)
-
-		early_stop_config = build_train_config(
-			training_config,
-			input_dim=data_initial_train["X"].shape[1],
-			cat_config=cat_config,
-			epochs=training_config["max_epochs"],
-		)
-		early_stop_model, early_stop_history, best_val_loss = train_model(
-			early_stop_config,
-			initial_train_loader,
-			final_val_loader,
-			device=DEVICE,
-			verbose=True,
-		)
+		early_stop_config = build_train_config(training_config, input_dim=data_initial_train["X"].shape[1], cat_config=cat_config, epochs=training_config["max_epochs"])
+		early_stop_model, early_stop_history, best_val_loss = train_model(early_stop_config, initial_train_loader, final_val_loader, device=DEVICE, verbose=True)
 		best_epoch = early_stop_history["val_loss"].index(min(early_stop_history["val_loss"])) + 1
 		print(f"Early stopping best epoch: {best_epoch} (val_loss={best_val_loss:.5f})")
 		final_train_epochs = resolve_final_training_epochs(training_config, best_epoch)
 		print(f"Final retrain epochs: {final_train_epochs} (mode={training_config.get('final_epoch_mode', 'best')})")
 
 		print("\n--- Early-stop Model Performance on Epoch-selection Season ---")
-		validation_baseline_metrics = evaluate_implied_baseline(data_final_val, task_type=task_type)
+		validation_baseline_metrics = evaluate_implied_baseline(data_final_val)
 		log_metric_group("val_baseline", validation_baseline_metrics)
-		validation_metrics = evaluate_model(
-			early_stop_model,
-			data_final_val,
-			device=DEVICE,
-			verbose=True,
-			task_type=task_type,
-		)
+		validation_metrics = evaluate_model(early_stop_model, data_final_val, device=DEVICE, verbose=True)
 		log_metric_group("val", validation_metrics)
 		mlflow.log_metric("best_val_loss", float(best_val_loss))
 		mlflow.log_metric("best_epoch", int(best_epoch))
 
-		data_train = prepare_fn(df, feature_cols, all_cv_seasons, fit_scaler=True)
-		data_test = prepare_fn(df, feature_cols, [test_season], scaler=data_train["scaler"])
-		train_loader = to_loader(
-			data_train,
-			training_config["batch_size"],
-			device=DEVICE,
-			task_type=task_type,
-		)
-		final_config = build_train_config(
-			training_config,
-			input_dim=data_train["X"].shape[1],
-			cat_config=cat_config,
-			epochs=final_train_epochs,
-		)
+		data_train = prepare_data(df, feature_cols, all_cv_seasons, fit_scaler=True)
+		data_test = prepare_data(df, feature_cols, [test_season], scaler=data_train["scaler"])
+		train_loader = to_loader(data_train, training_config["batch_size"], device=DEVICE)
+		final_config = build_train_config(training_config, input_dim=data_train["X"].shape[1], cat_config=cat_config, epochs=final_train_epochs)
 
-		test_baseline_metrics = evaluate_implied_baseline(data_test, task_type=task_type)
+		test_baseline_metrics = evaluate_implied_baseline(data_test)
 		log_metric_group("test_baseline", test_baseline_metrics)
 
 		print("\n--- Training Final Model ---")
 		model, _, _ = train_model(final_config, train_loader, val_loader=None, device=DEVICE, verbose=True)
 
 		print("\n--- Model Performance on Held-out Test Set ---")
-		test_metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True, task_type=task_type)
+		test_metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True)
 		log_metric_group("test", test_metrics)
 
 		run_record = build_latest_run_record(
-			task_type=task_type,
 			epoch_selection_season=epoch_selection_season,
 			test_season=test_season,
 			best_epoch=best_epoch,
@@ -503,11 +390,9 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 			validation_metrics=validation_metrics,
 			test_metrics=test_metrics,
 		)
-
-		update_latest_run_record(task_type, run_record)
+		update_latest_run_record(run_record)
 
 		save_model_bundle(
-			task_type=task_type,
 			model=model,
 			scaler=data_train["scaler"],
 			train_config=final_config,
@@ -532,9 +417,8 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 	return run_record
 
 
-
 def main():
-	train_task(TASK_TYPE)
+	train_main_model()
 
 
 if __name__ == "__main__":

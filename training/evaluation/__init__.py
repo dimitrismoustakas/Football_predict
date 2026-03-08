@@ -1,22 +1,10 @@
 """Evaluation metrics and utilities."""
 
-from training.evaluation.metrics import (
-	evaluate_model,
-	evaluate_profit,
-	evaluate_profit_result,
-	plot_losses,
-	ranked_probability_score,
-	TaskType,
-)
-from utils.portfolio import evaluate_daily_betting_results, evaluate_portfolio
+from training.evaluation.metrics import evaluate_model, evaluate_profit, plot_losses, ranked_probability_score
 
 __all__ = [
 	"evaluate_model",
 	"evaluate_profit",
-	"evaluate_profit_result",
-	"evaluate_daily_betting_results",
-	"evaluate_portfolio",
 	"plot_losses",
 	"ranked_probability_score",
-	"TaskType",
 ]

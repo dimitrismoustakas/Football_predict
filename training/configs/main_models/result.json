@@ -1,5 +1,4 @@
 {
-	"task_type": "multiclass",
 	"hidden_layers": [512, 256, 256],
 	"activation": "gelu",
 	"norm": "none",
