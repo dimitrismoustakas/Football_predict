@@ -8,7 +8,7 @@
 	"norm": "none",
 	"dropout": 0.2795534198003995,
 	"lr": 0.0006482910238207788,
-	"weight_decay": 0.0001,
+	"weight_decay": 5e-05,
 	"beta1": 0.7957003511299424,
 	"batch_size": 256,
 	"max_epochs": 35,
