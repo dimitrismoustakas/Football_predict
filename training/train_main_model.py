@@ -216,12 +216,26 @@ def build_train_config(
 		lr=training_config["lr"],
 		weight_decay=training_config["weight_decay"],
 		activation=training_config["activation"],
+		optimizer_name=training_config.get("optimizer_name", "adamw"),
 		beta1=training_config["beta1"],
+		beta2=training_config.get("beta2", 0.999),
+		optimizer_eps=training_config.get("optimizer_eps", 1e-8),
 		epochs=epochs,
 		patience=training_config["patience"],
 		batch_size=training_config["batch_size"],
 		task_type=training_config["task_type"],
 		cat_config=cat_config,
+		scheduler_name=training_config.get("scheduler_name", "cosine"),
+		scheduler_warmup_epochs=training_config.get("scheduler_warmup_epochs", 0),
+		scheduler_warmup_start_factor=training_config.get("scheduler_warmup_start_factor", 0.1),
+		scheduler_min_lr_ratio=training_config.get("scheduler_min_lr_ratio", 0.01),
+		scheduler_plateau_factor=training_config.get("scheduler_plateau_factor", 0.5),
+		scheduler_plateau_patience=training_config.get("scheduler_plateau_patience", 3),
+		scheduler_plateau_threshold=training_config.get("scheduler_plateau_threshold", 1e-4),
+		onecycle_pct_start=training_config.get("onecycle_pct_start", 0.3),
+		onecycle_div_factor=training_config.get("onecycle_div_factor", 25.0),
+		onecycle_final_div_factor=training_config.get("onecycle_final_div_factor", 1000.0),
+		max_grad_norm=training_config.get("max_grad_norm", 0.0),
 		gate_hidden_dim=training_config["gate_hidden_dim"],
 		gate_target_budget=training_config["gate_target_budget"],
 		gate_mean_weight=training_config["gate_mean_weight"],
@@ -229,6 +243,21 @@ def build_train_config(
 		lambda_repulsion=training_config.get("lambda_repulsion", 0.0),
 		lambda_corr=training_config.get("lambda_corr", 0.0),
 	)
+
+
+def resolve_final_training_epochs(training_config: Dict[str, Any], best_epoch: int) -> int:
+	"""Translate the epoch-selection result into the final retraining epoch count."""
+	mode = training_config.get("final_epoch_mode", "best")
+	max_epochs = int(training_config["max_epochs"])
+
+	if mode == "best":
+		final_epochs = best_epoch
+	elif mode == "best_plus_buffer":
+		final_epochs = best_epoch + int(training_config.get("final_epoch_buffer", 0))
+	else:
+		raise ValueError(f"Unsupported final_epoch_mode={mode}")
+
+	return max(1, min(max_epochs, int(final_epochs)))
 
 
 def save_model_bundle(
@@ -246,6 +275,7 @@ def save_model_bundle(
 	final_val_season: str,
 	test_season: str,
 	best_epoch: int,
+	final_train_epochs: int,
 	best_val_loss: float,
 ):
 	task_cfg = TASK_CONFIG[task_type]
@@ -275,11 +305,27 @@ def save_model_bundle(
 		"activation": train_config.activation,
 		"norm": train_config.norm,
 		"dropout": train_config.dropout,
+		"optimizer_name": train_config.optimizer_name,
 		"lr": train_config.lr,
 		"weight_decay": train_config.weight_decay,
 		"beta1": train_config.beta1,
+		"beta2": train_config.beta2,
+		"optimizer_eps": train_config.optimizer_eps,
 		"batch_size": train_config.batch_size,
-		"final_epochs": best_epoch,
+		"scheduler_name": train_config.scheduler_name,
+		"scheduler_warmup_epochs": train_config.scheduler_warmup_epochs,
+		"scheduler_warmup_start_factor": train_config.scheduler_warmup_start_factor,
+		"scheduler_min_lr_ratio": train_config.scheduler_min_lr_ratio,
+		"scheduler_plateau_factor": train_config.scheduler_plateau_factor,
+		"scheduler_plateau_patience": train_config.scheduler_plateau_patience,
+		"scheduler_plateau_threshold": train_config.scheduler_plateau_threshold,
+		"onecycle_pct_start": train_config.onecycle_pct_start,
+		"onecycle_div_factor": train_config.onecycle_div_factor,
+		"onecycle_final_div_factor": train_config.onecycle_final_div_factor,
+		"max_grad_norm": train_config.max_grad_norm,
+		"final_epochs": final_train_epochs,
+		"final_epoch_mode": training_config.get("final_epoch_mode", "best"),
+		"final_epoch_buffer": training_config.get("final_epoch_buffer", 0),
 		"feature_cols": feature_cols,
 		"output_dim": 1 if task_type == "binary" else 3,
 		"cat_config": cat_cfg,
@@ -300,6 +346,7 @@ def save_model_bundle(
 		},
 		"selection_summary": {
 			"best_epoch": best_epoch,
+			"final_train_epochs": final_train_epochs,
 			"best_val_loss": float(best_val_loss),
 			"epoch_selection_season": final_val_season,
 		},
@@ -367,6 +414,9 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 			"parquet_path": str(DEFAULT_PARQUET),
 			"n_cv_folds": N_CV_FOLDS,
 			"held_out_test_season": test_season,
+			"optimizer_name": training_config.get("optimizer_name", "adamw"),
+			"scheduler_name": training_config.get("scheduler_name", "cosine"),
+			"final_epoch_mode": training_config.get("final_epoch_mode", "best"),
 		})
 
 		set_seed(TRAINING_SEED, deterministic=True)
@@ -402,6 +452,8 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 		)
 		best_epoch = early_stop_history["val_loss"].index(min(early_stop_history["val_loss"])) + 1
 		print(f"Early stopping best epoch: {best_epoch} (val_loss={best_val_loss:.5f})")
+		final_train_epochs = resolve_final_training_epochs(training_config, best_epoch)
+		print(f"Final retrain epochs: {final_train_epochs} (mode={training_config.get('final_epoch_mode', 'best')})")
 
 		print("\n--- Early-stop Model Performance on Epoch-selection Season ---")
 		validation_baseline_metrics = evaluate_implied_baseline(data_final_val, task_type=task_type)
@@ -429,7 +481,7 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 			training_config,
 			input_dim=data_train["X"].shape[1],
 			cat_config=cat_config,
-			epochs=best_epoch,
+			epochs=final_train_epochs,
 		)
 
 		test_baseline_metrics = evaluate_implied_baseline(data_test, task_type=task_type)
@@ -469,6 +521,7 @@ def train_task(task_type: TaskType) -> Dict[str, Any]:
 			final_val_season=epoch_selection_season,
 			test_season=test_season,
 			best_epoch=best_epoch,
+			final_train_epochs=final_train_epochs,
 			best_val_loss=best_val_loss,
 		)
 

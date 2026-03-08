@@ -832,22 +832,132 @@ def get_val_data_dict(fold: Dict[str, Any]) -> Dict[str, np.ndarray]:
 # ============================================================================
 
 
+class SchedulerController:
+	"""Hide whether a scheduler steps per batch or per epoch."""
+
+	def __init__(self, scheduler, step_unit: str = "epoch", needs_metric: bool = False):
+		self.scheduler = scheduler
+		self.step_unit = step_unit
+		self.needs_metric = needs_metric
+
+	def step_batch(self):
+		if self.scheduler is not None and self.step_unit == "batch":
+			self.scheduler.step()
+
+	def step_epoch(self, metric: float = None):
+		if self.scheduler is None or self.step_unit != "epoch":
+			return
+		if self.needs_metric:
+			if metric is None:
+				raise ValueError("Metric required for plateau scheduler step")
+			self.scheduler.step(metric)
+		else:
+			self.scheduler.step()
+
+
+def create_optimizer(model: nn.Module, config: TrainConfig) -> torch.optim.Optimizer:
+	"""Create the configured optimizer."""
+	optimizer_name = getattr(config, "optimizer_name", "adamw").lower()
+	betas = (config.beta1, getattr(config, "beta2", 0.999))
+	eps = getattr(config, "optimizer_eps", 1e-8)
+
+	if optimizer_name == "adamw":
+		return torch.optim.AdamW(
+			model.parameters(),
+			lr=config.lr,
+			weight_decay=config.weight_decay,
+			betas=betas,
+			eps=eps,
+		)
+
+	if optimizer_name == "radam":
+		return torch.optim.RAdam(
+			model.parameters(),
+			lr=config.lr,
+			weight_decay=config.weight_decay,
+			betas=betas,
+			eps=eps,
+		)
+
+	raise ValueError(f"Unsupported optimizer_name={config.optimizer_name}")
+
+
 def create_scheduler(
 	optimizer: torch.optim.Optimizer,
-	epochs: int = 100,
-	lr: float = 1e-3,
-) -> torch.optim.lr_scheduler.LRScheduler:
+	config: TrainConfig,
+	steps_per_epoch: int,
+) -> SchedulerController:
 	"""
-	Create a cosine annealing learning rate scheduler.
-	
-	Args:
-		optimizer: PyTorch optimizer
-		epochs: Total training epochs
-		lr: Base learning rate (for eta_min calculation)
+	Create the configured learning-rate scheduler.
 	"""
-	return torch.optim.lr_scheduler.CosineAnnealingLR(
-		optimizer, T_max=epochs, eta_min=lr * 0.01
-	)
+	scheduler_name = getattr(config, "scheduler_name", "cosine").lower()
+	min_lr = config.lr * getattr(config, "scheduler_min_lr_ratio", 0.01)
+
+	if scheduler_name == "none":
+		return SchedulerController(None)
+
+	if scheduler_name == "cosine":
+		scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+			optimizer,
+			T_max=max(1, config.epochs),
+			eta_min=min_lr,
+		)
+		return SchedulerController(scheduler)
+
+	if scheduler_name == "warmup_cosine":
+		warmup_epochs = max(0, int(getattr(config, "scheduler_warmup_epochs", 0)))
+		warmup_epochs = min(warmup_epochs, max(0, config.epochs - 1))
+		if warmup_epochs == 0:
+			scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+				optimizer,
+				T_max=max(1, config.epochs),
+				eta_min=min_lr,
+			)
+			return SchedulerController(scheduler)
+
+		remaining_epochs = max(1, config.epochs - warmup_epochs)
+		warmup = torch.optim.lr_scheduler.LinearLR(
+			optimizer,
+			start_factor=max(1e-3, getattr(config, "scheduler_warmup_start_factor", 0.1)),
+			total_iters=warmup_epochs,
+		)
+		cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+			optimizer,
+			T_max=remaining_epochs,
+			eta_min=min_lr,
+		)
+		scheduler = torch.optim.lr_scheduler.SequentialLR(
+			optimizer,
+			schedulers=[warmup, cosine],
+			milestones=[warmup_epochs],
+		)
+		return SchedulerController(scheduler)
+
+	if scheduler_name == "plateau":
+		scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+			optimizer,
+			mode="min",
+			factor=getattr(config, "scheduler_plateau_factor", 0.5),
+			patience=getattr(config, "scheduler_plateau_patience", 3),
+			threshold=getattr(config, "scheduler_plateau_threshold", 1e-4),
+			min_lr=min_lr,
+		)
+		return SchedulerController(scheduler, needs_metric=True)
+
+	if scheduler_name == "onecycle":
+		scheduler = torch.optim.lr_scheduler.OneCycleLR(
+			optimizer,
+			max_lr=config.lr,
+			epochs=max(1, config.epochs),
+			steps_per_epoch=max(1, steps_per_epoch),
+			pct_start=getattr(config, "onecycle_pct_start", 0.3),
+			div_factor=max(1.0, getattr(config, "onecycle_div_factor", 25.0)),
+			final_div_factor=max(1.0, getattr(config, "onecycle_final_div_factor", 1000.0)),
+			anneal_strategy="cos",
+		)
+		return SchedulerController(scheduler, step_unit="batch")
+
+	raise ValueError(f"Unsupported scheduler_name={config.scheduler_name}")
 
 
 class EarlyStopping:
@@ -946,14 +1056,12 @@ def train_model(
 		).to(device)
 		loss_fn = gated_loss_multiclass
 	
-	optimizer = torch.optim.AdamW(
-		model.parameters(), lr=config.lr, weight_decay=config.weight_decay, betas=(config.beta1, 0.999)
-	)
+	optimizer = create_optimizer(model, config)
 	
 	scheduler = create_scheduler(
 		optimizer,
-		epochs=config.epochs,
-		lr=config.lr,
+		config=config,
+		steps_per_epoch=len(train_loader),
 	)
 	
 	# Only use early stopping when we have validation data
@@ -973,7 +1081,7 @@ def train_model(
 			batch_raw_margin = batch_raw_margin.to(device)
 			cat_in = batch_cat if cat_config is not None else None
 
-			optimizer.zero_grad()
+			optimizer.zero_grad(set_to_none=True)
 			loss = loss_fn(
 				model,
 				batch_x,
@@ -987,7 +1095,10 @@ def train_model(
 				lambda_corr=lambda_corr,
 			)
 			loss.backward()
+			if getattr(config, "max_grad_norm", 0.0) and config.max_grad_norm > 0:
+				torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
 			optimizer.step()
+			scheduler.step_batch()
 			total_loss += loss.item() * len(batch_x)
 
 		avg_train_loss = total_loss / len(train_loader.dataset)
@@ -1034,7 +1145,7 @@ def train_model(
 			history["gate_std"].append(gate_std)
 			
 			# Step scheduler
-			scheduler.step()
+			scheduler.step_epoch(avg_val_loss)
 			
 			early_stopping(avg_val_loss, model)
 
@@ -1042,6 +1153,7 @@ def train_model(
 			if mlflow.active_run():
 				mlflow.log_metric("train_loss", avg_train_loss, step=epoch)
 				mlflow.log_metric("val_loss", avg_val_loss, step=epoch)
+				mlflow.log_metric("lr", float(optimizer.param_groups[0]["lr"]), step=epoch)
 
 			if verbose and (epoch % 10 == 0 or epoch == 1):
 				if task_type == "binary":
@@ -1068,11 +1180,12 @@ def train_model(
 				break
 		else:
 			# No validation: step scheduler
-			scheduler.step()
+			scheduler.step_epoch(avg_train_loss)
 			
 			# Log to MLflow if in an active run
 			if mlflow.active_run():
 				mlflow.log_metric("train_loss", avg_train_loss, step=epoch)
+				mlflow.log_metric("lr", float(optimizer.param_groups[0]["lr"]), step=epoch)
 
 			if verbose and (epoch % 10 == 0 or epoch == 1):
 				print(f"Epoch {epoch:03d} | Train: {avg_train_loss:.5f}")

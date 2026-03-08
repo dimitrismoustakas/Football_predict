@@ -33,6 +33,14 @@ Frozen source-controlled model configs live in:
 
 Generated runtime artifacts are written to `artifacts/models/` and are not meant to be committed.
 
+The canonical trainer also supports optional training-recipe fields in those configs:
+- optimizer: `optimizer_name`, `beta1`, `beta2`, `optimizer_eps`
+- scheduler: `scheduler_name`, `scheduler_warmup_epochs`, `scheduler_warmup_start_factor`, `scheduler_min_lr_ratio`, `scheduler_plateau_*`, `onecycle_*`
+- final retrain rule: `final_epoch_mode`, `final_epoch_buffer`
+- stability: `max_grad_norm`
+
+If these fields are omitted, the trainer falls back to the historical behavior (`AdamW` + cosine schedule + final retrain at `best_epoch`).
+
 ## Commands
 
 ### Data refresh
@@ -51,6 +59,8 @@ Generated runtime artifacts are written to `artifacts/models/` and are not meant
 The repo intentionally keeps the permanent training surface small.
 
 For experiments, start from the canonical loop and add a narrow one-off helper script only when it materially improves reproducibility for that specific branch.
+
+Branch-specific experiment outputs should be treated as runtime artifacts. If an experiment writes JSON summaries or diagnostics under `artifacts/experiment_metrics/`, do not commit them unless the user explicitly asks for that.
 
 ## Production
 
