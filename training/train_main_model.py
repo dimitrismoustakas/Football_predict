@@ -184,6 +184,7 @@ def build_train_config(
 	input_dim: int,
 	cat_config: CategoricalConfig,
 	epochs: int,
+	num_leagues: int,
 ) -> TrainConfig:
 	model_kwargs = {
 		"hidden_layers": training_config["hidden_layers"],
@@ -194,6 +195,10 @@ def build_train_config(
 		"gate_target_budget": training_config["gate_target_budget"],
 		"shared_gate": training_config.get("shared_gate", False),
 		"linear_gate": training_config.get("linear_gate", False),
+		"market_logit_scale": training_config.get("market_logit_scale", 1.0),
+		"learn_market_bias": training_config.get("learn_market_bias", False),
+		"learn_league_market_bias": training_config.get("learn_league_market_bias", False),
+		"num_leagues": num_leagues,
 	}
 	return TrainConfig(
 		input_dim=input_dim,
@@ -248,6 +253,11 @@ def build_bundle_metadata(
 			"activation": training_config["activation"],
 			"gate_hidden_dim": training_config["gate_hidden_dim"],
 			"gate_target_budget": training_config["gate_target_budget"],
+			"shared_gate": training_config.get("shared_gate", False),
+			"linear_gate": training_config.get("linear_gate", False),
+			"market_logit_scale": training_config.get("market_logit_scale", 1.0),
+			"learn_market_bias": training_config.get("learn_market_bias", False),
+			"learn_league_market_bias": training_config.get("learn_league_market_bias", False),
 		},
 		"feature_cols": feature_cols,
 		"cat_config": None if cat_config is None else {
@@ -454,6 +464,7 @@ def evaluate_cv_objective(
 	objective_folds: list[tuple[list[str], str]],
 	final_train_epochs: int,
 	training_seed: int,
+	num_leagues: int,
 ) -> tuple[list[dict], Dict[str, float], Dict[str, float]]:
 	fold_metrics = []
 	fold_baseline_metrics = []
@@ -470,7 +481,7 @@ def evaluate_cv_objective(
 			[val_season],
 			training_seed + fold_idx,
 		)
-		fold_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs)
+		fold_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs, num_leagues)
 		fold_model, _, _ = train_fixed_epochs(fold_config, train_loader, device=DEVICE, verbose=True)
 		baseline_metrics = summarize_metrics(evaluate_implied_baseline(data_val))
 		metrics = summarize_metrics(evaluate_model(fold_model, data_val, device=DEVICE, verbose=True))
@@ -509,8 +520,9 @@ def train_main_model() -> dict:
 
 	feature_cols = select_feature_columns(df, FEATURE_MANIFEST_PATH)
 	print(f"Features: {len(feature_cols)}")
+	num_leagues = get_num_leagues(df)
 	use_categorical = training_config.get("use_categorical", True)
-	cat_config = CategoricalConfig(num_leagues=get_num_leagues(df), league_embed_dim=3) if use_categorical else None
+	cat_config = CategoricalConfig(num_leagues=num_leagues, league_embed_dim=3) if use_categorical else None
 	if cat_config is None:
 		print("Categorical: disabled")
 	else:
@@ -548,7 +560,13 @@ def train_main_model() -> dict:
 		training_seed,
 	)
 
-	early_stop_config = build_train_config(training_config, data_initial_train["X"].shape[1], cat_config, training_config["max_epochs"])
+	early_stop_config = build_train_config(
+		training_config,
+		data_initial_train["X"].shape[1],
+		cat_config,
+		training_config["max_epochs"],
+		num_leagues,
+	)
 	early_stop_model, early_stop_history, best_val_loss = train_with_early_stopping(
 		early_stop_config,
 		initial_train_loader,
@@ -569,6 +587,7 @@ def train_main_model() -> dict:
 		objective_folds,
 		final_train_epochs,
 		training_seed,
+		num_leagues,
 	)
 	objective_value = float(cv_metrics[comparison_metric])
 	print(f"\nCV objective ({comparison_metric}): {objective_value:.5f}")
@@ -585,7 +604,7 @@ def train_main_model() -> dict:
 		[test_season],
 		training_seed + 10_000,
 	)
-	final_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs)
+	final_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs, num_leagues)
 
 	test_baseline_metrics = evaluate_implied_baseline(data_test)
 

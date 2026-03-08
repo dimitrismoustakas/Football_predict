@@ -60,6 +60,7 @@ def run_train_epoch(
 	"""Run one training epoch."""
 
 	cat_config = getattr(config, "cat_config", None)
+	needs_cat = cat_config is not None or config.model_kwargs.get("learn_league_market_bias", False)
 	model.train()
 	total_loss = 0.0
 	for batch_x, batch_cat, batch_implied, batch_y, batch_raw_margin in train_loader:
@@ -68,7 +69,7 @@ def run_train_epoch(
 		batch_implied = batch_implied.to(device)
 		batch_y = batch_y.to(device)
 		batch_raw_margin = batch_raw_margin.to(device)
-		cat_in = batch_cat if cat_config is not None else None
+		cat_in = batch_cat if needs_cat else None
 
 		optimizer.zero_grad(set_to_none=True)
 		loss = gated_loss(
@@ -94,6 +95,7 @@ def run_validation_epoch(
 	val_loader: DataLoader,
 	device: torch.device,
 	cat_config,
+	needs_cat: bool,
 ) -> Tuple[float, list[float], list[float]]:
 	"""Run one validation epoch."""
 
@@ -107,7 +109,7 @@ def run_validation_epoch(
 			batch_implied = batch_implied.to(device)
 			batch_y = batch_y.to(device)
 			batch_raw_margin = batch_raw_margin.to(device)
-			cat_in = batch_cat if cat_config is not None else None
+			cat_in = batch_cat if needs_cat else None
 			pred_logits = model(batch_x, cat_in, batch_implied, batch_raw_margin)
 			loss = F.cross_entropy(pred_logits, batch_y.view(-1).long())
 			val_loss += loss.item() * len(batch_x)
@@ -135,6 +137,7 @@ def _fit_model(
 	optimizer = create_optimizer(model, config)
 	scheduler = create_scheduler(optimizer, config)
 	cat_config = getattr(config, "cat_config", None)
+	needs_cat = cat_config is not None or config.model_kwargs.get("learn_league_market_bias", False)
 	use_validation = val_loader is not None
 	history = {"train_loss": [], "val_loss": [], "gate_mean": [], "gate_std": []}
 	best_val_loss = float("inf")
@@ -151,7 +154,7 @@ def _fit_model(
 				print(f"Epoch {epoch:03d} | Train: {avg_train_loss:.5f}")
 			continue
 
-		avg_val_loss, gate_mean, gate_std = run_validation_epoch(model, val_loader, device, cat_config)
+		avg_val_loss, gate_mean, gate_std = run_validation_epoch(model, val_loader, device, cat_config, needs_cat)
 		history["val_loss"].append(avg_val_loss)
 		history["gate_mean"].append(gate_mean)
 		history["gate_std"].append(gate_std)
