@@ -121,10 +121,12 @@ class GatedResidualModel(nn.Module):
 		norm: str = "none",
 		activation: str = "relu",
 		gate_target_budget: float = 0.2,
+		shared_gate: bool = False,
 	):
 		super().__init__()
 		self.n_classes = n_classes
 		self.gate_target_budget = gate_target_budget
+		self.shared_gate = shared_gate
 
 		self.base_model = MLPWithHiddenAccess(
 			input_dim=input_dim,
@@ -142,11 +144,11 @@ class GatedResidualModel(nn.Module):
 			nn.Linear(gate_input_dim, gate_hidden_dim),
 			nn.ReLU(),
 			nn.Dropout(dropout * 0.5),
-			nn.Linear(gate_hidden_dim, n_classes),
+			nn.Linear(gate_hidden_dim, 1 if shared_gate else n_classes),
 		)
 
 		init_bias = math.log(gate_target_budget / (1 - gate_target_budget))
-		self.gate_bias = nn.Parameter(torch.full((n_classes,), init_bias))
+		self.gate_bias = nn.Parameter(torch.full((1 if shared_gate else n_classes,), init_bias))
 
 		self.input_dim = input_dim
 		self.hidden_layers = hidden_layers
@@ -155,6 +157,7 @@ class GatedResidualModel(nn.Module):
 		self.activation = activation
 		self.cat_config = cat_config
 		self.gate_hidden_dim = gate_hidden_dim
+		self.shared_gate = shared_gate
 
 	def _compute_market_features(
 		self,
@@ -188,6 +191,8 @@ class GatedResidualModel(nn.Module):
 		gate_input = torch.cat([h, market_features], dim=-1)
 		gate_logits = self.gate_head(gate_input)
 		gate = torch.sigmoid(gate_logits + self.gate_bias)
+		if self.shared_gate:
+			gate = gate.expand(-1, self.n_classes)
 		implied_log = _log_softmax_from_implied(implied_probs)
 		return implied_log + gate * residual_logits
 
@@ -205,6 +210,8 @@ class GatedResidualModel(nn.Module):
 			gate_input = torch.cat([h, market_features], dim=-1)
 			gate_logits = self.gate_head(gate_input)
 			gate = torch.sigmoid(gate_logits + self.gate_bias)
+			if self.shared_gate:
+				gate = gate.expand(-1, self.n_classes)
 
 		return {
 			"gate_values": gate.cpu().numpy(),
@@ -322,6 +329,8 @@ def gated_loss(
 		gate_input = torch.cat([h, market_features], dim=-1)
 		gate_logits = model.gate_head(gate_input)
 		gate = torch.sigmoid(gate_logits + model.gate_bias)
+		if model.shared_gate:
+			gate = gate.expand(-1, model.n_classes)
 
 		if gate_mean_weight > 0:
 			gate_mean_loss = (gate.mean() - model.gate_target_budget).pow(2)

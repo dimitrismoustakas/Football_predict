@@ -194,6 +194,7 @@ def build_train_config(
 		"activation": training_config["activation"],
 		"gate_hidden_dim": training_config["gate_hidden_dim"],
 		"gate_target_budget": training_config["gate_target_budget"],
+		"shared_gate": training_config.get("shared_gate", False),
 	}
 	return TrainConfig(
 		input_dim=input_dim,
