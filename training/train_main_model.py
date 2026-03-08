@@ -162,7 +162,6 @@ def load_evaluation_config() -> dict:
 		"comparison_metric",
 		"training_seed",
 		"rolling_cv_n_folds",
-		"min_objective_improvement",
 		"test_season",
 		"test_role",
 	]
@@ -173,7 +172,6 @@ def load_evaluation_config() -> dict:
 	config["comparison_metric"] = str(config["comparison_metric"])
 	config["training_seed"] = int(config["training_seed"])
 	config["rolling_cv_n_folds"] = int(config["rolling_cv_n_folds"])
-	config["min_objective_improvement"] = float(config["min_objective_improvement"])
 	config["test_season"] = str(config["test_season"])
 	config["test_role"] = str(config["test_role"])
 	if config["test_role"] not in {"watch_only", "acceptance"}:
@@ -268,7 +266,6 @@ def build_bundle_metadata(
 			"epoch_selection_season": final_val_season,
 			"test_season": test_season,
 			"test_role": evaluation_config["test_role"],
-			"min_objective_improvement": evaluation_config["min_objective_improvement"],
 			"training_seed": evaluation_config["training_seed"],
 		},
 		"selection_summary": {
@@ -413,7 +410,6 @@ def build_reference_comparison(
 		"status": "no_reference",
 		"reference_objective_value": None,
 		"objective_delta": None,
-		"min_objective_improvement": evaluation_config["min_objective_improvement"],
 		"meets_objective_threshold": None,
 	}
 	if reference_row is None:
@@ -431,8 +427,8 @@ def build_reference_comparison(
 		reference_value=reference_value,
 		metric_name=evaluation_config["comparison_metric"],
 	)
-	comparison["meets_objective_threshold"] = comparison["objective_delta"] >= evaluation_config["min_objective_improvement"]
-	comparison["status"] = "candidate_clears_threshold" if comparison["meets_objective_threshold"] else "candidate_below_threshold"
+	comparison["meets_objective_threshold"] = comparison["objective_delta"] > 0
+	comparison["status"] = "candidate_improved" if comparison["meets_objective_threshold"] else "candidate_not_improved"
 	return comparison
 
 
@@ -447,9 +443,7 @@ def print_reference_comparison(reference_comparison: dict, comparison_metric: st
 	if delta is None:
 		print(f"Reference comparison: {status}")
 		return
-	print(
-		f"Reference comparison: {status} | delta_{comparison_metric}={delta:.6f} | threshold={reference_comparison['min_objective_improvement']:.6f}"
-	)
+	print(f"Reference comparison: {status} | delta_{comparison_metric}={delta:.6f}")
 
 
 def evaluate_cv_objective(
@@ -635,7 +629,6 @@ def train_main_model() -> dict:
 		"epoch_selection_season": epoch_selection_season,
 		"held_out_test_season": test_season,
 		"test_role": evaluation_config["test_role"],
-		"min_objective_improvement": evaluation_config["min_objective_improvement"],
 		"best_epoch": best_epoch,
 		"best_val_loss": float(best_val_loss),
 		"data_snapshot": data_snapshot,
@@ -692,7 +685,7 @@ def train_main_model() -> dict:
 			"final_train_epochs": final_train_epochs,
 			"epoch_selection_season": epoch_selection_season,
 			"test_role": evaluation_config["test_role"],
-			"min_objective_improvement": evaluation_config["min_objective_improvement"],
+			"min_objective_improvement": "",
 			"reference_status": reference_comparison["status"],
 			"reference_objective_value": reference_comparison["reference_objective_value"],
 			"objective_delta": reference_comparison["objective_delta"],
@@ -720,7 +713,6 @@ def train_main_model() -> dict:
 
 	print_header("DONE")
 	print(f"CV objective ({comparison_metric}): {run_record['objective_value']:.5f}")
-	print(f"Minimum meaningful improvement: {evaluation_config['min_objective_improvement']:.5f}")
 	print(f"Best validation loss: {best_val_loss:.5f}")
 	print(f"Validation metrics: {run_record['val_metrics']}")
 	print(f"Test metrics ({evaluation_config['test_role']}): {run_record['test_metrics']}")

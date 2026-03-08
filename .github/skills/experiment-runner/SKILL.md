@@ -9,13 +9,13 @@ Use this skill when asked to run a repo experiment.
 
 ## Mission
 
-Complete one experiment end to end:
+Run a useful experiment loop from `main`:
 
-1. choose one idea unless the user already picked one
-2. create or use a dedicated experiment branch
-3. implement changes for that idea
+1. choose a promising next direction unless the user already picked one
+2. make whatever supporting analysis, ablations, or sweeps help you decide
+3. put the chosen source changes on an experiment branch
 4. run the canonical evaluation path with `training/train_main_model.py`
-5. inspect the outputs written by the trainer
+5. inspect the TSV and latest-metrics JSON
 6. leave the branch in a reviewable state
 
 ## Required context
@@ -29,16 +29,14 @@ Read these first:
 
 ## Hard rules
 
-- Work on exactly one idea per branch.
 - Preserve the canonical workflow unless the user explicitly asks to change it.
-- Prefer editing existing canonical files over adding new scripts.
-- Keep the experiment surface small.
+- Prefer editing existing canonical files over adding permanent experiment scaffolding.
+- Keep the repo surface lean.
 - Do not write markdown reports unless the user explicitly asks for one.
 - Do not commit generated model bundles under `artifacts/models/`.
 - Do not rewrite prior rows in `artifacts/experiment_metrics/result_main_runs.tsv`.
 - Use CV `log_loss` as the decision metric.
 - Treat the fixed test season as watch-only monitoring output.
-- Treat gains smaller than `0.0005` CV `log_loss` as non-meaningful by default.
 - Compare against the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv`.
 
 Everything relevant to improving the canonical path is fair game.
@@ -62,14 +60,14 @@ Good choices include:
 
 - simplifying code while plausibly preserving or improving the main metric
 - removing a component that may be unnecessary
+- running a sweep or ablation to decide which component to keep
 - trying a reasonable model or optimizer adjustment
 - trying a reasonable training-loop or batch-size adjustment
 - trying a reasonable feature-engineering or feature-selection adjustment
 - tightening the canonical path where the current setup looks overbuilt
 
 Prefer ideas that are plausible and clean.
-There is a slight preference for simplicity, but not a hard rule. You can always pick a more complex idea if it looks like it has a better chance of improving the main metric.
-Keep the spirit: if two ideas look similar in expected benefit, prefer the simpler one.
+If two directions look similar, prefer the one that simplifies the canonical path.
 
 ## Canonical experiment path
 

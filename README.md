@@ -20,7 +20,7 @@ Current rules:
 - rolling expanding-window CV mean `log_loss` is the single decision metric
 - the last pre-test season is reserved for epoch selection
 - the fixed test season is watch-only and not used for branch acceptance
-- a branch should clear the latest comparable ledger row by at least `0.0005` CV `log_loss` before it is treated as a meaningful improvement
+- compare against the latest comparable ledger row and keep iterating when CV `log_loss` improves
 - every run records a dataset fingerprint and per-season row counts so comparisons across data refreshes are explicit
 
 Decision rules are described in `docs/evaluation_policy.md`.

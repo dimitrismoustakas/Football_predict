@@ -2,7 +2,6 @@
 	"comparison_metric": "log_loss",
 	"training_seed": 42,
 	"rolling_cv_n_folds": 4,
-	"min_objective_improvement": 0.0005,
 	"test_season": "2526",
 	"test_role": "watch_only"
 }
