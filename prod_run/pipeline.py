@@ -2,13 +2,11 @@
 Production pipeline for the canonical match-result model.
 """
 
-import json
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 import polars as pl
@@ -19,34 +17,26 @@ def _load_project_modules():
 	try:
 		from prod_run import build_prod_features, fetch_odds
 		from prod_run.generate_html_report import generate_html_report
-		from training.models.neural_net import CategoricalConfig, GatedResidualModel
+		from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
 		from utils import send_email
-		from utils.paths import MODELS_DIR
 	except ModuleNotFoundError:
 		project_root = Path(__file__).resolve().parent.parent
 		if str(project_root) not in sys.path:
 			sys.path.insert(0, str(project_root))
 		from prod_run import build_prod_features, fetch_odds
 		from prod_run.generate_html_report import generate_html_report
-		from training.models.neural_net import CategoricalConfig, GatedResidualModel
+		from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
 		from utils import send_email
-		from utils.paths import MODELS_DIR
-	return build_prod_features, fetch_odds, generate_html_report, CategoricalConfig, GatedResidualModel, send_email, MODELS_DIR
+	return build_prod_features, fetch_odds, generate_html_report, RESULT_MODEL_BUNDLE_PATHS, load_model_bundle, send_email
 
 
-build_prod_features, fetch_odds, generate_html_report, CategoricalConfig, GatedResidualModel, send_email, MODELS_DIR = _load_project_modules()
+build_prod_features, fetch_odds, generate_html_report, RESULT_MODEL_BUNDLE_PATHS, load_model_bundle, send_email = _load_project_modules()
 
 load_dotenv()
 
 DATA_DIR = Path("data")
 PROD_DIR = DATA_DIR / "prod"
 PREDICTIONS_DIR = DATA_DIR / "predictions"
-MODEL_BUNDLE = {
-	"name": "result_main",
-	"model": MODELS_DIR / "result_model.pt",
-	"config": MODELS_DIR / "result_model_config.json",
-	"scaler": MODELS_DIR / "result_model_scaler.joblib",
-}
 PROD_FEATURES_PATH = PROD_DIR / "features_season.parquet"
 OUTPUT_CSV_PATH = PREDICTIONS_DIR / "upcoming_predictions.csv"
 OUTPUT_HTML_PATH = PREDICTIONS_DIR / "upcoming_predictions.html"
@@ -61,52 +51,10 @@ def _env_flag(name: str, default: bool) -> bool:
 	return value.strip().lower() not in {"0", "false", "no", "off", ""}
 
 
-def resolve_model_bundle() -> dict:
-	if not all(path.exists() for key, path in MODEL_BUNDLE.items() if key != "name"):
-		raise FileNotFoundError(
-			f"Missing production model bundle. Expected: {MODEL_BUNDLE['model']}, {MODEL_BUNDLE['config']}, {MODEL_BUNDLE['scaler']}"
-		)
-	return MODEL_BUNDLE
-
-
 def load_model():
-	bundle = resolve_model_bundle()
-	print(f"Loading model bundle: {bundle['name']}")
-	with open(bundle["config"], "r", encoding="utf-8") as file:
-		meta = json.load(file)
-
-	feature_cols = meta.get("feature_cols")
-	if not feature_cols:
-		raise ValueError(f"No feature column list found in {bundle['config']}")
-
-	cat_config = None
-	cat_config_dict = meta.get("cat_config")
-	if cat_config_dict is not None:
-		cat_config = CategoricalConfig(
-			num_leagues=cat_config_dict["num_leagues"],
-			league_embed_dim=cat_config_dict.get("league_embed_dim", 3),
-		)
-
-	model = GatedResidualModel(
-		input_dim=len(feature_cols),
-		hidden_layers=meta["hidden_layers"],
-		n_classes=3,
-		cat_config=cat_config,
-		gate_hidden_dim=meta.get("gate_hidden_dim", 32),
-		dropout=meta.get("dropout", 0.3),
-		norm=meta.get("norm", "none"),
-		activation=meta.get("activation", "relu"),
-		gate_target_budget=meta.get("gate_target_budget", 0.2),
-	)
-	try:
-		state_dict = torch.load(bundle["model"], map_location=DEVICE, weights_only=True)
-	except TypeError:
-		state_dict = torch.load(bundle["model"], map_location=DEVICE)
-	model.load_state_dict(state_dict)
-	model.to(DEVICE)
-	model.eval()
-	scaler = joblib.load(bundle["scaler"])
-	return model, scaler, feature_cols, cat_config
+	bundle = load_model_bundle(RESULT_MODEL_BUNDLE_PATHS, device=DEVICE)
+	print(f"Loading model bundle: {bundle.name}")
+	return bundle
 
 
 def resolve_merged_col(frame: pd.DataFrame, base_name: str) -> str:
@@ -129,7 +77,10 @@ def predict_result(model, scaler, feature_cols, X_raw, cat_features, implied_pro
 
 
 def score_result_predictions(merged: pd.DataFrame, model_bundle) -> pd.DataFrame:
-	model, scaler, feature_cols, cat_config = model_bundle
+	model = model_bundle.model
+	scaler = model_bundle.scaler
+	feature_cols = model_bundle.feature_cols
+	cat_config = model_bundle.cat_config
 	odds_home_col = resolve_merged_col(merged, "odds_home")
 	odds_draw_col = resolve_merged_col(merged, "odds_draw")
 	odds_away_col = resolve_merged_col(merged, "odds_away")
@@ -203,7 +154,7 @@ def main():
 
 	print("\n--- Step 2: Loading Model ---")
 	model_bundle = load_model()
-	print(f"Loaded result model with {len(model_bundle[2])} features")
+	print(f"Loaded result model with {len(model_bundle.feature_cols)} features")
 
 	print("\n--- Step 3: Fetching Odds ---")
 	raw_odds = fetch_odds.get_all_leagues_odds(odds_api_key)
