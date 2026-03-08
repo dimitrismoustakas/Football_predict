@@ -23,6 +23,10 @@ Do **not** update `training/configs/main_models/baselines.json`.
 Do **not** update any champion alias/registry.
 Do **not** open a PR.
 
+If you discover branch-neutral infrastructure that is clearly reusable across future experiments, do not silently bundle it into the proposal branch. Prefer one of these:
+- keep it as a separate clearly-labeled commit the user can cherry-pick, or
+- move it to a separate infra branch if the user asks for that cleanup.
+
 ## Required context to read first
 
 Always read these before choosing or implementing an idea:
@@ -73,6 +77,11 @@ Record the chosen proposal ID and exact proposal text in the final report.
 
 Follow `docs/evaluation_policy.md` and use `docs/model_acceptance_scorecard_template.md` as the evidence structure.
 
+Important clarification:
+- The experiment branch should gather evidence, not make the final promotion decision.
+- When the scorecard template asks for `accept` / `reject` / `challenger`, leave the report itself in a handoff state unless the user explicitly asks for a recommendation.
+- Prefer `pending-promotion-review` in the report metadata and summarize the evidence as strong / mixed / weak.
+
 ## Standardized report requirement
 
 Write the final report to:
@@ -87,7 +96,8 @@ Before finishing:
 
 1. ensure code changes and the report are saved on the experiment branch
 2. ensure generated model bundles are not committed
-3. commit the branch with a clear message
-4. leave the branch ready for the separate promotion skill
+3. ensure generated experiment outputs (for example under `artifacts/experiment_metrics/`) are not committed unless the user explicitly wants them versioned
+4. commit the branch with a clear message
+5. leave the branch ready for the separate promotion skill
 
 Your handoff is complete only when a reviewer can read one report file and reproduce what happened.

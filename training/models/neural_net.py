@@ -492,12 +492,26 @@ class TrainConfig:
 	lr: float
 	weight_decay: float
 	activation: str = "relu"
+	optimizer_name: str = "adamw"
 	beta1: float = 0.9
+	beta2: float = 0.999
+	optimizer_eps: float = 1e-8
 	epochs: int = 100
 	patience: int = 15
 	batch_size: int = 128
 	task_type: TaskType = "binary"  # "binary" for over/under, "multiclass" for result
 	cat_config: Optional[CategoricalConfig] = None
+	scheduler_name: str = "cosine"
+	scheduler_warmup_epochs: int = 0
+	scheduler_warmup_start_factor: float = 0.1
+	scheduler_min_lr_ratio: float = 0.01
+	scheduler_plateau_factor: float = 0.5
+	scheduler_plateau_patience: int = 3
+	scheduler_plateau_threshold: float = 1e-4
+	onecycle_pct_start: float = 0.3
+	onecycle_div_factor: float = 25.0
+	onecycle_final_div_factor: float = 1000.0
+	max_grad_norm: float = 0.0
 	# Gated model specific
 	gate_hidden_dim: int = 32
 	gate_target_budget: float = 0.2

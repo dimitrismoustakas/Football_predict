@@ -21,6 +21,7 @@ downloaded_files/
 # Runtime-generated model bundles
 artifacts/models/*
 !artifacts/models/README.md
+artifacts/experiment_metrics/
 
 # Data
 data/

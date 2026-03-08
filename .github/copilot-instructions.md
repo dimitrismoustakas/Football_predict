@@ -31,11 +31,23 @@ Do not treat ad hoc research sweeps as the canonical merge gate.
 Keep the repo surface small.
 
 If an experiment needs custom search or analysis code, prefer a narrow branch-specific helper over keeping many permanent research scripts in the repo.
+If you discover branch-neutral training infrastructure that is reusable across proposals, it is fine to split that work into a separate infra branch instead of tying it to the fate of one experiment.
 
 ## Production
 - `prod_run/pipeline.py` now loads both canonical model bundles from `artifacts/models/`
 - `prod_run/fetch_odds.py` fetches both totals and match-result prices
 - Generated model bundles under `artifacts/models/` are runtime outputs and should not be committed
+- Generated experiment summaries under `artifacts/experiment_metrics/` should also be treated as runtime outputs unless the user explicitly asks to keep them
+
+## Canonical trainer config hooks
+
+`training/train_main_model.py` supports reusable training-recipe hooks in the frozen configs:
+- optimizer: `optimizer_name`, `beta1`, `beta2`, `optimizer_eps`
+- scheduler: `scheduler_name`, warmup/cosine/plateau/one-cycle fields
+- final retrain control: `final_epoch_mode`, `final_epoch_buffer`
+- stability: `max_grad_norm`
+
+If a config omits these fields, preserve the historical defaults.
 
 ## Betting diagnostics
 Use proper scoring metrics as the primary quality gate.
