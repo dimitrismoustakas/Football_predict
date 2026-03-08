@@ -198,6 +198,7 @@ def build_train_config(
 		"market_logit_scale": training_config.get("market_logit_scale", 1.0),
 		"learn_market_bias": training_config.get("learn_market_bias", False),
 		"learn_league_market_bias": training_config.get("learn_league_market_bias", False),
+		"learn_league_residual_bias": training_config.get("learn_league_residual_bias", False),
 		"num_leagues": num_leagues,
 	}
 	return TrainConfig(
@@ -258,6 +259,7 @@ def build_bundle_metadata(
 			"market_logit_scale": training_config.get("market_logit_scale", 1.0),
 			"learn_market_bias": training_config.get("learn_market_bias", False),
 			"learn_league_market_bias": training_config.get("learn_league_market_bias", False),
+			"learn_league_residual_bias": training_config.get("learn_league_residual_bias", False),
 		},
 		"feature_cols": feature_cols,
 		"cat_config": None if cat_config is None else {

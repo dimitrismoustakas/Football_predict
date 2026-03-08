@@ -126,6 +126,7 @@ class GatedResidualModel(nn.Module):
 		market_logit_scale: float = 1.0,
 		learn_market_bias: bool = False,
 		learn_league_market_bias: bool = False,
+		learn_league_residual_bias: bool = False,
 		num_leagues: int = 0,
 	):
 		super().__init__()
@@ -136,9 +137,12 @@ class GatedResidualModel(nn.Module):
 		self.market_logit_scale = market_logit_scale
 		self.learn_market_bias = learn_market_bias
 		self.learn_league_market_bias = learn_league_market_bias
+		self.learn_league_residual_bias = learn_league_residual_bias
 		self.num_leagues = num_leagues
 		if self.learn_league_market_bias and self.num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_market_bias is enabled")
+		if self.learn_league_residual_bias and self.num_leagues <= 0:
+			raise ValueError("num_leagues must be positive when learn_league_residual_bias is enabled")
 
 		self.base_model = MLPWithHiddenAccess(
 			input_dim=input_dim,
@@ -173,6 +177,11 @@ class GatedResidualModel(nn.Module):
 			nn.init.zeros_(self.league_market_bias.weight)
 		else:
 			self.league_market_bias = None
+		if learn_league_residual_bias:
+			self.league_residual_bias = nn.Embedding(num_leagues, n_classes)
+			nn.init.zeros_(self.league_residual_bias.weight)
+		else:
+			self.league_residual_bias = None
 
 		self.input_dim = input_dim
 		self.hidden_layers = hidden_layers
@@ -186,6 +195,7 @@ class GatedResidualModel(nn.Module):
 		self.market_logit_scale = market_logit_scale
 		self.learn_market_bias = learn_market_bias
 		self.learn_league_market_bias = learn_league_market_bias
+		self.learn_league_residual_bias = learn_league_residual_bias
 		self.num_leagues = num_leagues
 
 	def _compute_market_features(
@@ -221,7 +231,7 @@ class GatedResidualModel(nn.Module):
 		raw_margin: Optional[torch.Tensor] = None,
 	) -> torch.Tensor:
 		h = self.base_model.get_hidden(x, cat_features)
-		residual_logits = self.base_model.final_layer(h)
+		residual_logits = self._compute_residual_logits(h, cat_features)
 
 		if implied_probs is None:
 			return residual_logits
@@ -236,6 +246,18 @@ class GatedResidualModel(nn.Module):
 			gate = gate.expand(-1, self.n_classes)
 		implied_logits = self._compute_implied_logits(implied_probs, cat_features)
 		return implied_logits + gate * residual_logits
+
+	def _compute_residual_logits(
+		self,
+		hidden: torch.Tensor,
+		cat_features: Optional[torch.Tensor] = None,
+	) -> torch.Tensor:
+		residual_logits = self.base_model.final_layer(hidden)
+		if self.league_residual_bias is not None:
+			if cat_features is None:
+				raise ValueError("cat_features required when learn_league_residual_bias is enabled")
+			residual_logits = residual_logits + self.league_residual_bias(cat_features[:, 0].long())
+		return residual_logits
 
 	def get_gate_stats(
 		self,
