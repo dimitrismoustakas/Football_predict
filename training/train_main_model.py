@@ -1,10 +1,10 @@
 """
 Canonical training entry point for the production match-result model.
 
-The evaluation loop is fixed:
+The evaluation loop is fixed by source-controlled config:
 - frozen rolling CV folds for model selection
 - fixed epoch-selection season for epoch selection
-- fixed held-out latest season for acceptance
+- fixed held-out watch-only test season for monitoring
 """
 
 import json
@@ -12,7 +12,7 @@ import os
 import random
 import subprocess
 import sys
-from csv import DictWriter
+from csv import DictReader, DictWriter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
@@ -31,13 +31,14 @@ from training.models import CategoricalConfig, TrainConfig
 from training.training_loop import train_fixed_epochs, train_with_early_stopping
 from training.train_utils import (
 	add_targets_and_implied,
+	build_data_snapshot,
 	evaluate_implied_baseline,
 	filter_min_history,
 	generate_rolling_cv_folds,
 	get_num_leagues,
-	get_test_season,
 	load_frame,
 	prepare_data,
+	resolve_test_season,
 	select_feature_columns,
 	to_loader,
 )
@@ -46,15 +47,13 @@ from utils.paths import EXPERIMENT_METRICS_DIR, MODELS_DIR, PROJECT_ROOT
 DEFAULT_PARQUET = Path(os.environ.get("PARQUET_PATH", "data/training/understat_df.parquet"))
 LATEST_MAIN_METRICS_PATH = MODELS_DIR / "latest_main_model_metrics.json"
 EXPERIMENT_LOG_PATH = EXPERIMENT_METRICS_DIR / "result_main_runs.tsv"
-N_CV_FOLDS = int(os.environ.get("N_CV_FOLDS", "3"))
-TRAINING_SEED = int(os.environ.get("TRAINING_SEED", "42"))
-
 DISPLAY_NAME = "Match Result"
-COMPARISON_METRIC = "log_loss"
 MODEL_NAME = "gated_residual"
 TRAINING_CONFIG_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "result.json"
 FEATURE_MANIFEST_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "result_features.json"
+EVALUATION_CONFIG_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "evaluation.json"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+LESS_IS_BETTER_METRICS = {"log_loss", "rps", "brier"}
 
 EXPERIMENT_LOG_COLUMNS = [
 	"recorded_at_utc",
@@ -69,6 +68,14 @@ EXPERIMENT_LOG_COLUMNS = [
 	"best_epoch",
 	"final_train_epochs",
 	"epoch_selection_season",
+	"test_role",
+	"min_objective_improvement",
+	"reference_status",
+	"reference_objective_value",
+	"objective_delta",
+	"meets_objective_threshold",
+	"data_fingerprint",
+	"season_row_counts_json",
 	"val_log_loss",
 	"val_rps",
 	"val_brier",
@@ -80,6 +87,7 @@ EXPERIMENT_LOG_COLUMNS = [
 	"git_commit",
 	"training_config_source",
 	"feature_manifest_source",
+	"evaluation_config_source",
 	"cv_metrics_json",
 	"cv_fold_metrics_json",
 	"val_metrics_json",
@@ -122,15 +130,7 @@ def write_json(path: Path, payload: dict):
 
 def append_tsv_row(path: Path, row: dict):
 	path.parent.mkdir(parents=True, exist_ok=True)
-	serialized = {}
-	for key in EXPERIMENT_LOG_COLUMNS:
-		value = row.get(key, "")
-		if isinstance(value, (dict, list)):
-			serialized[key] = json.dumps(value, separators=(",", ":"), sort_keys=True)
-		elif value is None:
-			serialized[key] = ""
-		else:
-			serialized[key] = value
+	serialized = {key: serialize_log_value(row.get(key, "")) for key in EXPERIMENT_LOG_COLUMNS}
 	write_header = not path.exists() or path.stat().st_size == 0
 	with open(path, "a", encoding="utf-8", newline="") as file:
 		writer = DictWriter(file, fieldnames=EXPERIMENT_LOG_COLUMNS, delimiter="\t")
@@ -139,9 +139,46 @@ def append_tsv_row(path: Path, row: dict):
 		writer.writerow(serialized)
 
 
-def load_training_config() -> dict:
-	with open(TRAINING_CONFIG_PATH, "r", encoding="utf-8") as file:
+def load_json(path: Path) -> dict:
+	with open(path, "r", encoding="utf-8") as file:
 		return json.load(file)
+
+
+def serialize_log_value(value):
+	if isinstance(value, (dict, list)):
+		return json.dumps(value, separators=(",", ":"), sort_keys=True)
+	if value is None:
+		return ""
+	return value
+
+
+def load_training_config() -> dict:
+	return load_json(TRAINING_CONFIG_PATH)
+
+
+def load_evaluation_config() -> dict:
+	raw = load_json(EVALUATION_CONFIG_PATH)
+	required = [
+		"comparison_metric",
+		"training_seed",
+		"rolling_cv_n_folds",
+		"min_objective_improvement",
+		"test_season",
+		"test_role",
+	]
+	missing = [key for key in required if key not in raw]
+	if missing:
+		raise ValueError(f"Missing evaluation config keys: {missing}")
+	config = dict(raw)
+	config["comparison_metric"] = str(config["comparison_metric"])
+	config["training_seed"] = int(config["training_seed"])
+	config["rolling_cv_n_folds"] = int(config["rolling_cv_n_folds"])
+	config["min_objective_improvement"] = float(config["min_objective_improvement"])
+	config["test_season"] = str(config["test_season"])
+	config["test_role"] = str(config["test_role"])
+	if config["test_role"] not in {"watch_only", "acceptance"}:
+		raise ValueError(f"Unsupported test_role: {config['test_role']}")
+	return config
 
 
 def build_train_config(
@@ -180,6 +217,7 @@ def build_train_config(
 
 def build_bundle_metadata(
 	training_config: dict,
+	evaluation_config: dict,
 	cat_config: CategoricalConfig,
 	feature_cols: list[str],
 	objective_metrics: dict,
@@ -193,15 +231,16 @@ def build_bundle_metadata(
 	objective_val_seasons: list[str],
 	final_val_season: str,
 	test_season: str,
-	n_cv_folds: int,
-	training_seed: int,
 	best_epoch: int,
 	final_train_epochs: int,
 	best_val_loss: float,
+	data_snapshot: dict,
+	reference_comparison: dict,
 ) -> dict:
 	return {
 		"display_name": DISPLAY_NAME,
 		"model_name": MODEL_NAME,
+		"comparison_metric": evaluation_config["comparison_metric"],
 		"model_kwargs": {
 			"hidden_layers": training_config["hidden_layers"],
 			"dropout": training_config["dropout"],
@@ -218,15 +257,17 @@ def build_bundle_metadata(
 		"final_epochs": final_train_epochs,
 		"final_epoch_mode": "best",
 		"evaluation_protocol": {
+			"comparison_metric": evaluation_config["comparison_metric"],
 			"cv_strategy": "rolling_origin_expanding_window",
-			"n_cv_folds": n_cv_folds,
+			"rolling_cv_n_folds": evaluation_config["rolling_cv_n_folds"],
 			"objective_fold_count": len(objective_fold_metrics),
-			"selection_metric": COMPARISON_METRIC,
 			"cv_seasons": all_cv_seasons,
 			"objective_val_seasons": objective_val_seasons,
 			"epoch_selection_season": final_val_season,
-			"held_out_test_season": test_season,
-			"training_seed": training_seed,
+			"test_season": test_season,
+			"test_role": evaluation_config["test_role"],
+			"min_objective_improvement": evaluation_config["min_objective_improvement"],
+			"training_seed": evaluation_config["training_seed"],
 		},
 		"selection_summary": {
 			"objective_metrics": objective_metrics,
@@ -236,7 +277,9 @@ def build_bundle_metadata(
 			"final_train_epochs": final_train_epochs,
 			"best_val_loss": float(best_val_loss),
 			"epoch_selection_season": final_val_season,
+			"reference_comparison": reference_comparison,
 		},
+		"data_snapshot": data_snapshot,
 		"validation_metrics": validation_metrics,
 		"validation_baseline_metrics": validation_baseline_metrics,
 		"test_metrics": test_metrics,
@@ -288,13 +331,14 @@ def describe_training_split(
 	epoch_selection_season: str,
 	all_cv_seasons: list[str],
 	test_season: str,
+	test_role: str,
 ):
 	for fold_idx, (train_seasons, val_season) in enumerate(objective_folds, start=1):
 		print(f"Objective fold {fold_idx}: train on {train_seasons[0]}..{train_seasons[-1]} | validate on {val_season}")
 	print(
 		f"Epoch selection: train on {epoch_train_seasons[0]}..{epoch_train_seasons[-1]} | validate on {epoch_selection_season}"
 	)
-	print(f"Final acceptance: train on {all_cv_seasons[0]}..{all_cv_seasons[-1]} | test on {test_season}")
+	print(f"Fixed test season ({test_role}): train on {all_cv_seasons[0]}..{all_cv_seasons[-1]} | test on {test_season}")
 
 
 def prepare_phase_loaders(
@@ -316,6 +360,96 @@ def resolve_final_training_epochs(max_epochs: int, best_epoch: int) -> int:
 	return max(1, min(max_epochs, int(best_epoch)))
 
 
+def metric_improvement(candidate_value: float, reference_value: float, metric_name: str) -> float:
+	if metric_name in LESS_IS_BETTER_METRICS:
+		return reference_value - candidate_value
+	return candidate_value - reference_value
+
+
+def load_experiment_rows(path: Path | str) -> list[dict]:
+	path = Path(path)
+	if not path.exists() or path.stat().st_size == 0:
+		return []
+	with open(path, "r", encoding="utf-8", newline="") as file:
+		reader = DictReader(file, delimiter="\t")
+		return [row for row in reader]
+
+
+def get_latest_comparable_reference(
+	path: Path,
+	comparison_metric: str,
+	objective_fold_count: int,
+	objective_val_seasons: list[str],
+	test_season: str,
+	test_role: str,
+	data_fingerprint: str,
+) -> dict | None:
+	expected_val_seasons = serialize_log_value(objective_val_seasons)
+	for row in reversed(load_experiment_rows(path)):
+		if row.get("comparison_metric") != comparison_metric:
+			continue
+		if row.get("objective_fold_count") != str(objective_fold_count):
+			continue
+		if row.get("objective_val_seasons") != expected_val_seasons:
+			continue
+		if row.get("held_out_test_season") != test_season:
+			continue
+		if row.get("test_role") != test_role:
+			continue
+		if row.get("data_fingerprint") != data_fingerprint:
+			continue
+		return row
+	return None
+
+
+def build_reference_comparison(
+	candidate_objective: float,
+	evaluation_config: dict,
+	reference_row: dict | None,
+) -> dict:
+	comparison = {
+		"status": "no_reference",
+		"reference_objective_value": None,
+		"objective_delta": None,
+		"min_objective_improvement": evaluation_config["min_objective_improvement"],
+		"meets_objective_threshold": None,
+	}
+	if reference_row is None:
+		return comparison
+
+	reference_objective = reference_row.get("objective_value")
+	if reference_objective in (None, ""):
+		comparison["status"] = "reference_missing_objective"
+		return comparison
+
+	reference_value = float(reference_objective)
+	comparison["reference_objective_value"] = reference_value
+	comparison["objective_delta"] = metric_improvement(
+		candidate_value=candidate_objective,
+		reference_value=reference_value,
+		metric_name=evaluation_config["comparison_metric"],
+	)
+	comparison["meets_objective_threshold"] = comparison["objective_delta"] >= evaluation_config["min_objective_improvement"]
+	comparison["status"] = "candidate_clears_threshold" if comparison["meets_objective_threshold"] else "candidate_below_threshold"
+	return comparison
+
+
+def print_data_snapshot(data_snapshot: dict):
+	print(f"Data fingerprint: {data_snapshot['data_fingerprint']}")
+	print(f"Season rows: {data_snapshot['season_row_counts']}")
+
+
+def print_reference_comparison(reference_comparison: dict, comparison_metric: str):
+	status = reference_comparison["status"]
+	delta = reference_comparison.get("objective_delta")
+	if delta is None:
+		print(f"Reference comparison: {status}")
+		return
+	print(
+		f"Reference comparison: {status} | delta_{comparison_metric}={delta:.6f} | threshold={reference_comparison['min_objective_improvement']:.6f}"
+	)
+
+
 def evaluate_cv_objective(
 	df,
 	feature_cols: list[str],
@@ -323,6 +457,7 @@ def evaluate_cv_objective(
 	cat_config: CategoricalConfig,
 	objective_folds: list[tuple[list[str], str]],
 	final_train_epochs: int,
+	training_seed: int,
 ) -> tuple[list[dict], Dict[str, float], Dict[str, float]]:
 	fold_metrics = []
 	fold_baseline_metrics = []
@@ -330,14 +465,14 @@ def evaluate_cv_objective(
 		print(
 			f"\n--- CV Objective Fold {fold_idx}/{len(objective_folds)}: {train_seasons[0]}..{train_seasons[-1]} -> {val_season} ---"
 		)
-		set_seed(TRAINING_SEED, deterministic=True)
+		set_seed(training_seed, deterministic=True)
 		data_train, data_val, train_loader, _ = prepare_phase_loaders(
 			df,
 			feature_cols,
 			training_config["batch_size"],
 			train_seasons,
 			[val_season],
-			TRAINING_SEED + fold_idx,
+			training_seed + fold_idx,
 		)
 		fold_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs)
 		fold_model, _, _ = train_fixed_epochs(fold_config, train_loader, device=DEVICE, verbose=True)
@@ -359,12 +494,16 @@ def evaluate_cv_objective(
 
 def train_main_model() -> dict:
 	training_config = load_training_config()
+	evaluation_config = load_evaluation_config()
+	comparison_metric = evaluation_config["comparison_metric"]
+	training_seed = evaluation_config["training_seed"]
 
 	print_header(f"TRAIN MAIN MODEL: {DISPLAY_NAME}")
 	print(f"Device: {DEVICE}")
 	print(f"Training config: {TRAINING_CONFIG_PATH}")
+	print(f"Evaluation config: {EVALUATION_CONFIG_PATH}")
 
-	set_seed(TRAINING_SEED, deterministic=True)
+	set_seed(training_seed, deterministic=True)
 	print(f"\nLoading data from {DEFAULT_PARQUET}")
 	df = load_frame(DEFAULT_PARQUET)
 	df = filter_min_history(df)
@@ -377,26 +516,36 @@ def train_main_model() -> dict:
 	cat_config = CategoricalConfig(num_leagues=get_num_leagues(df), league_embed_dim=3)
 	print(f"Categorical: {cat_config.num_leagues} leagues (embed_dim=3)")
 
-	print(f"\nGenerating {N_CV_FOLDS}-fold rolling CV splits...")
-	folds = generate_rolling_cv_folds(df, n_folds=N_CV_FOLDS)
-	test_season = get_test_season(df)
-	print(f"Held-out test season: {test_season}")
+	test_season = resolve_test_season(df, evaluation_config["test_season"])
+	data_snapshot = build_data_snapshot(df, test_season)
+	print_data_snapshot(data_snapshot)
+
+	print(f"\nGenerating {evaluation_config['rolling_cv_n_folds']}-fold rolling CV splits...")
+	folds = generate_rolling_cv_folds(df, n_folds=evaluation_config["rolling_cv_n_folds"], test_season=test_season)
+	print(f"Fixed held-out test season: {test_season} ({evaluation_config['test_role']})")
 
 	objective_folds, epoch_fold = split_selection_folds(folds)
 	epoch_train_seasons, epoch_selection_season = epoch_fold
 	all_cv_seasons = sorted({season for train_seasons, val_season in folds for season in [*train_seasons, val_season]})
 	objective_val_seasons = [val_season for _, val_season in objective_folds]
-	describe_training_split(objective_folds, epoch_train_seasons, epoch_selection_season, all_cv_seasons, test_season)
+	describe_training_split(
+		objective_folds,
+		epoch_train_seasons,
+		epoch_selection_season,
+		all_cv_seasons,
+		test_season,
+		evaluation_config["test_role"],
+	)
 	git_metadata = get_git_metadata()
 
-	set_seed(TRAINING_SEED, deterministic=True)
+	set_seed(training_seed, deterministic=True)
 	data_initial_train, data_final_val, initial_train_loader, final_val_loader = prepare_phase_loaders(
 		df,
 		feature_cols,
 		training_config["batch_size"],
 		epoch_train_seasons,
 		[epoch_selection_season],
-		TRAINING_SEED,
+		training_seed,
 	)
 
 	early_stop_config = build_train_config(training_config, data_initial_train["X"].shape[1], cat_config, training_config["max_epochs"])
@@ -419,9 +568,10 @@ def train_main_model() -> dict:
 		cat_config,
 		objective_folds,
 		final_train_epochs,
+		training_seed,
 	)
-	objective_value = float(cv_metrics[COMPARISON_METRIC])
-	print(f"\nCV objective ({COMPARISON_METRIC}): {objective_value:.5f}")
+	objective_value = float(cv_metrics[comparison_metric])
+	print(f"\nCV objective ({comparison_metric}): {objective_value:.5f}")
 
 	print("\n--- Early-stop Model Performance on Epoch-selection Season ---")
 	validation_baseline_metrics = evaluate_implied_baseline(data_final_val)
@@ -433,7 +583,7 @@ def train_main_model() -> dict:
 		training_config["batch_size"],
 		all_cv_seasons,
 		[test_season],
-		TRAINING_SEED + 10_000,
+		training_seed + 10_000,
 	)
 	final_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs)
 
@@ -442,17 +592,34 @@ def train_main_model() -> dict:
 	print("\n--- Training Final Model ---")
 	model, _, _ = train_fixed_epochs(final_config, train_loader, device=DEVICE, verbose=True)
 
-	print("\n--- Model Performance on Held-out Test Set ---")
+	print(f"\n--- Model Performance on Fixed Test Set ({evaluation_config['test_role']}) ---")
 	test_metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True)
+
+	reference_row = get_latest_comparable_reference(
+		path=EXPERIMENT_LOG_PATH,
+		comparison_metric=comparison_metric,
+		objective_fold_count=len(objective_folds),
+		objective_val_seasons=objective_val_seasons,
+		test_season=test_season,
+		test_role=evaluation_config["test_role"],
+		data_fingerprint=data_snapshot["data_fingerprint"],
+	)
+	reference_comparison = build_reference_comparison(
+		candidate_objective=objective_value,
+		evaluation_config=evaluation_config,
+		reference_row=reference_row,
+	)
+	print_reference_comparison(reference_comparison, comparison_metric)
 
 	run_record = {
 		"recorded_at_utc": datetime.now(timezone.utc).isoformat(),
 		"display_name": DISPLAY_NAME,
-		"comparison_metric": COMPARISON_METRIC,
-		"objective_name": f"cv_mean_{COMPARISON_METRIC}",
+		"comparison_metric": comparison_metric,
+		"objective_name": f"cv_mean_{comparison_metric}",
 		"objective_value": objective_value,
 		"training_config_source": str(TRAINING_CONFIG_PATH.relative_to(PROJECT_ROOT)),
 		"feature_manifest_source": str(FEATURE_MANIFEST_PATH.relative_to(PROJECT_ROOT)),
+		"evaluation_config_source": str(EVALUATION_CONFIG_PATH.relative_to(PROJECT_ROOT)),
 		"model_name": MODEL_NAME,
 		"objective_fold_count": len(objective_folds),
 		"objective_val_seasons": objective_val_seasons,
@@ -461,8 +628,12 @@ def train_main_model() -> dict:
 		"objective_fold_metrics": cv_fold_metrics,
 		"epoch_selection_season": epoch_selection_season,
 		"held_out_test_season": test_season,
+		"test_role": evaluation_config["test_role"],
+		"min_objective_improvement": evaluation_config["min_objective_improvement"],
 		"best_epoch": best_epoch,
 		"best_val_loss": float(best_val_loss),
+		"data_snapshot": data_snapshot,
+		"reference_comparison": reference_comparison,
 		"val_metrics": summarize_metrics(validation_metrics),
 		"test_metrics": summarize_metrics(test_metrics),
 		**git_metadata,
@@ -470,14 +641,15 @@ def train_main_model() -> dict:
 	write_json(
 		LATEST_MAIN_METRICS_PATH,
 		{
-			"schema_version": 1,
-			"description": "Latest evaluated match-result candidate. Runtime-generated; compare with training/configs/main_models/baselines.json.",
+			"schema_version": 3,
+			"description": "Latest evaluated match-result candidate. Runtime-generated; compare with prior comparable rows in artifacts/experiment_metrics/result_main_runs.tsv.",
 			"model": run_record,
 		},
 	)
 
 	bundle_metadata = build_bundle_metadata(
 		training_config=training_config,
+		evaluation_config=evaluation_config,
 		cat_config=cat_config,
 		feature_cols=feature_cols,
 		objective_metrics=cv_metrics,
@@ -491,11 +663,11 @@ def train_main_model() -> dict:
 		objective_val_seasons=objective_val_seasons,
 		final_val_season=epoch_selection_season,
 		test_season=test_season,
-		n_cv_folds=N_CV_FOLDS,
-		training_seed=TRAINING_SEED,
 		best_epoch=best_epoch,
 		final_train_epochs=final_train_epochs,
 		best_val_loss=best_val_loss,
+		data_snapshot=data_snapshot,
+		reference_comparison=reference_comparison,
 	)
 	save_bundle(RESULT_MODEL_BUNDLE_PATHS, model, data_train["scaler"], bundle_metadata)
 	append_tsv_row(
@@ -505,7 +677,7 @@ def train_main_model() -> dict:
 			"display_name": DISPLAY_NAME,
 			"recipe_label": "result",
 			"model_name": MODEL_NAME,
-			"comparison_metric": COMPARISON_METRIC,
+			"comparison_metric": comparison_metric,
 			"objective_name": run_record["objective_name"],
 			"objective_value": run_record["objective_value"],
 			"objective_fold_count": run_record["objective_fold_count"],
@@ -513,6 +685,14 @@ def train_main_model() -> dict:
 			"best_epoch": best_epoch,
 			"final_train_epochs": final_train_epochs,
 			"epoch_selection_season": epoch_selection_season,
+			"test_role": evaluation_config["test_role"],
+			"min_objective_improvement": evaluation_config["min_objective_improvement"],
+			"reference_status": reference_comparison["status"],
+			"reference_objective_value": reference_comparison["reference_objective_value"],
+			"objective_delta": reference_comparison["objective_delta"],
+			"meets_objective_threshold": reference_comparison["meets_objective_threshold"],
+			"data_fingerprint": data_snapshot["data_fingerprint"],
+			"season_row_counts_json": data_snapshot["season_row_counts"],
 			"val_log_loss": run_record["val_metrics"].get("log_loss"),
 			"val_rps": run_record["val_metrics"].get("rps"),
 			"val_brier": run_record["val_metrics"].get("brier"),
@@ -524,6 +704,7 @@ def train_main_model() -> dict:
 			"git_commit": git_metadata["git_commit"],
 			"training_config_source": run_record["training_config_source"],
 			"feature_manifest_source": run_record["feature_manifest_source"],
+			"evaluation_config_source": run_record["evaluation_config_source"],
 			"cv_metrics_json": run_record["objective_metrics"],
 			"cv_fold_metrics_json": run_record["objective_fold_metrics"],
 			"val_metrics_json": run_record["val_metrics"],
@@ -532,10 +713,11 @@ def train_main_model() -> dict:
 	)
 
 	print_header("DONE")
-	print(f"CV objective ({COMPARISON_METRIC}): {run_record['objective_value']:.5f}")
+	print(f"CV objective ({comparison_metric}): {run_record['objective_value']:.5f}")
+	print(f"Minimum meaningful improvement: {evaluation_config['min_objective_improvement']:.5f}")
 	print(f"Best validation loss: {best_val_loss:.5f}")
 	print(f"Validation metrics: {run_record['val_metrics']}")
-	print(f"Test metrics: {run_record['test_metrics']}")
+	print(f"Test metrics ({evaluation_config['test_role']}): {run_record['test_metrics']}")
 	print(f"Experiment log: {EXPERIMENT_LOG_PATH}")
 	return run_record
 
