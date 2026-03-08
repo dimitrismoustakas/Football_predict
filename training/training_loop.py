@@ -4,22 +4,19 @@ Core training loop for the canonical match-result model.
 
 from typing import Dict, Tuple
 
-import mlflow
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from training.models import build_model as build_registered_model
 from training.models.neural_net import GatedResidualModel, TrainConfig, gated_loss
 
 
 def build_model(config: TrainConfig, device: torch.device) -> GatedResidualModel:
 	"""Build the configured result model."""
 
-	model = build_registered_model(
-		config.model_name,
+	model = GatedResidualModel(
 		input_dim=config.input_dim,
 		n_classes=3,
 		cat_config=getattr(config, "cat_config", None),
@@ -122,19 +119,6 @@ def run_validation_epoch(
 		all_gates.mean(axis=0).tolist(),
 		all_gates.std(axis=0).tolist(),
 	)
-
-
-def _log_epoch_metrics(optimizer: torch.optim.Optimizer, epoch: int, train_loss: float, val_loss: float | None = None):
-	"""Log per-epoch metrics to the active MLflow run."""
-
-	if not mlflow.active_run():
-		return
-	mlflow.log_metric("train_loss", train_loss, step=epoch)
-	if val_loss is not None:
-		mlflow.log_metric("val_loss", val_loss, step=epoch)
-	mlflow.log_metric("lr", float(optimizer.param_groups[0]["lr"]), step=epoch)
-
-
 def _fit_model(
 	config: TrainConfig,
 	train_loader: DataLoader,
@@ -163,7 +147,6 @@ def _fit_model(
 
 		if not use_validation:
 			scheduler.step()
-			_log_epoch_metrics(optimizer, epoch, avg_train_loss)
 			if verbose and (epoch % 10 == 0 or epoch == 1):
 				print(f"Epoch {epoch:03d} | Train: {avg_train_loss:.5f}")
 			continue
@@ -173,7 +156,6 @@ def _fit_model(
 		history["gate_mean"].append(gate_mean)
 		history["gate_std"].append(gate_std)
 		scheduler.step()
-		_log_epoch_metrics(optimizer, epoch, avg_train_loss, avg_val_loss)
 
 		if verbose and (epoch % 10 == 0 or epoch == 1):
 			print(

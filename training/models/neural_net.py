@@ -222,7 +222,6 @@ class TrainConfig:
 	input_dim: int
 	lr: float
 	weight_decay: float
-	model_name: str = "gated_residual"
 	model_kwargs: dict = field(default_factory=dict)
 	beta1: float = 0.9
 	beta2: float = 0.999

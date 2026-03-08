@@ -10,7 +10,7 @@ from typing import Any
 import joblib
 import torch
 
-from training.models import CategoricalConfig, GatedResidualModel, build_model
+from training.models import CategoricalConfig, GatedResidualModel
 from utils.paths import MODELS_DIR
 
 
@@ -91,8 +91,7 @@ def build_result_model(feature_cols: list[str], metadata: dict) -> tuple[GatedRe
 
 	cat_config = cat_config_from_metadata(metadata)
 	model_kwargs = dict(metadata.get("model_kwargs", {}))
-	model = build_model(
-		metadata.get("model_name", "gated_residual"),
+	model = GatedResidualModel(
 		input_dim=len(feature_cols),
 		n_classes=3,
 		cat_config=cat_config,

@@ -240,6 +240,7 @@ def to_loader(
 	batch_size: int,
 	shuffle: bool = True,
 	device: torch.device = None,
+	seed: int | None = None,
 	num_workers: int = 0,
 	pin_memory: bool = None,
 ) -> DataLoader:
@@ -256,10 +257,15 @@ def to_loader(
 	tensor_y = torch.tensor(data["y"], dtype=torch.long)
 	tensor_raw_margin = torch.tensor(data["raw_margin"], dtype=torch.float32)
 	dataset = TensorDataset(tensor_x, tensor_cat, tensor_implied, tensor_y, tensor_raw_margin)
+	generator = None
+	if seed is not None:
+		generator = torch.Generator()
+		generator.manual_seed(seed)
 	return DataLoader(
 		dataset,
 		batch_size=batch_size,
 		shuffle=shuffle,
+		generator=generator,
 		num_workers=num_workers,
 		pin_memory=pin_memory,
 	)

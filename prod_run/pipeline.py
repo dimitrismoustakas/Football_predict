@@ -13,24 +13,13 @@ import polars as pl
 import torch
 from dotenv import load_dotenv
 
-def _load_project_modules():
-	try:
-		from prod_run import build_prod_features, fetch_odds
-		from prod_run.generate_html_report import generate_html_report
-		from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
-		from utils import send_email
-	except ModuleNotFoundError:
-		project_root = Path(__file__).resolve().parent.parent
-		if str(project_root) not in sys.path:
-			sys.path.insert(0, str(project_root))
-		from prod_run import build_prod_features, fetch_odds
-		from prod_run.generate_html_report import generate_html_report
-		from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
-		from utils import send_email
-	return build_prod_features, fetch_odds, generate_html_report, RESULT_MODEL_BUNDLE_PATHS, load_model_bundle, send_email
+if __package__ is None or __package__ == "":
+	sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-
-build_prod_features, fetch_odds, generate_html_report, RESULT_MODEL_BUNDLE_PATHS, load_model_bundle, send_email = _load_project_modules()
+from prod_run import build_prod_features, fetch_odds
+from prod_run.generate_html_report import generate_html_report
+from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
+from utils import send_email
 
 load_dotenv()
 
