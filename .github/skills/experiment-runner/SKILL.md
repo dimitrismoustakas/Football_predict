@@ -13,7 +13,7 @@ Run a useful experiment loop from `main`, or keep iterating on the current best 
 
 1. choose a promising next direction unless the user already picked one
 2. make whatever supporting analysis, ablations, or sweeps help you decide
-3. put the chosen source changes on an experiment branch
+3. put the chosen source changes on an `experiment/<name>` branch
 4. run the canonical evaluation path with `training/train_main_model.py`
 5. inspect the TSV and latest-metrics JSON
 6. leave the branch in a reviewable state
@@ -35,6 +35,7 @@ Read these first:
 - Do not write markdown reports unless the user explicitly asks for one.
 - Do not commit generated model bundles under `artifacts/models/`.
 - Do not rewrite prior rows in `artifacts/experiment_metrics/result_main_runs.tsv`.
+- Name experiment branches `experiment/<name>`.
 - Use CV `log_loss` as the decision metric.
 - Treat the fixed test season as watch-only monitoring output.
 - Compare against the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv`.

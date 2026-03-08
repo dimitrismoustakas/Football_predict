@@ -46,6 +46,7 @@ Keep the experiment surface lean:
 - prefer editing `training/train_main_model.py` for canonical training changes
 - use `artifacts/experiment_metrics/result_main_runs.tsv` as the default experiment ledger
 - do not add report workflows or extra experiment registries unless the user explicitly asks for them
+- name experiment branches `experiment/<name>`
 
 When iterating:
 - start from `main` for a fresh line of inquiry
@@ -74,6 +75,7 @@ It is better to iterate a live direction through a few coherent nearby adjustmen
 If the user asks to run an experiment, use the single `experiment-runner` skill.
 It should:
 - branch from `main` unless the user explicitly wants another base
+- name the branch `experiment/<name>`
 - run the canonical evaluation path
 - rely on `artifacts/experiment_metrics/result_main_runs.tsv` and `artifacts/models/latest_main_model_metrics.json` as the handoff
 - avoid markdown reports unless the user explicitly asks for one
