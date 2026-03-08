@@ -1,5 +1,9 @@
 {
-	"hidden_layers": [512, 256, 256],
+	"hidden_layers": [
+		512,
+		256,
+		256
+	],
 	"activation": "gelu",
 	"norm": "none",
 	"dropout": 0.2795534198003995,
@@ -13,9 +17,9 @@
 	"shared_gate": true,
 	"linear_gate": true,
 	"gate_hidden_dim": 16,
-	"gate_target_budget": 0.2628723121208285,
+	"gate_target_budget": 0.32,
 	"gate_mean_weight": 0.011836708882501988,
-	"gate_sat_weight": 0.00002474993042398424,
+	"gate_sat_weight": 2.474993042398424e-05,
 	"lambda_repulsion": 0.0,
 	"lambda_corr": 0.0
 }
