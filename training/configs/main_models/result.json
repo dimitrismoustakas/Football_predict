@@ -17,7 +17,7 @@
 	"shared_gate": true,
 	"linear_gate": true,
 	"gate_hidden_dim": 16,
-	"gate_target_budget": 0.32,
+	"gate_target_budget": 0.28,
 	"gate_mean_weight": 0.03,
 	"gate_sat_weight": 2.474993042398424e-05,
 	"lambda_repulsion": 0.0,
