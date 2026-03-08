@@ -11,6 +11,7 @@
 	"patience": 10,
 	"use_categorical": false,
 	"shared_gate": true,
+	"linear_gate": true,
 	"gate_hidden_dim": 16,
 	"gate_target_budget": 0.2628723121208285,
 	"gate_mean_weight": 0.011836708882501988,
