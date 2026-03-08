@@ -9,9 +9,10 @@ Categorical features:
 Continuous features are scaled with `StandardScaler`.
 """
 
+import hashlib
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import polars as pl
@@ -24,6 +25,25 @@ from utils.paths import PROJECT_ROOT
 
 CAT_COLS = ["league_idx", "home_promoted", "away_promoted"]
 RESULT_FEATURES_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "result_features.json"
+FINGERPRINT_PRIORITY_COLS = [
+	"season",
+	"date",
+	"match_id",
+	"game_id",
+	"league",
+	"league_id",
+	"team",
+	"home_team",
+	"away_team",
+	"team_id",
+	"home_team_id",
+	"away_team_id",
+	"home_goals",
+	"away_goals",
+	"odds_home",
+	"odds_draw",
+	"odds_away",
+]
 
 
 def load_frame(parquet_path: Path) -> pl.DataFrame:
@@ -45,8 +65,12 @@ def load_feature_manifest(feature_path: Path = RESULT_FEATURES_PATH) -> List[str
 def select_feature_columns(df: pl.DataFrame, feature_path: Path = RESULT_FEATURES_PATH) -> List[str]:
 	"""Select the fixed result-model feature subset."""
 
+	manifest_cols = load_feature_manifest(feature_path)
 	cols = set(df.columns)
-	return [col for col in load_feature_manifest(feature_path) if col in cols]
+	missing = [col for col in manifest_cols if col not in cols]
+	if missing:
+		raise ValueError(f"Missing feature columns from manifest {feature_path}: {missing}")
+	return manifest_cols
 
 
 def filter_min_history(df: pl.DataFrame) -> pl.DataFrame:
@@ -59,16 +83,46 @@ def filter_min_history(df: pl.DataFrame) -> pl.DataFrame:
 	return df.filter((pl.col("ovr__games__r5__h") >= 5) & (pl.col("ovr__games__r5__a") >= 5))
 
 
-def generate_rolling_cv_folds(df: pl.DataFrame, n_folds: int = 3) -> List[Tuple[List[str], str]]:
-	"""Generate expanding-window validation folds and reserve the latest season for test."""
+def get_sorted_seasons(df: pl.DataFrame) -> List[str]:
+	"""Return sorted season labels as strings."""
 
-	seasons = (
-		df.select(pl.col("season").cast(pl.Utf8)).unique().sort(by="season").to_series().to_list()
-	)
-	if len(seasons) < n_folds + 2:
-		raise ValueError(f"Need at least {n_folds + 2} seasons for {n_folds}-fold rolling CV. Got {len(seasons)}.")
+	return df.select(pl.col("season").cast(pl.Utf8)).unique().sort(by="season").to_series().to_list()
 
-	available = seasons[:-1]
+
+def resolve_test_season(df: pl.DataFrame, configured_test_season: str | None = None) -> str:
+	"""Return the configured fixed test season, defaulting to the latest season when unset."""
+
+	seasons = get_sorted_seasons(df)
+	if len(seasons) < 2:
+		raise ValueError("Need at least 2 seasons to have a test season.")
+	if configured_test_season is None:
+		return seasons[-1]
+
+	test_season = str(configured_test_season)
+	if test_season not in seasons:
+		raise ValueError(f"Configured test season {test_season} not found in data. Available seasons: {seasons}")
+	if seasons.index(test_season) == 0:
+		raise ValueError(f"Configured test season {test_season} has no prior seasons available for training.")
+	return test_season
+
+
+def generate_rolling_cv_folds(
+	df: pl.DataFrame,
+	n_folds: int = 3,
+	test_season: str | None = None,
+) -> List[Tuple[List[str], str]]:
+	"""Generate expanding-window validation folds using only seasons before the fixed test season."""
+
+	seasons = get_sorted_seasons(df)
+	resolved_test_season = resolve_test_season(df, test_season)
+	test_idx = seasons.index(resolved_test_season)
+	available = seasons[:test_idx]
+	if len(available) < n_folds + 1:
+		raise ValueError(
+			f"Need at least {n_folds + 1} seasons before test season {resolved_test_season} for {n_folds}-fold rolling CV. "
+			f"Got {len(available)}."
+		)
+
 	folds = []
 	for fold_idx in range(n_folds):
 		val_idx = len(available) - n_folds + fold_idx
@@ -76,17 +130,6 @@ def generate_rolling_cv_folds(df: pl.DataFrame, n_folds: int = 3) -> List[Tuple[
 		train_seasons = available[:val_idx]
 		folds.append((train_seasons, val_season))
 	return folds
-
-
-def get_test_season(df: pl.DataFrame) -> str:
-	"""Return the latest held-out test season."""
-
-	seasons = (
-		df.select(pl.col("season").cast(pl.Utf8)).unique().sort(by="season").to_series().to_list()
-	)
-	if len(seasons) < 2:
-		raise ValueError("Need at least 2 seasons to have a test season.")
-	return seasons[-1]
 
 
 def _normalize_implied(odds_cols: List[str], prefix: str) -> Tuple[Dict[str, pl.Expr], pl.Expr]:
@@ -232,6 +275,59 @@ def prepare_data(
 		"raw_margin": part.select("raw_margin").to_pandas().values.flatten(),
 		"dates": part.select("date").to_pandas().values.flatten(),
 		"scaler": scaler,
+	}
+
+
+def _stable_hash_value(value: Any) -> str:
+	"""Serialize scalar values consistently for snapshot fingerprinting."""
+
+	if value is None:
+		return "<null>"
+	if isinstance(value, float):
+		return format(value, ".12g")
+	return str(value)
+
+
+def compute_frame_fingerprint(df: pl.DataFrame, fingerprint_cols: List[str] | None = None) -> str:
+	"""Compute a stable content fingerprint for a Polars frame."""
+
+	if df.height == 0:
+		return hashlib.sha256(b"empty").hexdigest()
+
+	if fingerprint_cols is None:
+		fingerprint_cols = [col for col in FINGERPRINT_PRIORITY_COLS if col in df.columns]
+	if not fingerprint_cols:
+		fingerprint_cols = list(df.columns)
+
+	sort_cols = [col for col in ["season", "date", "match_id", "game_id", "team", "home_team", "away_team"] if col in fingerprint_cols]
+	if not sort_cols:
+		sort_cols = fingerprint_cols
+
+	fingerprint_df = df.select(fingerprint_cols).sort(sort_cols)
+	hasher = hashlib.sha256()
+	for row in fingerprint_df.iter_rows(named=False):
+		hasher.update("|".join(_stable_hash_value(value) for value in row).encode("utf-8"))
+		hasher.update(b"\n")
+	return hasher.hexdigest()
+
+
+def build_data_snapshot(df: pl.DataFrame, test_season: str) -> Dict[str, Any]:
+	"""Build versioning metadata for the canonical evaluation dataset."""
+
+	season_counts_df = (
+		df.with_columns(pl.col("season").cast(pl.Utf8).alias("season"))
+		.group_by("season")
+		.len()
+		.sort("season")
+	)
+	season_row_counts = {row["season"]: int(row["len"]) for row in season_counts_df.to_dicts()}
+	test_df = df.filter(pl.col("season").cast(pl.Utf8) == test_season)
+	return {
+		"row_count": int(df.height),
+		"season_row_counts": season_row_counts,
+		"data_fingerprint": compute_frame_fingerprint(df),
+		"test_season": test_season,
+		"test_row_count": int(test_df.height),
 	}
 
 

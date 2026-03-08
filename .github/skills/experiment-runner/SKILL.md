@@ -35,7 +35,11 @@ Read these first:
 - Keep the experiment surface small.
 - Do not write markdown reports unless the user explicitly asks for one.
 - Do not commit generated model bundles under `artifacts/models/`.
-- Do not promote a new baseline unless the user explicitly asks.
+- Do not rewrite prior rows in `artifacts/experiment_metrics/result_main_runs.tsv`.
+- Use CV `log_loss` as the decision metric.
+- Treat the fixed test season as watch-only monitoring output.
+- Treat gains smaller than `0.0005` CV `log_loss` as non-meaningful by default.
+- Compare against the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv`.
 
 Everything relevant to improving the canonical path is fair game.
 This includes, when justified:
@@ -89,9 +93,3 @@ A completed run should leave behind:
 - one new row in `artifacts/experiment_metrics/result_main_runs.tsv`
 - updated runtime candidate metrics in `artifacts/models/latest_main_model_metrics.json`
 - a concise summary of what changed and whether the evidence looks stronger, weaker, or mixed
-
-## Promotion
-
-Promotion is separate.
-
-Unless the user explicitly asks for promotion, stop after the experiment is implemented and evaluated.

@@ -19,9 +19,12 @@ The canonical training and evaluation loop is fixed and should be the default pa
 
 ### Evaluation protocol
 Always preserve this unless the user explicitly asks to change it:
-- rolling expanding-window CV mean `log_loss` as the single experiment objective
-- fixed final validation season for epoch selection
-- fixed held-out latest season for acceptance
+- use `training/configs/main_models/evaluation.json` as the source of truth
+- rolling expanding-window CV mean `log_loss` is the single decision metric
+- the last pre-test season is reserved for epoch selection
+- the fixed test season is watch-only and not part of branch acceptance
+- treat improvements smaller than `0.0005` CV `log_loss` as noise unless the user explicitly wants to investigate them
+- use the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv` as the default comparison point
 
 ## Research workflow
 Keep the repo surface small.
@@ -31,7 +34,7 @@ If an experiment needs custom search or analysis code, prefer a narrow branch-sp
 - `prod_run/pipeline.py` loads the canonical model bundle from `artifacts/models/`
 - `prod_run/fetch_odds.py` fetches match-result prices
 - Generated model bundles under `artifacts/models/` are runtime outputs and should not be committed
-- Generated experiment summaries under `artifacts/experiment_metrics/` are also runtime outputs unless the user explicitly asks to keep them
+- `artifacts/experiment_metrics/result_main_runs.tsv` is the single experiment ledger and should be kept append-only
 
 ## GitHub tooling
 - GitHub CLI is available at `C:/Program Files/GitHub CLI/gh.exe` on this machine even if `gh` is not on `PATH`
