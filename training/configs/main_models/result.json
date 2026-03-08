@@ -18,6 +18,7 @@
 	"linear_gate": true,
 	"learn_market_bias": true,
 	"learn_league_market_bias": true,
+	"learn_league_residual_bias": true,
 	"market_logit_scale": 1.06,
 	"gate_hidden_dim": 16,
 	"gate_target_budget": 0.14,
