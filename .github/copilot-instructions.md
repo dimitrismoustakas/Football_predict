@@ -28,6 +28,8 @@ Always preserve this unless the user explicitly asks to change it:
 ## Research workflow
 Keep the repo surface small.
 If an experiment needs custom search or analysis code, prefer a narrow branch-specific helper over permanent research scripts.
+Cheap local prescreens are encouraged when they help rank nearby ideas quickly, but they are only a guide.
+Any candidate that matters still needs the canonical `training/train_main_model.py` run before it counts.
 
 ## Production
 - `prod_run/pipeline.py` loads the canonical model bundle from `artifacts/models/`
@@ -44,6 +46,13 @@ Keep the experiment surface lean:
 - prefer editing `training/train_main_model.py` for canonical training changes
 - use `artifacts/experiment_metrics/result_main_runs.tsv` as the default experiment ledger
 - do not add report workflows or extra experiment registries unless the user explicitly asks for them
+- name experiment branches `experiment/<name>`
+
+When iterating:
+- start from `main` for a fresh line of inquiry
+- if a branch improves on the canonical objective and nearby variants still look promising, keep iterating on that branch until the neighborhood is exhausted
+- if a branch clearly regresses, abandon it rather than accumulating dead changes
+- if a prescreen helper suggests a good direction, make sure the exact canonical candidate matches what was prescreened before trusting the result
 
 For experiments, everything relevant to improving the canonical path is fair game.
 This includes, when justified:
@@ -59,11 +68,14 @@ This includes, when justified:
 Do not limit experiments to abstract ideas only.
 The agent should be free to choose any concrete change it thinks can improve the main metric.
 It may use ablations, sweeps, helper analysis, or targeted searches when they help choose or validate the next branch.
+Promising lines should be worked, not just sampled once.
+It is better to iterate a live direction through a few coherent nearby adjustments than to abandon it after the first non-winning attempt.
 
 ## Skill
 If the user asks to run an experiment, use the single `experiment-runner` skill.
 It should:
 - branch from `main` unless the user explicitly wants another base
+- name the branch `experiment/<name>`
 - run the canonical evaluation path
 - rely on `artifacts/experiment_metrics/result_main_runs.tsv` and `artifacts/models/latest_main_model_metrics.json` as the handoff
 - avoid markdown reports unless the user explicitly asks for one
