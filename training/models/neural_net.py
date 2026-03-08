@@ -7,7 +7,7 @@ deviate from them using a context-dependent gate.
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -220,13 +220,9 @@ class TrainConfig:
 	"""Configuration for model training."""
 
 	input_dim: int
-	hidden_layers: List[int]
-	dropout: float
-	norm: str
 	lr: float
 	weight_decay: float
-	activation: str = "relu"
-	optimizer_name: str = "adamw"
+	model_kwargs: dict = field(default_factory=dict)
 	beta1: float = 0.9
 	beta2: float = 0.999
 	optimizer_eps: float = 1e-8
@@ -234,19 +230,7 @@ class TrainConfig:
 	patience: int = 15
 	batch_size: int = 128
 	cat_config: Optional[CategoricalConfig] = None
-	scheduler_name: str = "cosine"
-	scheduler_warmup_epochs: int = 0
-	scheduler_warmup_start_factor: float = 0.1
 	scheduler_min_lr_ratio: float = 0.01
-	scheduler_plateau_factor: float = 0.5
-	scheduler_plateau_patience: int = 3
-	scheduler_plateau_threshold: float = 1e-4
-	onecycle_pct_start: float = 0.3
-	onecycle_div_factor: float = 25.0
-	onecycle_final_div_factor: float = 1000.0
-	max_grad_norm: float = 0.0
-	gate_hidden_dim: int = 32
-	gate_target_budget: float = 0.2
 	gate_mean_weight: float = 0.01
 	gate_sat_weight: float = 0.001
 	lambda_repulsion: float = 0.0

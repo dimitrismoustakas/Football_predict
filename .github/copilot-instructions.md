@@ -19,7 +19,7 @@ The canonical training and evaluation loop is fixed and should be the default pa
 
 ### Evaluation protocol
 Always preserve this unless the user explicitly asks to change it:
-- rolling expanding-window CV for model selection
+- rolling expanding-window CV mean `log_loss` as the single experiment objective
 - fixed final validation season for epoch selection
 - fixed held-out latest season for acceptance
 
@@ -33,14 +33,39 @@ If an experiment needs custom search or analysis code, prefer a narrow branch-sp
 - Generated model bundles under `artifacts/models/` are runtime outputs and should not be committed
 - Generated experiment summaries under `artifacts/experiment_metrics/` are also runtime outputs unless the user explicitly asks to keep them
 
-## Canonical trainer config hooks
-`training/train_main_model.py` supports reusable training-recipe hooks in the frozen config:
-- optimizer: `optimizer_name`, `beta1`, `beta2`, `optimizer_eps`
-- scheduler: `scheduler_name`, warmup/cosine/plateau/one-cycle fields
-- final retrain control: `final_epoch_mode`, `final_epoch_buffer`
-- stability: `max_grad_norm`
+## GitHub tooling
+- GitHub CLI is available at `C:/Program Files/GitHub CLI/gh.exe` on this machine even if `gh` is not on `PATH`
+- prefer using it for branch/PR actions when needed
 
-If a config omits these fields, preserve the historical defaults.
+## Experiment surface
+Keep the experiment surface small:
+- prefer editing `training/train_main_model.py` for canonical training changes
+- use `artifacts/experiment_metrics/result_main_runs.tsv` as the default experiment ledger
+- do not add report workflows or extra experiment registries unless the user explicitly asks for them
+
+For experiments, everything relevant to improving the canonical path is fair game.
+This includes, when justified:
+- model architecture
+- optimizer
+- hyperparameters
+- training loop details
+- batch size and model size
+- feature engineering
+- feature selection
+- preprocessing choices
+
+Do not limit experiments to abstract ideas only.
+The agent should be free to choose any concrete change it thinks can improve the main metric.
+There is a slight preference for simpler changes when expected value looks similar, but simplicity is not a hard constraint.
+
+## Skill
+If the user asks to run an experiment, use the single `experiment-runner` skill.
+It should:
+- pick one idea itself or accept a user-specified idea
+- work on one branch
+- run the canonical evaluation path
+- rely on `artifacts/experiment_metrics/result_main_runs.tsv` and `artifacts/models/latest_main_model_metrics.json` as the handoff
+- avoid markdown reports unless the user explicitly asks for one
 
 ## Betting diagnostics
 Use proper scoring metrics as the primary quality gate.

@@ -10,20 +10,25 @@ The evaluation loop is fixed:
 import json
 import os
 import random
+import subprocess
 import sys
+from csv import DictWriter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Dict
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
-import joblib
-import mlflow
+if __package__ is None or __package__ == "":
+	sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import torch
 
 from training.evaluation import evaluate_model
+from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, save_model_bundle as save_bundle
 from training.models import CategoricalConfig, TrainConfig
+from training.training_loop import train_fixed_epochs, train_with_early_stopping
 from training.train_utils import (
 	add_targets_and_implied,
 	evaluate_implied_baseline,
@@ -35,28 +40,51 @@ from training.train_utils import (
 	prepare_data,
 	select_feature_columns,
 	to_loader,
-	train_model,
 )
-from utils.paths import MODELS_DIR, PROJECT_ROOT
+from utils.paths import EXPERIMENT_METRICS_DIR, MODELS_DIR, PROJECT_ROOT
 
 DEFAULT_PARQUET = Path(os.environ.get("PARQUET_PATH", "data/training/understat_df.parquet"))
-MODEL_CONFIG_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "result.json"
 LATEST_MAIN_METRICS_PATH = MODELS_DIR / "latest_main_model_metrics.json"
+EXPERIMENT_LOG_PATH = EXPERIMENT_METRICS_DIR / "result_main_runs.tsv"
 N_CV_FOLDS = int(os.environ.get("N_CV_FOLDS", "3"))
 TRAINING_SEED = int(os.environ.get("TRAINING_SEED", "42"))
 
-RESULT_TASK = {
-	"label": "result",
-	"display_name": "Match Result",
-	"comparison_metric": "log_loss",
-	"experiment_name": "result_main_model",
-	"artifact_model_path": MODELS_DIR / "result_model.pt",
-	"artifact_config_path": MODELS_DIR / "result_model_config.json",
-	"artifact_scaler_path": MODELS_DIR / "result_model_scaler.joblib",
-}
-
-os.environ["MLFLOW_TRACKING_URI"] = "mlruns"
+DISPLAY_NAME = "Match Result"
+COMPARISON_METRIC = "log_loss"
+MODEL_NAME = "gated_residual"
+TRAINING_CONFIG_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "result.json"
+FEATURE_MANIFEST_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "result_features.json"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+EXPERIMENT_LOG_COLUMNS = [
+	"recorded_at_utc",
+	"display_name",
+	"recipe_label",
+	"model_name",
+	"comparison_metric",
+	"objective_name",
+	"objective_value",
+	"objective_fold_count",
+	"objective_val_seasons",
+	"best_epoch",
+	"final_train_epochs",
+	"epoch_selection_season",
+	"val_log_loss",
+	"val_rps",
+	"val_brier",
+	"held_out_test_season",
+	"test_log_loss",
+	"test_rps",
+	"test_brier",
+	"git_branch",
+	"git_commit",
+	"training_config_source",
+	"feature_manifest_source",
+	"cv_metrics_json",
+	"cv_fold_metrics_json",
+	"val_metrics_json",
+	"test_metrics_json",
+]
 
 
 def set_seed(seed: int = 42, deterministic: bool = False):
@@ -64,10 +92,13 @@ def set_seed(seed: int = 42, deterministic: bool = False):
 	np.random.seed(seed)
 	torch.manual_seed(seed)
 	torch.cuda.manual_seed_all(seed)
+	torch.use_deterministic_algorithms(deterministic)
 	if deterministic:
+		os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 		torch.backends.cudnn.deterministic = True
 		torch.backends.cudnn.benchmark = False
 	else:
+		os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
 		torch.backends.cudnn.deterministic = False
 		torch.backends.cudnn.benchmark = True
 
@@ -78,107 +109,68 @@ def print_header(text: str):
 	print("=" * 60)
 
 
-def load_training_config() -> Dict[str, Any]:
-	with open(MODEL_CONFIG_PATH, "r", encoding="utf-8") as file:
-		return json.load(file)
-
-
-def to_builtin(value: Any) -> Any:
-	if isinstance(value, dict):
-		return {key: to_builtin(val) for key, val in value.items()}
-	if isinstance(value, list):
-		return [to_builtin(item) for item in value]
-	if isinstance(value, tuple):
-		return [to_builtin(item) for item in value]
-	if isinstance(value, np.generic):
-		return value.item()
-	return value
-
-
-def summarize_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
+def summarize_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
 	keys = ["accuracy", "brier", "rps", "log_loss", "total_profit", "avg_profit", "n_bets"]
-	return to_builtin({key: metrics[key] for key in keys if key in metrics})
+	return {key: metrics[key] for key in keys if key in metrics}
 
 
-def write_json(path: Path, payload: Dict[str, Any]):
+def write_json(path: Path, payload: dict):
 	path.parent.mkdir(parents=True, exist_ok=True)
 	with open(path, "w", encoding="utf-8") as file:
 		json.dump(payload, file, indent=2)
 
 
-def update_latest_run_record(run_record: Dict[str, Any]):
-	payload = {
-		"schema_version": 1,
-		"description": "Latest evaluated match-result candidate. Runtime-generated; compare with training/configs/main_models/baselines.json.",
-		"model": run_record,
-	}
-	write_json(LATEST_MAIN_METRICS_PATH, payload)
+def append_tsv_row(path: Path, row: dict):
+	path.parent.mkdir(parents=True, exist_ok=True)
+	serialized = {}
+	for key in EXPERIMENT_LOG_COLUMNS:
+		value = row.get(key, "")
+		if isinstance(value, (dict, list)):
+			serialized[key] = json.dumps(value, separators=(",", ":"), sort_keys=True)
+		elif value is None:
+			serialized[key] = ""
+		else:
+			serialized[key] = value
+	write_header = not path.exists() or path.stat().st_size == 0
+	with open(path, "a", encoding="utf-8", newline="") as file:
+		writer = DictWriter(file, fieldnames=EXPERIMENT_LOG_COLUMNS, delimiter="\t")
+		if write_header:
+			writer.writeheader()
+		writer.writerow(serialized)
 
 
-def log_metric_group(prefix: str, metrics: Dict[str, Any]):
-	for metric_name, metric_value in metrics.items():
-		if isinstance(metric_value, (int, float)):
-			mlflow.log_metric(f"{prefix}_{metric_name}", float(metric_value))
-
-
-def build_latest_run_record(
-	epoch_selection_season: str,
-	test_season: str,
-	best_epoch: int,
-	best_val_loss: float,
-	validation_metrics: Dict[str, Any],
-	test_metrics: Dict[str, Any],
-) -> Dict[str, Any]:
-	return to_builtin({
-		"recorded_at_utc": datetime.now(timezone.utc).isoformat(),
-		"display_name": RESULT_TASK["display_name"],
-		"description": "Latest evaluated candidate. If accepted, copy the numbers into training/configs/main_models/baselines.json with a short description of the change.",
-		"comparison_metric": RESULT_TASK["comparison_metric"],
-		"training_config_source": str(MODEL_CONFIG_PATH.relative_to(PROJECT_ROOT)),
-		"epoch_selection_season": epoch_selection_season,
-		"held_out_test_season": test_season,
-		"best_epoch": best_epoch,
-		"best_val_loss": float(best_val_loss),
-		"val_metrics": summarize_metrics(validation_metrics),
-		"test_metrics": summarize_metrics(test_metrics),
-	})
+def load_training_config() -> dict:
+	with open(TRAINING_CONFIG_PATH, "r", encoding="utf-8") as file:
+		return json.load(file)
 
 
 def build_train_config(
-	training_config: Dict[str, Any],
+	training_config: dict,
 	input_dim: int,
 	cat_config: CategoricalConfig,
 	epochs: int,
 ) -> TrainConfig:
+	model_kwargs = {
+		"hidden_layers": training_config["hidden_layers"],
+		"dropout": training_config["dropout"],
+		"norm": training_config["norm"],
+		"activation": training_config["activation"],
+		"gate_hidden_dim": training_config["gate_hidden_dim"],
+		"gate_target_budget": training_config["gate_target_budget"],
+	}
 	return TrainConfig(
 		input_dim=input_dim,
-		hidden_layers=training_config["hidden_layers"],
-		dropout=training_config["dropout"],
-		norm=training_config["norm"],
+		model_kwargs=model_kwargs,
 		lr=training_config["lr"],
 		weight_decay=training_config["weight_decay"],
-		activation=training_config["activation"],
-		optimizer_name=training_config.get("optimizer_name", "adamw"),
 		beta1=training_config["beta1"],
-		beta2=training_config.get("beta2", 0.999),
-		optimizer_eps=training_config.get("optimizer_eps", 1e-8),
+		beta2=0.999,
+		optimizer_eps=1e-8,
 		epochs=epochs,
 		patience=training_config["patience"],
 		batch_size=training_config["batch_size"],
 		cat_config=cat_config,
-		scheduler_name=training_config.get("scheduler_name", "cosine"),
-		scheduler_warmup_epochs=training_config.get("scheduler_warmup_epochs", 0),
-		scheduler_warmup_start_factor=training_config.get("scheduler_warmup_start_factor", 0.1),
-		scheduler_min_lr_ratio=training_config.get("scheduler_min_lr_ratio", 0.01),
-		scheduler_plateau_factor=training_config.get("scheduler_plateau_factor", 0.5),
-		scheduler_plateau_patience=training_config.get("scheduler_plateau_patience", 3),
-		scheduler_plateau_threshold=training_config.get("scheduler_plateau_threshold", 1e-4),
-		onecycle_pct_start=training_config.get("onecycle_pct_start", 0.3),
-		onecycle_div_factor=training_config.get("onecycle_div_factor", 25.0),
-		onecycle_final_div_factor=training_config.get("onecycle_final_div_factor", 1000.0),
-		max_grad_norm=training_config.get("max_grad_norm", 0.0),
-		gate_hidden_dim=training_config["gate_hidden_dim"],
-		gate_target_budget=training_config["gate_target_budget"],
+		scheduler_min_lr_ratio=0.01,
 		gate_mean_weight=training_config["gate_mean_weight"],
 		gate_sat_weight=training_config["gate_sat_weight"],
 		lambda_repulsion=training_config.get("lambda_repulsion", 0.0),
@@ -186,103 +178,60 @@ def build_train_config(
 	)
 
 
-def resolve_final_training_epochs(training_config: Dict[str, Any], best_epoch: int) -> int:
-	"""Translate epoch selection into the final retraining epoch count."""
-
-	mode = training_config.get("final_epoch_mode", "best")
-	max_epochs = int(training_config["max_epochs"])
-	if mode == "best":
-		final_epochs = best_epoch
-	elif mode == "best_plus_buffer":
-		final_epochs = best_epoch + int(training_config.get("final_epoch_buffer", 0))
-	else:
-		raise ValueError(f"Unsupported final_epoch_mode={mode}")
-	return max(1, min(max_epochs, int(final_epochs)))
-
-
-def save_model_bundle(
-	model: Any,
-	scaler: Any,
-	train_config: TrainConfig,
-	training_config: Dict[str, Any],
+def build_bundle_metadata(
+	training_config: dict,
+	cat_config: CategoricalConfig,
 	feature_cols: list[str],
-	validation_metrics: Dict[str, Any],
-	validation_baseline_metrics: Dict[str, Any],
-	test_metrics: Dict[str, Any],
-	test_baseline_metrics: Dict[str, Any],
+	objective_metrics: dict,
+	objective_baseline_metrics: dict,
+	objective_fold_metrics: list[dict],
+	validation_metrics: dict,
+	validation_baseline_metrics: dict,
+	test_metrics: dict,
+	test_baseline_metrics: dict,
 	all_cv_seasons: list[str],
+	objective_val_seasons: list[str],
 	final_val_season: str,
 	test_season: str,
+	n_cv_folds: int,
+	training_seed: int,
 	best_epoch: int,
 	final_train_epochs: int,
 	best_val_loss: float,
-):
-	artifact_model_path = RESULT_TASK["artifact_model_path"]
-	artifact_config_path = RESULT_TASK["artifact_config_path"]
-	artifact_scaler_path = RESULT_TASK["artifact_scaler_path"]
-	artifact_model_path.parent.mkdir(parents=True, exist_ok=True)
-	artifact_model_path.parent.mkdir(parents=True, exist_ok=True)
-
-	torch.save(model.state_dict(), artifact_model_path)
-	joblib.dump(scaler, artifact_scaler_path)
-
-	cat_cfg = None
-	if train_config.cat_config is not None:
-		cat_cfg = {
-			"num_leagues": train_config.cat_config.num_leagues,
-			"league_embed_dim": train_config.cat_config.league_embed_dim,
-		}
-
-	metadata = {
-		"model_family": "main",
-		"display_name": RESULT_TASK["display_name"],
-		"comparison_metric": RESULT_TASK["comparison_metric"],
-		"training_config_source": str(MODEL_CONFIG_PATH.relative_to(PROJECT_ROOT)),
-		"input_dim": train_config.input_dim,
-		"hidden_layers": train_config.hidden_layers,
-		"activation": train_config.activation,
-		"norm": train_config.norm,
-		"dropout": train_config.dropout,
-		"optimizer_name": train_config.optimizer_name,
-		"lr": train_config.lr,
-		"weight_decay": train_config.weight_decay,
-		"beta1": train_config.beta1,
-		"beta2": train_config.beta2,
-		"optimizer_eps": train_config.optimizer_eps,
-		"batch_size": train_config.batch_size,
-		"scheduler_name": train_config.scheduler_name,
-		"scheduler_warmup_epochs": train_config.scheduler_warmup_epochs,
-		"scheduler_warmup_start_factor": train_config.scheduler_warmup_start_factor,
-		"scheduler_min_lr_ratio": train_config.scheduler_min_lr_ratio,
-		"scheduler_plateau_factor": train_config.scheduler_plateau_factor,
-		"scheduler_plateau_patience": train_config.scheduler_plateau_patience,
-		"scheduler_plateau_threshold": train_config.scheduler_plateau_threshold,
-		"onecycle_pct_start": train_config.onecycle_pct_start,
-		"onecycle_div_factor": train_config.onecycle_div_factor,
-		"onecycle_final_div_factor": train_config.onecycle_final_div_factor,
-		"max_grad_norm": train_config.max_grad_norm,
-		"final_epochs": final_train_epochs,
-		"final_epoch_mode": training_config.get("final_epoch_mode", "best"),
-		"final_epoch_buffer": training_config.get("final_epoch_buffer", 0),
+) -> dict:
+	return {
+		"display_name": DISPLAY_NAME,
+		"model_name": MODEL_NAME,
+		"model_kwargs": {
+			"hidden_layers": training_config["hidden_layers"],
+			"dropout": training_config["dropout"],
+			"norm": training_config["norm"],
+			"activation": training_config["activation"],
+			"gate_hidden_dim": training_config["gate_hidden_dim"],
+			"gate_target_budget": training_config["gate_target_budget"],
+		},
 		"feature_cols": feature_cols,
-		"output_dim": 3,
-		"cat_config": cat_cfg,
-		"gate_hidden_dim": train_config.gate_hidden_dim,
-		"gate_target_budget": train_config.gate_target_budget,
-		"gate_mean_weight": train_config.gate_mean_weight,
-		"gate_sat_weight": train_config.gate_sat_weight,
-		"lambda_repulsion": train_config.lambda_repulsion,
-		"lambda_corr": train_config.lambda_corr,
+		"cat_config": {
+			"num_leagues": cat_config.num_leagues,
+			"league_embed_dim": cat_config.league_embed_dim,
+		},
+		"final_epochs": final_train_epochs,
+		"final_epoch_mode": "best",
 		"evaluation_protocol": {
 			"cv_strategy": "rolling_origin_expanding_window",
-			"n_cv_folds": N_CV_FOLDS,
-			"selection_metric": RESULT_TASK["comparison_metric"],
+			"n_cv_folds": n_cv_folds,
+			"objective_fold_count": len(objective_fold_metrics),
+			"selection_metric": COMPARISON_METRIC,
 			"cv_seasons": all_cv_seasons,
+			"objective_val_seasons": objective_val_seasons,
 			"epoch_selection_season": final_val_season,
 			"held_out_test_season": test_season,
-			"training_seed": TRAINING_SEED,
+			"training_seed": training_seed,
 		},
 		"selection_summary": {
+			"objective_metrics": objective_metrics,
+			"objective_baseline_metrics": objective_baseline_metrics,
+			"objective_fold_metrics": objective_fold_metrics,
 			"best_epoch": best_epoch,
 			"final_train_epochs": final_train_epochs,
 			"best_val_loss": float(best_val_loss),
@@ -292,24 +241,130 @@ def save_model_bundle(
 		"validation_baseline_metrics": validation_baseline_metrics,
 		"test_metrics": test_metrics,
 		"test_baseline_metrics": test_baseline_metrics,
-		"frozen_training_config": training_config,
 	}
 
-	with open(artifact_config_path, "w", encoding="utf-8") as file:
-		json.dump(metadata, file, indent=2)
 
-	mlflow.log_artifact(str(artifact_model_path))
-	mlflow.log_artifact(str(artifact_scaler_path))
-	mlflow.log_artifact(str(artifact_config_path))
+def mean_metric(metrics_list: list[Dict[str, float]]) -> Dict[str, float]:
+	if not metrics_list:
+		return {}
+	keys = metrics_list[0].keys()
+	return {
+		key: float(np.mean([metrics[key] for metrics in metrics_list]))
+		for key in keys
+		if all(isinstance(metrics.get(key), (int, float)) for metrics in metrics_list)
+	}
 
 
-def train_main_model() -> Dict[str, Any]:
+def get_git_value(*args: str) -> str:
+	try:
+		result = subprocess.run(
+			["git", *args],
+			cwd=PROJECT_ROOT,
+			capture_output=True,
+			text=True,
+			check=True,
+		)
+		return result.stdout.strip()
+	except Exception:
+		return ""
+
+
+def get_git_metadata() -> dict:
+	return {
+		"git_branch": get_git_value("rev-parse", "--abbrev-ref", "HEAD"),
+		"git_commit": get_git_value("rev-parse", "HEAD"),
+	}
+
+
+def split_selection_folds(folds: list[tuple[list[str], str]]) -> tuple[list[tuple[list[str], str]], tuple[list[str], str]]:
+	if len(folds) < 2:
+		raise ValueError("Need at least 2 rolling folds: one for CV objective and one for epoch selection.")
+	return folds[:-1], folds[-1]
+
+
+def describe_training_split(
+	objective_folds: list[tuple[list[str], str]],
+	epoch_train_seasons: list[str],
+	epoch_selection_season: str,
+	all_cv_seasons: list[str],
+	test_season: str,
+):
+	for fold_idx, (train_seasons, val_season) in enumerate(objective_folds, start=1):
+		print(f"Objective fold {fold_idx}: train on {train_seasons[0]}..{train_seasons[-1]} | validate on {val_season}")
+	print(
+		f"Epoch selection: train on {epoch_train_seasons[0]}..{epoch_train_seasons[-1]} | validate on {epoch_selection_season}"
+	)
+	print(f"Final acceptance: train on {all_cv_seasons[0]}..{all_cv_seasons[-1]} | test on {test_season}")
+
+
+def prepare_phase_loaders(
+	df,
+	feature_cols: list[str],
+	batch_size: int,
+	train_seasons: list[str],
+	eval_seasons: list[str],
+	train_seed: int,
+):
+	train_data = prepare_data(df, feature_cols, train_seasons, fit_scaler=True)
+	eval_data = prepare_data(df, feature_cols, eval_seasons, scaler=train_data["scaler"])
+	train_loader = to_loader(train_data, batch_size, device=DEVICE, seed=train_seed)
+	eval_loader = to_loader(eval_data, batch_size, shuffle=False, device=DEVICE)
+	return train_data, eval_data, train_loader, eval_loader
+
+
+def resolve_final_training_epochs(max_epochs: int, best_epoch: int) -> int:
+	return max(1, min(max_epochs, int(best_epoch)))
+
+
+def evaluate_cv_objective(
+	df,
+	feature_cols: list[str],
+	training_config: dict,
+	cat_config: CategoricalConfig,
+	objective_folds: list[tuple[list[str], str]],
+	final_train_epochs: int,
+) -> tuple[list[dict], Dict[str, float], Dict[str, float]]:
+	fold_metrics = []
+	fold_baseline_metrics = []
+	for fold_idx, (train_seasons, val_season) in enumerate(objective_folds, start=1):
+		print(
+			f"\n--- CV Objective Fold {fold_idx}/{len(objective_folds)}: {train_seasons[0]}..{train_seasons[-1]} -> {val_season} ---"
+		)
+		set_seed(TRAINING_SEED, deterministic=True)
+		data_train, data_val, train_loader, _ = prepare_phase_loaders(
+			df,
+			feature_cols,
+			training_config["batch_size"],
+			train_seasons,
+			[val_season],
+			TRAINING_SEED + fold_idx,
+		)
+		fold_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs)
+		fold_model, _, _ = train_fixed_epochs(fold_config, train_loader, device=DEVICE, verbose=True)
+		baseline_metrics = summarize_metrics(evaluate_implied_baseline(data_val))
+		metrics = summarize_metrics(evaluate_model(fold_model, data_val, device=DEVICE, verbose=True))
+		fold_baseline_metrics.append(baseline_metrics)
+		fold_metrics.append({
+			"fold_index": fold_idx,
+			"train_start_season": train_seasons[0],
+			"train_end_season": train_seasons[-1],
+			"val_season": val_season,
+			"baseline_metrics": baseline_metrics,
+			"metrics": metrics,
+		})
+	mean_fold_metrics = mean_metric([fold["metrics"] for fold in fold_metrics])
+	mean_baseline_metrics = mean_metric(fold_baseline_metrics)
+	return fold_metrics, mean_fold_metrics, mean_baseline_metrics
+
+
+def train_main_model() -> dict:
 	training_config = load_training_config()
-	print_header(f"TRAIN MAIN MODEL: {RESULT_TASK['display_name']}")
-	print(f"Device: {DEVICE}")
-	print(f"Training config: {MODEL_CONFIG_PATH}")
 
-	set_seed(TRAINING_SEED, deterministic=False)
+	print_header(f"TRAIN MAIN MODEL: {DISPLAY_NAME}")
+	print(f"Device: {DEVICE}")
+	print(f"Training config: {TRAINING_CONFIG_PATH}")
+
+	set_seed(TRAINING_SEED, deterministic=True)
 	print(f"\nLoading data from {DEFAULT_PARQUET}")
 	df = load_frame(DEFAULT_PARQUET)
 	df = filter_min_history(df)
@@ -317,7 +372,7 @@ def train_main_model() -> Dict[str, Any]:
 	df = df.drop_nulls(subset=["odds_home", "odds_draw", "odds_away"])
 	print(f"Total rows with odds: {len(df)}")
 
-	feature_cols = select_feature_columns(df)
+	feature_cols = select_feature_columns(df, FEATURE_MANIFEST_PATH)
 	print(f"Features: {len(feature_cols)}")
 	cat_config = CategoricalConfig(num_leagues=get_num_leagues(df), league_embed_dim=3)
 	print(f"Categorical: {cat_config.num_leagues} leagues (embed_dim=3)")
@@ -327,93 +382,161 @@ def train_main_model() -> Dict[str, Any]:
 	test_season = get_test_season(df)
 	print(f"Held-out test season: {test_season}")
 
+	objective_folds, epoch_fold = split_selection_folds(folds)
+	epoch_train_seasons, epoch_selection_season = epoch_fold
 	all_cv_seasons = sorted({season for train_seasons, val_season in folds for season in [*train_seasons, val_season]})
-	epoch_selection_season = all_cv_seasons[-1]
-	initial_train_seasons = all_cv_seasons[:-1]
-	print(f"Step 1: train on {initial_train_seasons[0]}..{initial_train_seasons[-1]} | epoch selection on {epoch_selection_season}")
-	print(f"Step 2: retrain on {all_cv_seasons[0]}..{all_cv_seasons[-1]} | test on {test_season}")
+	objective_val_seasons = [val_season for _, val_season in objective_folds]
+	describe_training_split(objective_folds, epoch_train_seasons, epoch_selection_season, all_cv_seasons, test_season)
+	git_metadata = get_git_metadata()
 
-	mlflow.set_experiment(RESULT_TASK["experiment_name"])
-	with mlflow.start_run(run_name=f"{RESULT_TASK['label']}_main"):
-		mlflow.log_params({
-			"task": "match_result",
-			"training_config": str(MODEL_CONFIG_PATH.relative_to(PROJECT_ROOT)),
-			"parquet_path": str(DEFAULT_PARQUET),
-			"n_cv_folds": N_CV_FOLDS,
+	set_seed(TRAINING_SEED, deterministic=True)
+	data_initial_train, data_final_val, initial_train_loader, final_val_loader = prepare_phase_loaders(
+		df,
+		feature_cols,
+		training_config["batch_size"],
+		epoch_train_seasons,
+		[epoch_selection_season],
+		TRAINING_SEED,
+	)
+
+	early_stop_config = build_train_config(training_config, data_initial_train["X"].shape[1], cat_config, training_config["max_epochs"])
+	early_stop_model, early_stop_history, best_val_loss = train_with_early_stopping(
+		early_stop_config,
+		initial_train_loader,
+		final_val_loader,
+		device=DEVICE,
+		verbose=True,
+	)
+	best_epoch = early_stop_history["val_loss"].index(min(early_stop_history["val_loss"])) + 1
+	print(f"Early stopping best epoch: {best_epoch} (val_loss={best_val_loss:.5f})")
+	final_train_epochs = resolve_final_training_epochs(training_config["max_epochs"], best_epoch)
+	print(f"Final retrain epochs: {final_train_epochs} (mode=best)")
+
+	cv_fold_metrics, cv_metrics, cv_baseline_metrics = evaluate_cv_objective(
+		df,
+		feature_cols,
+		training_config,
+		cat_config,
+		objective_folds,
+		final_train_epochs,
+	)
+	objective_value = float(cv_metrics[COMPARISON_METRIC])
+	print(f"\nCV objective ({COMPARISON_METRIC}): {objective_value:.5f}")
+
+	print("\n--- Early-stop Model Performance on Epoch-selection Season ---")
+	validation_baseline_metrics = evaluate_implied_baseline(data_final_val)
+	validation_metrics = evaluate_model(early_stop_model, data_final_val, device=DEVICE, verbose=True)
+
+	data_train, data_test, train_loader, _ = prepare_phase_loaders(
+		df,
+		feature_cols,
+		training_config["batch_size"],
+		all_cv_seasons,
+		[test_season],
+		TRAINING_SEED + 10_000,
+	)
+	final_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs)
+
+	test_baseline_metrics = evaluate_implied_baseline(data_test)
+
+	print("\n--- Training Final Model ---")
+	model, _, _ = train_fixed_epochs(final_config, train_loader, device=DEVICE, verbose=True)
+
+	print("\n--- Model Performance on Held-out Test Set ---")
+	test_metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True)
+
+	run_record = {
+		"recorded_at_utc": datetime.now(timezone.utc).isoformat(),
+		"display_name": DISPLAY_NAME,
+		"comparison_metric": COMPARISON_METRIC,
+		"objective_name": f"cv_mean_{COMPARISON_METRIC}",
+		"objective_value": objective_value,
+		"training_config_source": str(TRAINING_CONFIG_PATH.relative_to(PROJECT_ROOT)),
+		"feature_manifest_source": str(FEATURE_MANIFEST_PATH.relative_to(PROJECT_ROOT)),
+		"model_name": MODEL_NAME,
+		"objective_fold_count": len(objective_folds),
+		"objective_val_seasons": objective_val_seasons,
+		"objective_metrics": cv_metrics,
+		"objective_baseline_metrics": cv_baseline_metrics,
+		"objective_fold_metrics": cv_fold_metrics,
+		"epoch_selection_season": epoch_selection_season,
+		"held_out_test_season": test_season,
+		"best_epoch": best_epoch,
+		"best_val_loss": float(best_val_loss),
+		"val_metrics": summarize_metrics(validation_metrics),
+		"test_metrics": summarize_metrics(test_metrics),
+		**git_metadata,
+	}
+	write_json(
+		LATEST_MAIN_METRICS_PATH,
+		{
+			"schema_version": 1,
+			"description": "Latest evaluated match-result candidate. Runtime-generated; compare with training/configs/main_models/baselines.json.",
+			"model": run_record,
+		},
+	)
+
+	bundle_metadata = build_bundle_metadata(
+		training_config=training_config,
+		cat_config=cat_config,
+		feature_cols=feature_cols,
+		objective_metrics=cv_metrics,
+		objective_baseline_metrics=cv_baseline_metrics,
+		objective_fold_metrics=cv_fold_metrics,
+		validation_metrics=summarize_metrics(validation_metrics),
+		validation_baseline_metrics=summarize_metrics(validation_baseline_metrics),
+		test_metrics=summarize_metrics(test_metrics),
+		test_baseline_metrics=summarize_metrics(test_baseline_metrics),
+		all_cv_seasons=all_cv_seasons,
+		objective_val_seasons=objective_val_seasons,
+		final_val_season=epoch_selection_season,
+		test_season=test_season,
+		n_cv_folds=N_CV_FOLDS,
+		training_seed=TRAINING_SEED,
+		best_epoch=best_epoch,
+		final_train_epochs=final_train_epochs,
+		best_val_loss=best_val_loss,
+	)
+	save_bundle(RESULT_MODEL_BUNDLE_PATHS, model, data_train["scaler"], bundle_metadata)
+	append_tsv_row(
+		EXPERIMENT_LOG_PATH,
+		{
+			"recorded_at_utc": run_record["recorded_at_utc"],
+			"display_name": DISPLAY_NAME,
+			"recipe_label": "result",
+			"model_name": MODEL_NAME,
+			"comparison_metric": COMPARISON_METRIC,
+			"objective_name": run_record["objective_name"],
+			"objective_value": run_record["objective_value"],
+			"objective_fold_count": run_record["objective_fold_count"],
+			"objective_val_seasons": run_record["objective_val_seasons"],
+			"best_epoch": best_epoch,
+			"final_train_epochs": final_train_epochs,
+			"epoch_selection_season": epoch_selection_season,
+			"val_log_loss": run_record["val_metrics"].get("log_loss"),
+			"val_rps": run_record["val_metrics"].get("rps"),
+			"val_brier": run_record["val_metrics"].get("brier"),
 			"held_out_test_season": test_season,
-			"optimizer_name": training_config.get("optimizer_name", "adamw"),
-			"scheduler_name": training_config.get("scheduler_name", "cosine"),
-			"final_epoch_mode": training_config.get("final_epoch_mode", "best"),
-		})
-
-		set_seed(TRAINING_SEED, deterministic=True)
-		data_initial_train = prepare_data(df, feature_cols, initial_train_seasons, fit_scaler=True)
-		data_final_val = prepare_data(df, feature_cols, [epoch_selection_season], scaler=data_initial_train["scaler"])
-		initial_train_loader = to_loader(data_initial_train, training_config["batch_size"], device=DEVICE)
-		final_val_loader = to_loader(data_final_val, training_config["batch_size"], shuffle=False, device=DEVICE)
-
-		early_stop_config = build_train_config(training_config, input_dim=data_initial_train["X"].shape[1], cat_config=cat_config, epochs=training_config["max_epochs"])
-		early_stop_model, early_stop_history, best_val_loss = train_model(early_stop_config, initial_train_loader, final_val_loader, device=DEVICE, verbose=True)
-		best_epoch = early_stop_history["val_loss"].index(min(early_stop_history["val_loss"])) + 1
-		print(f"Early stopping best epoch: {best_epoch} (val_loss={best_val_loss:.5f})")
-		final_train_epochs = resolve_final_training_epochs(training_config, best_epoch)
-		print(f"Final retrain epochs: {final_train_epochs} (mode={training_config.get('final_epoch_mode', 'best')})")
-
-		print("\n--- Early-stop Model Performance on Epoch-selection Season ---")
-		validation_baseline_metrics = evaluate_implied_baseline(data_final_val)
-		log_metric_group("val_baseline", validation_baseline_metrics)
-		validation_metrics = evaluate_model(early_stop_model, data_final_val, device=DEVICE, verbose=True)
-		log_metric_group("val", validation_metrics)
-		mlflow.log_metric("best_val_loss", float(best_val_loss))
-		mlflow.log_metric("best_epoch", int(best_epoch))
-
-		data_train = prepare_data(df, feature_cols, all_cv_seasons, fit_scaler=True)
-		data_test = prepare_data(df, feature_cols, [test_season], scaler=data_train["scaler"])
-		train_loader = to_loader(data_train, training_config["batch_size"], device=DEVICE)
-		final_config = build_train_config(training_config, input_dim=data_train["X"].shape[1], cat_config=cat_config, epochs=final_train_epochs)
-
-		test_baseline_metrics = evaluate_implied_baseline(data_test)
-		log_metric_group("test_baseline", test_baseline_metrics)
-
-		print("\n--- Training Final Model ---")
-		model, _, _ = train_model(final_config, train_loader, val_loader=None, device=DEVICE, verbose=True)
-
-		print("\n--- Model Performance on Held-out Test Set ---")
-		test_metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True)
-		log_metric_group("test", test_metrics)
-
-		run_record = build_latest_run_record(
-			epoch_selection_season=epoch_selection_season,
-			test_season=test_season,
-			best_epoch=best_epoch,
-			best_val_loss=best_val_loss,
-			validation_metrics=validation_metrics,
-			test_metrics=test_metrics,
-		)
-		update_latest_run_record(run_record)
-
-		save_model_bundle(
-			model=model,
-			scaler=data_train["scaler"],
-			train_config=final_config,
-			training_config=training_config,
-			feature_cols=feature_cols,
-			validation_metrics=validation_metrics,
-			validation_baseline_metrics=validation_baseline_metrics,
-			test_metrics=test_metrics,
-			test_baseline_metrics=test_baseline_metrics,
-			all_cv_seasons=all_cv_seasons,
-			final_val_season=epoch_selection_season,
-			test_season=test_season,
-			best_epoch=best_epoch,
-			final_train_epochs=final_train_epochs,
-			best_val_loss=best_val_loss,
-		)
+			"test_log_loss": run_record["test_metrics"].get("log_loss"),
+			"test_rps": run_record["test_metrics"].get("rps"),
+			"test_brier": run_record["test_metrics"].get("brier"),
+			"git_branch": git_metadata["git_branch"],
+			"git_commit": git_metadata["git_commit"],
+			"training_config_source": run_record["training_config_source"],
+			"feature_manifest_source": run_record["feature_manifest_source"],
+			"cv_metrics_json": run_record["objective_metrics"],
+			"cv_fold_metrics_json": run_record["objective_fold_metrics"],
+			"val_metrics_json": run_record["val_metrics"],
+			"test_metrics_json": run_record["test_metrics"],
+		},
+	)
 
 	print_header("DONE")
+	print(f"CV objective ({COMPARISON_METRIC}): {run_record['objective_value']:.5f}")
 	print(f"Best validation loss: {best_val_loss:.5f}")
 	print(f"Validation metrics: {run_record['val_metrics']}")
 	print(f"Test metrics: {run_record['test_metrics']}")
+	print(f"Experiment log: {EXPERIMENT_LOG_PATH}")
 	return run_record
 
 

@@ -13,12 +13,11 @@ The repo keeps one stable training and evaluation loop for the production model.
 
 ### Evaluation protocol
 The main training loop is frozen and should be used for branch comparisons:
-- rolling expanding-window CV for model selection
+- rolling expanding-window CV mean `log_loss` as the single experiment objective
 - fixed final validation season for epoch selection
 - fixed held-out latest season for acceptance
 
 Decision rules live in `docs/evaluation_policy.md`.
-Use `docs/model_acceptance_scorecard_template.md` when deciding whether a challenger should replace the current champion.
 
 This is implemented in:
 - `training/train_main_model.py`
@@ -26,14 +25,11 @@ This is implemented in:
 ### Main model config
 The frozen source-controlled model config lives in:
 - `training/configs/main_models/result.json`
+- `training/configs/main_models/result_features.json`
 
 Generated runtime artifacts are written to `artifacts/models/` and are not meant to be committed.
 
-The canonical trainer supports optional training-recipe fields:
-- optimizer: `optimizer_name`, `beta1`, `beta2`, `optimizer_eps`
-- scheduler: `scheduler_name`, `scheduler_warmup_epochs`, `scheduler_warmup_start_factor`, `scheduler_min_lr_ratio`, `scheduler_plateau_*`, `onecycle_*`
-- final retrain rule: `final_epoch_mode`, `final_epoch_buffer`
-- stability: `max_grad_norm`
+The trainer also appends one row per canonical run to `artifacts/experiment_metrics/result_main_runs.tsv`.
 
 ## Commands
 
@@ -65,6 +61,5 @@ Tracked source assets:
 
 Ignored or generated outputs:
 - `artifacts/models/`
-- `mlruns/`
 - `downloaded_files/`
 - `data/`
