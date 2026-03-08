@@ -219,7 +219,7 @@ def build_train_config(
 def build_bundle_metadata(
 	training_config: dict,
 	evaluation_config: dict,
-	cat_config: CategoricalConfig,
+	cat_config: CategoricalConfig | None,
 	feature_cols: list[str],
 	objective_metrics: dict,
 	objective_baseline_metrics: dict,
@@ -251,7 +251,7 @@ def build_bundle_metadata(
 			"gate_target_budget": training_config["gate_target_budget"],
 		},
 		"feature_cols": feature_cols,
-		"cat_config": {
+		"cat_config": None if cat_config is None else {
 			"num_leagues": cat_config.num_leagues,
 			"league_embed_dim": cat_config.league_embed_dim,
 		},
@@ -514,8 +514,12 @@ def train_main_model() -> dict:
 
 	feature_cols = select_feature_columns(df, FEATURE_MANIFEST_PATH)
 	print(f"Features: {len(feature_cols)}")
-	cat_config = CategoricalConfig(num_leagues=get_num_leagues(df), league_embed_dim=3)
-	print(f"Categorical: {cat_config.num_leagues} leagues (embed_dim=3)")
+	use_categorical = training_config.get("use_categorical", True)
+	cat_config = CategoricalConfig(num_leagues=get_num_leagues(df), league_embed_dim=3) if use_categorical else None
+	if cat_config is None:
+		print("Categorical: disabled")
+	else:
+		print(f"Categorical: {cat_config.num_leagues} leagues (embed_dim=3)")
 
 	test_season = resolve_test_season(df, evaluation_config["test_season"])
 	data_snapshot = build_data_snapshot(df, test_season)

@@ -9,6 +9,7 @@
 	"batch_size": 256,
 	"max_epochs": 35,
 	"patience": 10,
+	"use_categorical": false,
 	"shared_gate": true,
 	"gate_hidden_dim": 16,
 	"gate_target_budget": 0.2628723121208285,
