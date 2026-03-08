@@ -123,12 +123,22 @@ class GatedResidualModel(nn.Module):
 		gate_target_budget: float = 0.2,
 		shared_gate: bool = False,
 		linear_gate: bool = False,
+		market_logit_scale: float = 1.0,
+		learn_market_bias: bool = False,
+		learn_league_market_bias: bool = False,
+		num_leagues: int = 0,
 	):
 		super().__init__()
 		self.n_classes = n_classes
 		self.gate_target_budget = gate_target_budget
 		self.shared_gate = shared_gate
 		self.linear_gate = linear_gate
+		self.market_logit_scale = market_logit_scale
+		self.learn_market_bias = learn_market_bias
+		self.learn_league_market_bias = learn_league_market_bias
+		self.num_leagues = num_leagues
+		if self.learn_league_market_bias and self.num_leagues <= 0:
+			raise ValueError("num_leagues must be positive when learn_league_market_bias is enabled")
 
 		self.base_model = MLPWithHiddenAccess(
 			input_dim=input_dim,
@@ -154,6 +164,15 @@ class GatedResidualModel(nn.Module):
 
 		init_bias = math.log(gate_target_budget / (1 - gate_target_budget))
 		self.gate_bias = nn.Parameter(torch.full((1 if shared_gate else n_classes,), init_bias))
+		if learn_market_bias:
+			self.market_bias = nn.Parameter(torch.zeros(n_classes))
+		else:
+			self.register_buffer("market_bias", torch.zeros(n_classes))
+		if learn_league_market_bias:
+			self.league_market_bias = nn.Embedding(num_leagues, n_classes)
+			nn.init.zeros_(self.league_market_bias.weight)
+		else:
+			self.league_market_bias = None
 
 		self.input_dim = input_dim
 		self.hidden_layers = hidden_layers
@@ -164,6 +183,10 @@ class GatedResidualModel(nn.Module):
 		self.gate_hidden_dim = gate_hidden_dim
 		self.shared_gate = shared_gate
 		self.linear_gate = linear_gate
+		self.market_logit_scale = market_logit_scale
+		self.learn_market_bias = learn_market_bias
+		self.learn_league_market_bias = learn_league_market_bias
+		self.num_leagues = num_leagues
 
 	def _compute_market_features(
 		self,
@@ -177,6 +200,18 @@ class GatedResidualModel(nn.Module):
 		if raw_margin.dim() == 1:
 			raw_margin = raw_margin.unsqueeze(-1)
 		return torch.cat([implied_probs, entropy, max_prob, raw_margin], dim=-1)
+
+	def _compute_implied_logits(
+		self,
+		implied_probs: torch.Tensor,
+		cat_features: Optional[torch.Tensor] = None,
+	) -> torch.Tensor:
+		implied_logits = _log_softmax_from_implied(implied_probs) * self.market_logit_scale + self.market_bias
+		if self.league_market_bias is not None:
+			if cat_features is None:
+				raise ValueError("cat_features required when learn_league_market_bias is enabled")
+			implied_logits = implied_logits + self.league_market_bias(cat_features[:, 0].long())
+		return implied_logits
 
 	def forward(
 		self,
@@ -199,8 +234,8 @@ class GatedResidualModel(nn.Module):
 		gate = torch.sigmoid(gate_logits + self.gate_bias)
 		if self.shared_gate:
 			gate = gate.expand(-1, self.n_classes)
-		implied_log = _log_softmax_from_implied(implied_probs)
-		return implied_log + gate * residual_logits
+		implied_logits = self._compute_implied_logits(implied_probs, cat_features)
+		return implied_logits + gate * residual_logits
 
 	def get_gate_stats(
 		self,
