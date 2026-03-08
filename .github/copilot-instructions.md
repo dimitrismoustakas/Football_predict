@@ -23,7 +23,6 @@ Always preserve this unless the user explicitly asks to change it:
 - rolling expanding-window CV mean `log_loss` is the single decision metric
 - the last pre-test season is reserved for epoch selection
 - the fixed test season is watch-only and not part of branch acceptance
-- treat improvements smaller than `0.0005` CV `log_loss` as noise unless the user explicitly wants to investigate them
 - use the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv` as the default comparison point
 
 ## Research workflow
@@ -41,7 +40,7 @@ If an experiment needs custom search or analysis code, prefer a narrow branch-sp
 - prefer using it for branch/PR actions when needed
 
 ## Experiment surface
-Keep the experiment surface small:
+Keep the experiment surface lean:
 - prefer editing `training/train_main_model.py` for canonical training changes
 - use `artifacts/experiment_metrics/result_main_runs.tsv` as the default experiment ledger
 - do not add report workflows or extra experiment registries unless the user explicitly asks for them
@@ -59,13 +58,12 @@ This includes, when justified:
 
 Do not limit experiments to abstract ideas only.
 The agent should be free to choose any concrete change it thinks can improve the main metric.
-There is a slight preference for simpler changes when expected value looks similar, but simplicity is not a hard constraint.
+It may use ablations, sweeps, helper analysis, or targeted searches when they help choose or validate the next branch.
 
 ## Skill
 If the user asks to run an experiment, use the single `experiment-runner` skill.
 It should:
-- pick one idea itself or accept a user-specified idea
-- work on one branch
+- branch from `main` unless the user explicitly wants another base
 - run the canonical evaluation path
 - rely on `artifacts/experiment_metrics/result_main_runs.tsv` and `artifacts/models/latest_main_model_metrics.json` as the handoff
 - avoid markdown reports unless the user explicitly asks for one

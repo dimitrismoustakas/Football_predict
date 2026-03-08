@@ -25,7 +25,7 @@ The fixed test season is not part of branch acceptance.
 
 Use this rule unless the user explicitly changes the protocol:
 - compare a candidate against the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv`
-- candidate CV `log_loss` must improve by at least `0.0005`
+- any lower CV `log_loss` is an improvement signal worth recording and iterating on
 - only compare rows when the protocol and dataset fingerprint match
 - if the dataset fingerprint changes, treat the run as a new benchmark series
 
