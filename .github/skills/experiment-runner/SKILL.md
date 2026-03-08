@@ -9,7 +9,7 @@ Use this skill when asked to run a repo experiment.
 
 ## Mission
 
-Run a useful experiment loop from `main`:
+Run a useful experiment loop from `main`, or keep iterating on the current best experiment branch when a successful line is still live:
 
 1. choose a promising next direction unless the user already picked one
 2. make whatever supporting analysis, ablations, or sweeps help you decide
@@ -38,6 +38,10 @@ Read these first:
 - Use CV `log_loss` as the decision metric.
 - Treat the fixed test season as watch-only monitoring output.
 - Compare against the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv`.
+- Cheap local prescreens are allowed when they help rank nearby ideas, but they do not replace the canonical trainer and must not append to the TSV ledger.
+- If a prescreened direction looks good, confirm the exact candidate with the canonical trainer before treating it as a real improvement.
+- If a branch improves canonically and nearby variants still look promising, keep iterating on that same branch until the local neighborhood looks exhausted.
+- If a branch regresses clearly, prefer deleting or abandoning it rather than carrying dead ideas forward.
 
 Everything relevant to improving the canonical path is fair game.
 This includes, when justified:
@@ -65,9 +69,12 @@ Good choices include:
 - trying a reasonable training-loop or batch-size adjustment
 - trying a reasonable feature-engineering or feature-selection adjustment
 - tightening the canonical path where the current setup looks overbuilt
+- recalibrating how the model uses bookmaker information
+- iterating on a promising direction that is not yet better, when nearby adjustments are still plausible
 
 Prefer ideas that are plausible and clean.
 If two directions look similar, prefer the one that simplifies the canonical path.
+If one direction is already showing incremental gains, prefer exhausting that neighborhood before jumping to a new family.
 
 ## Canonical experiment path
 
@@ -75,6 +82,14 @@ Default commands:
 
 1. refresh any required data inputs
 2. run `uv run python training/train_main_model.py`
+
+Before spending a full canonical run, it is reasonable to do narrow branch-local support work such as:
+
+- a tiny prescreen script
+- a narrow ablation or small parameter sweep
+- a smoke check for newly introduced model plumbing
+
+Keep those helpers lean and avoid turning them into permanent experiment infrastructure unless they clearly belong in the canonical path.
 
 The trainer is the default experiment harness and writes the main outputs to:
 
@@ -91,3 +106,4 @@ A completed run should leave behind:
 - one new row in `artifacts/experiment_metrics/result_main_runs.tsv`
 - updated runtime candidate metrics in `artifacts/models/latest_main_model_metrics.json`
 - a concise summary of what changed and whether the evidence looks stronger, weaker, or mixed
+- if a successful path stayed live across multiple iterations, the branch should contain the best cumulative state found in that neighborhood
