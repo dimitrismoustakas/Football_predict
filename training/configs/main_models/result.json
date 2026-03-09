@@ -1,12 +1,13 @@
 {
 	"hidden_layers": [
 		512,
-		256,
-		256
+		512,
+		512
 	],
+	"backbone_type": "resnet",
 	"activation": "gelu",
 	"norm": "none",
-	"dropout": 0.2795534198003995,
+	"dropout": 0.2,
 	"lr": 0.0008,
 	"weight_decay": 5e-05,
 	"beta1": 0.85,
@@ -21,7 +22,7 @@
 	"learn_league_residual_bias": true,
 	"market_logit_scale": 1.06,
 	"gate_hidden_dim": 16,
-	"gate_target_budget": 0.14,
+	"gate_target_budget": 0.12,
 	"gate_mean_weight": 0.05,
 	"gate_sat_weight": 0.0,
 	"lambda_repulsion": 0.4,

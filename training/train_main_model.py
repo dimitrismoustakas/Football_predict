@@ -188,6 +188,7 @@ def build_train_config(
 ) -> TrainConfig:
 	model_kwargs = {
 		"hidden_layers": training_config["hidden_layers"],
+		"backbone_type": training_config.get("backbone_type", "mlp"),
 		"dropout": training_config["dropout"],
 		"norm": training_config["norm"],
 		"activation": training_config["activation"],
@@ -249,6 +250,7 @@ def build_bundle_metadata(
 		"comparison_metric": evaluation_config["comparison_metric"],
 		"model_kwargs": {
 			"hidden_layers": training_config["hidden_layers"],
+			"backbone_type": training_config.get("backbone_type", "mlp"),
 			"dropout": training_config["dropout"],
 			"norm": training_config["norm"],
 			"activation": training_config["activation"],

@@ -40,6 +40,20 @@ class CategoricalEmbedder(nn.Module):
 		return torch.cat([league_emb, promoted], dim=-1)
 
 
+def _make_activation(name: str) -> nn.Module:
+	if name == "relu":
+		return nn.ReLU()
+	if name == "silu":
+		return nn.SiLU()
+	if name == "gelu":
+		return nn.GELU()
+	raise ValueError(f"Unknown activation: {name}")
+
+
+def _resolve_norm(name: str):
+	return {"none": None, "bn": nn.BatchNorm1d, "ln": nn.LayerNorm}.get(name)
+
+
 class MLPWithHiddenAccess(nn.Module):
 	"""MLP that exposes its last hidden representation."""
 
@@ -63,26 +77,96 @@ class MLPWithHiddenAccess(nn.Module):
 
 		layers = []
 		prev = total_input_dim
-		NormClass = {"none": None, "bn": nn.BatchNorm1d, "ln": nn.LayerNorm}.get(norm)
-
-		def get_activation():
-			if activation == "relu":
-				return nn.ReLU()
-			if activation == "silu":
-				return nn.SiLU()
-			if activation == "gelu":
-				return nn.GELU()
-			raise ValueError(f"Unknown activation: {activation}")
+		NormClass = _resolve_norm(norm)
 
 		for width in hidden_layers:
 			layers.append(nn.Linear(prev, width))
 			if NormClass is not None:
 				layers.append(NormClass(width))
-			layers.append(get_activation())
+			layers.append(_make_activation(activation))
 			layers.append(nn.Dropout(dropout))
 			prev = width
 
 		self.hidden_net = nn.Sequential(*layers)
+		self.final_layer = nn.Linear(prev, output_dim)
+		self.hidden_dim = prev
+		self.input_dim = input_dim
+		self.hidden_layers = hidden_layers
+		self.dropout = dropout
+		self.norm = norm
+		self.activation = activation
+		self.output_dim = output_dim
+		self.cat_config = cat_config
+
+	def forward(self, x: torch.Tensor, cat_features: Optional[torch.Tensor] = None) -> torch.Tensor:
+		h = self.get_hidden(x, cat_features)
+		return self.final_layer(h)
+
+	def get_hidden(self, x: torch.Tensor, cat_features: Optional[torch.Tensor] = None) -> torch.Tensor:
+		if self.cat_embedder is not None:
+			if cat_features is None:
+				raise ValueError("cat_features required when model has cat_config")
+			cat_emb = self.cat_embedder(cat_features)
+			x = torch.cat([x, cat_emb], dim=-1)
+		return self.hidden_net(x)
+
+
+class ResidualBlock(nn.Module):
+	"""Residual MLP block with optional projection."""
+
+	def __init__(self, in_dim: int, out_dim: int, dropout: float, norm: str, activation: str):
+		super().__init__()
+		NormClass = _resolve_norm(norm)
+		self.norm1 = None if NormClass is None else NormClass(in_dim)
+		self.linear1 = nn.Linear(in_dim, out_dim)
+		self.act = _make_activation(activation)
+		self.dropout1 = nn.Dropout(dropout)
+		self.norm2 = None if NormClass is None else NormClass(out_dim)
+		self.linear2 = nn.Linear(out_dim, out_dim)
+		self.dropout2 = nn.Dropout(dropout)
+		self.skip = nn.Identity() if in_dim == out_dim else nn.Linear(in_dim, out_dim)
+
+	def forward(self, x: torch.Tensor) -> torch.Tensor:
+		residual = self.skip(x)
+		h = x if self.norm1 is None else self.norm1(x)
+		h = self.linear1(h)
+		h = self.act(h)
+		h = self.dropout1(h)
+		h = h if self.norm2 is None else self.norm2(h)
+		h = self.linear2(h)
+		h = self.dropout2(h)
+		return self.act(h + residual)
+
+
+class ResNetWithHiddenAccess(nn.Module):
+	"""Residual MLP backbone for tabular features."""
+
+	def __init__(
+		self,
+		input_dim: int,
+		hidden_layers: List[int],
+		dropout: float = 0.3,
+		norm: str = "none",
+		activation: str = "relu",
+		output_dim: int = 3,
+		cat_config: Optional[CategoricalConfig] = None,
+	):
+		super().__init__()
+		if not hidden_layers:
+			raise ValueError("hidden_layers must be non-empty for resnet backbone")
+		self.cat_embedder = None
+		total_input_dim = input_dim
+		if cat_config is not None:
+			self.cat_embedder = CategoricalEmbedder(cat_config)
+			total_input_dim = input_dim + self.cat_embedder.output_dim
+
+		blocks = []
+		prev = total_input_dim
+		for width in hidden_layers:
+			blocks.append(ResidualBlock(prev, width, dropout=dropout, norm=norm, activation=activation))
+			prev = width
+
+		self.hidden_net = nn.Sequential(*blocks)
 		self.final_layer = nn.Linear(prev, output_dim)
 		self.hidden_dim = prev
 		self.input_dim = input_dim
@@ -128,6 +212,7 @@ class GatedResidualModel(nn.Module):
 		learn_league_market_bias: bool = False,
 		learn_league_residual_bias: bool = False,
 		num_leagues: int = 0,
+		backbone_type: str = "mlp",
 	):
 		super().__init__()
 		self.n_classes = n_classes
@@ -139,12 +224,16 @@ class GatedResidualModel(nn.Module):
 		self.learn_league_market_bias = learn_league_market_bias
 		self.learn_league_residual_bias = learn_league_residual_bias
 		self.num_leagues = num_leagues
+		self.backbone_type = backbone_type
 		if self.learn_league_market_bias and self.num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_market_bias is enabled")
 		if self.learn_league_residual_bias and self.num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_residual_bias is enabled")
 
-		self.base_model = MLPWithHiddenAccess(
+		BackboneClass = MLPWithHiddenAccess if backbone_type == "mlp" else ResNetWithHiddenAccess
+		if backbone_type not in {"mlp", "resnet"}:
+			raise ValueError(f"Unknown backbone_type: {backbone_type}")
+		self.base_model = BackboneClass(
 			input_dim=input_dim,
 			hidden_layers=hidden_layers,
 			dropout=dropout,
@@ -197,6 +286,7 @@ class GatedResidualModel(nn.Module):
 		self.learn_league_market_bias = learn_league_market_bias
 		self.learn_league_residual_bias = learn_league_residual_bias
 		self.num_leagues = num_leagues
+		self.backbone_type = backbone_type
 
 	def _compute_market_features(
 		self,
