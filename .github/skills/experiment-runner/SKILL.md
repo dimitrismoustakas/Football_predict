@@ -40,6 +40,8 @@ Read these first:
 - Treat the fixed test season as watch-only monitoring output.
 - Compare against the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv`.
 - Cheap local prescreens are allowed when they help rank nearby ideas, but they do not replace the canonical trainer and must not append to the TSV ledger.
+- When ranking nearby candidates, prefer a stricter local support scorer: use the epoch-selection split only to choose `best_epoch`, then evaluate that fixed epoch count across the objective folds without appending a ledger row.
+- Do not trust the epoch-selection season by itself for close calls; in this repo it is noisy enough to produce false positives.
 - If a prescreened direction looks good, confirm the exact candidate with the canonical trainer before treating it as a real improvement.
 - If a branch improves canonically and nearby variants still look promising, keep iterating on that same branch until the local neighborhood looks exhausted.
 - If a branch regresses clearly, prefer deleting or abandoning it rather than carrying dead ideas forward.
@@ -86,9 +88,15 @@ Default commands:
 
 Before spending a full canonical run, it is reasonable to do narrow branch-local support work such as:
 
-- a tiny prescreen script
+- a tiny prescreen script that mirrors the canonical split closely enough to rank nearby candidates
 - a narrow ablation or small parameter sweep
 - a smoke check for newly introduced model plumbing
+
+For nearby architecture or hyperparameter variants, the preferred support path is:
+
+1. choose `best_epoch` on the fixed epoch-selection season
+2. retrain each candidate for that fixed epoch count on each objective fold
+3. compare mean CV `log_loss` locally without writing to the TSV ledger
 
 Keep those helpers lean and avoid turning them into permanent experiment infrastructure unless they clearly belong in the canonical path.
 

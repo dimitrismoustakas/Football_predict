@@ -29,6 +29,17 @@ Use this rule unless the user explicitly changes the protocol:
 - only compare rows when the protocol and dataset fingerprint match
 - if the dataset fingerprint changes, treat the run as a new benchmark series
 
+## Local support work
+
+Cheap local prescreens are allowed to rank nearby ideas before a full canonical run.
+
+Preferred support path for close comparisons:
+- choose `best_epoch` on the fixed epoch-selection season
+- retrain each candidate for that fixed epoch count on the objective folds
+- compare mean CV `log_loss` locally without appending to `artifacts/experiment_metrics/result_main_runs.tsv`
+
+Do not trust the epoch-selection season alone as promotion evidence for nearby candidates.
+
 ## Primary metrics
 
 Acceptance is driven by proper scoring metrics first:

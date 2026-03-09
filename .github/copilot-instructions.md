@@ -29,6 +29,8 @@ Always preserve this unless the user explicitly asks to change it:
 Keep the repo surface small.
 If an experiment needs custom search or analysis code, prefer a narrow branch-specific helper over permanent research scripts.
 Cheap local prescreens are encouraged when they help rank nearby ideas quickly, but they are only a guide.
+For close calls, prefer a stricter local support scorer that mirrors the canonical protocol: choose `best_epoch` on the fixed epoch-selection season, then score the objective folds at that epoch count without appending a ledger row.
+Do not trust the epoch-selection season alone when deciding whether a nearby variant deserves a canonical run.
 Any candidate that matters still needs the canonical `training/train_main_model.py` run before it counts.
 
 ## Production
@@ -53,6 +55,7 @@ When iterating:
 - if a branch improves on the canonical objective and nearby variants still look promising, keep iterating on that branch until the neighborhood is exhausted
 - if a branch clearly regresses, abandon it rather than accumulating dead changes
 - if a prescreen helper suggests a good direction, make sure the exact canonical candidate matches what was prescreened before trusting the result
+- if the prescreen is only looking at the epoch-selection season, treat it as weak evidence and promote only large wins; use the stricter support scorer for close comparisons
 
 For experiments, everything relevant to improving the canonical path is fair game.
 This includes, when justified:
