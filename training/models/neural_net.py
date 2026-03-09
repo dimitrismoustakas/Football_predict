@@ -190,6 +190,79 @@ class ResNetWithHiddenAccess(nn.Module):
 		return self.hidden_net(x)
 
 
+class CrossLayer(nn.Module):
+	"""One explicit cross layer over the original tabular inputs."""
+
+	def __init__(self, input_dim: int):
+		super().__init__()
+		self.linear = nn.Linear(input_dim, input_dim)
+
+	def forward(self, x0: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+		return x + x0 * self.linear(x)
+
+
+class CrossResNetWithHiddenAccess(nn.Module):
+	"""Parallel cross network plus residual MLP backbone for tabular features."""
+
+	def __init__(
+		self,
+		input_dim: int,
+		hidden_layers: List[int],
+		dropout: float = 0.3,
+		norm: str = "none",
+		activation: str = "relu",
+		output_dim: int = 3,
+		cat_config: Optional[CategoricalConfig] = None,
+		cross_layers: int = 2,
+	):
+		super().__init__()
+		if not hidden_layers:
+			raise ValueError("hidden_layers must be non-empty for cross_resnet backbone")
+		if cross_layers <= 0:
+			raise ValueError("cross_layers must be positive for cross_resnet backbone")
+
+		self.cat_embedder = None
+		total_input_dim = input_dim
+		if cat_config is not None:
+			self.cat_embedder = CategoricalEmbedder(cat_config)
+			total_input_dim = input_dim + self.cat_embedder.output_dim
+
+		blocks = []
+		prev = total_input_dim
+		for width in hidden_layers:
+			blocks.append(ResidualBlock(prev, width, dropout=dropout, norm=norm, activation=activation))
+			prev = width
+
+		self.deep_net = nn.Sequential(*blocks)
+		self.cross_net = nn.ModuleList([CrossLayer(total_input_dim) for _ in range(cross_layers)])
+		self.hidden_dim = prev + total_input_dim
+		self.final_layer = nn.Linear(self.hidden_dim, output_dim)
+		self.input_dim = input_dim
+		self.hidden_layers = hidden_layers
+		self.cross_layers = cross_layers
+		self.dropout = dropout
+		self.norm = norm
+		self.activation = activation
+		self.output_dim = output_dim
+		self.cat_config = cat_config
+
+	def forward(self, x: torch.Tensor, cat_features: Optional[torch.Tensor] = None) -> torch.Tensor:
+		h = self.get_hidden(x, cat_features)
+		return self.final_layer(h)
+
+	def get_hidden(self, x: torch.Tensor, cat_features: Optional[torch.Tensor] = None) -> torch.Tensor:
+		if self.cat_embedder is not None:
+			if cat_features is None:
+				raise ValueError("cat_features required when model has cat_config")
+			cat_emb = self.cat_embedder(cat_features)
+			x = torch.cat([x, cat_emb], dim=-1)
+		deep_hidden = self.deep_net(x)
+		cross_hidden = x
+		for layer in self.cross_net:
+			cross_hidden = layer(x, cross_hidden)
+		return torch.cat([deep_hidden, cross_hidden], dim=-1)
+
+
 class GatedResidualModel(nn.Module):
 	"""Multiclass gated residual model for Home/Draw/Away prediction."""
 
@@ -213,6 +286,7 @@ class GatedResidualModel(nn.Module):
 		learn_league_residual_bias: bool = False,
 		num_leagues: int = 0,
 		backbone_type: str = "mlp",
+		cross_layers: int = 2,
 	):
 		super().__init__()
 		self.n_classes = n_classes
@@ -230,18 +304,25 @@ class GatedResidualModel(nn.Module):
 		if self.learn_league_residual_bias and self.num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_residual_bias is enabled")
 
-		BackboneClass = MLPWithHiddenAccess if backbone_type == "mlp" else ResNetWithHiddenAccess
-		if backbone_type not in {"mlp", "resnet"}:
+		backbone_kwargs = {
+			"input_dim": input_dim,
+			"hidden_layers": hidden_layers,
+			"dropout": dropout,
+			"norm": norm,
+			"activation": activation,
+			"output_dim": n_classes,
+			"cat_config": cat_config,
+		}
+		if backbone_type == "mlp":
+			BackboneClass = MLPWithHiddenAccess
+		elif backbone_type == "resnet":
+			BackboneClass = ResNetWithHiddenAccess
+		elif backbone_type == "cross_resnet":
+			BackboneClass = CrossResNetWithHiddenAccess
+			backbone_kwargs["cross_layers"] = cross_layers
+		else:
 			raise ValueError(f"Unknown backbone_type: {backbone_type}")
-		self.base_model = BackboneClass(
-			input_dim=input_dim,
-			hidden_layers=hidden_layers,
-			dropout=dropout,
-			norm=norm,
-			activation=activation,
-			output_dim=n_classes,
-			cat_config=cat_config,
-		)
+		self.base_model = BackboneClass(**backbone_kwargs)
 
 		self.market_feature_dim = market_feature_dim + 3
 		gate_input_dim = self.base_model.hidden_dim + self.market_feature_dim
@@ -287,6 +368,7 @@ class GatedResidualModel(nn.Module):
 		self.learn_league_residual_bias = learn_league_residual_bias
 		self.num_leagues = num_leagues
 		self.backbone_type = backbone_type
+		self.cross_layers = cross_layers
 
 	def _compute_market_features(
 		self,
