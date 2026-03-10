@@ -54,6 +54,7 @@ Betting diagnostics are secondary only:
 - average profit per bet
 - number of bets
 - bet mix by outcome class
+- fixed-budget ROI from the normalized fractional-Kelly split, scored by match date
 
 A branch should not be accepted just because short-run betting profit improved while proper scoring got worse.
 

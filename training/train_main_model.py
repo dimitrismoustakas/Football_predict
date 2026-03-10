@@ -96,7 +96,19 @@ def print_header(text: str):
 
 
 def summarize_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
-	keys = ["accuracy", "brier", "rps", "log_loss", "total_profit", "avg_profit", "n_bets"]
+	keys = [
+		"accuracy",
+		"brier",
+		"rps",
+		"log_loss",
+		"total_profit",
+		"avg_profit",
+		"n_bets",
+		"budget_profit",
+		"budget_roi",
+		"budget_bet_count",
+		"budget_active_groups",
+	]
 	return {key: metrics[key] for key in keys if key in metrics}
 
 

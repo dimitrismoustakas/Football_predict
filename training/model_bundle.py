@@ -118,7 +118,13 @@ def load_model_bundle(paths: ModelBundlePaths, device: torch.device) -> LoadedMo
 	if not feature_cols:
 		raise ValueError(f"No feature column list found in {paths.config_path}")
 
-	model, cat_config = build_result_model(feature_cols, metadata)
+	try:
+		model, cat_config = build_result_model(feature_cols, metadata)
+	except TypeError as exc:
+		raise ValueError(
+			f"Incompatible runtime model bundle at {paths.config_path}. "
+			"Regenerate artifacts/models with `uv run python training/train_main_model.py`."
+		) from exc
 	try:
 		state_dict = torch.load(paths.model_path, map_location=device, weights_only=True)
 	except TypeError:

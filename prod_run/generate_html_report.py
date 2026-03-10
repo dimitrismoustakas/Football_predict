@@ -11,17 +11,40 @@ import pandas as pd
 def _format_value_table(df: pd.DataFrame) -> str:
 	if df.empty:
 		return "<p>No positive EV result bets found for this period.</p>"
-	columns = ["Date", "Time", "League", "Home", "Away", "Result_Value_Side", "Result_EV"]
+	columns = [
+		"Date",
+		"Time",
+		"League",
+		"Home",
+		"Away",
+		"Result_Value_Side",
+		"Result_Value_Prob",
+		"Result_Value_Implied",
+		"Result_Edge",
+		"Result_EV",
+		"Result_Budget_Share",
+		"Result_Budget_Amount",
+	]
 	return df[columns].to_html(index=False, classes="value-table")
 
 
-def generate_html_report(predictions_df: pd.DataFrame, output_path: Path) -> None:
+def generate_html_report(
+	predictions_df: pd.DataFrame,
+	output_path: Path,
+	fixed_budget: float | None = None,
+	budget_strategy: str | None = None,
+	kelly_fraction: float | None = None,
+) -> None:
 	"""Write a styled HTML summary of match-result predictions."""
 
 	today_str = datetime.now().strftime("%Y-%m-%d")
 	value_df = predictions_df[predictions_df["Result_EV"].notna()].copy()
+	allocated_budget = float(value_df["Result_Budget_Amount"].sum()) if "Result_Budget_Amount" in value_df.columns else 0.0
 	predictions_html = predictions_df.to_html(index=False, classes="predictions-table")
 	value_html = _format_value_table(value_df)
+	budget_label = f"{fixed_budget:.2f}" if fixed_budget is not None else "n/a"
+	strategy_label = budget_strategy or "n/a"
+	kelly_label = f"{kelly_fraction:.2f}" if kelly_fraction is not None else "n/a"
 	html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -53,10 +76,13 @@ def generate_html_report(predictions_df: pd.DataFrame, output_path: Path) -> Non
 			<div class="summary-grid">
 				<div class="summary-item"><div class="summary-label">Matches</div><div class="summary-value">{len(predictions_df)}</div></div>
 				<div class="summary-item"><div class="summary-label">Positive EV Picks</div><div class="summary-value">{len(value_df)}</div></div>
+				<div class="summary-item"><div class="summary-label">Budget</div><div class="summary-value">{budget_label}</div></div>
+				<div class="summary-item"><div class="summary-label">Allocated</div><div class="summary-value">{allocated_budget:.2f}</div></div>
 				<div class="summary-item"><div class="summary-label">Home Picks</div><div class="summary-value">{int((predictions_df['Result_Model_Pick'] == 'Home').sum())}</div></div>
 				<div class="summary-item"><div class="summary-label">Draw Picks</div><div class="summary-value">{int((predictions_df['Result_Model_Pick'] == 'Draw').sum())}</div></div>
 				<div class="summary-item"><div class="summary-label">Away Picks</div><div class="summary-value">{int((predictions_df['Result_Model_Pick'] == 'Away').sum())}</div></div>
 			</div>
+			<p class="subtitle">Budget split strategy: {strategy_label} (kelly fraction: {kelly_label})</p>
 		</div>
 		<div class="card">
 			<h2>Value Picks</h2>

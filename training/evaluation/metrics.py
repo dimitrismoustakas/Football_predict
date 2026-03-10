@@ -12,6 +12,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.metrics import accuracy_score, log_loss
 
+from utils.portfolio import DEFAULT_BUDGET_STRATEGY, DEFAULT_KELLY_FRACTION, evaluate_budget_strategy
+
 
 def ranked_probability_score(y_true: np.ndarray, probs: np.ndarray) -> float:
 	"""Compute Ranked Probability Score for Home/Draw/Away outcomes."""
@@ -130,6 +132,16 @@ def evaluate_model(
 		data["odds_draw"],
 		data["odds_away"],
 	)
+	budget_metrics = evaluate_budget_strategy(
+		probs=probs,
+		y_true=y_true,
+		odds_home=data["odds_home"],
+		odds_draw=data["odds_draw"],
+		odds_away=data["odds_away"],
+		groups=data.get("dates"),
+		strategy=DEFAULT_BUDGET_STRATEGY,
+		kelly_fraction=DEFAULT_KELLY_FRACTION,
+	)
 
 	if verbose:
 		print(
@@ -141,6 +153,10 @@ def evaluate_model(
 		print(
 			f"  Home bets: {profit_metrics['n_home_bets']}, Draw bets: {profit_metrics['n_draw_bets']}, Away bets: {profit_metrics['n_away_bets']}"
 		)
+		print(
+			f"Budget ROI ({DEFAULT_BUDGET_STRATEGY}, k={DEFAULT_KELLY_FRACTION:.2f}): "
+			f"{budget_metrics['budget_roi']:.4f} across {budget_metrics['budget_active_groups']} active groups"
+		)
 
 	return {
 		"accuracy": float(acc),
@@ -149,6 +165,7 @@ def evaluate_model(
 		"log_loss": float(ll),
 		"corr_with_implied": avg_corr,
 		**profit_metrics,
+		**budget_metrics,
 	}
 
 
