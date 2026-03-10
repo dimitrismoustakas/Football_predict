@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
+from training.inference import model_requires_cat_features
 from training.models.neural_net import GatedResidualModel, TrainConfig, gated_loss
 
 
@@ -60,11 +61,7 @@ def run_train_epoch(
 	"""Run one training epoch."""
 
 	cat_config = getattr(config, "cat_config", None)
-	needs_cat = (
-		cat_config is not None
-		or config.model_kwargs.get("learn_league_market_bias", False)
-		or config.model_kwargs.get("learn_league_residual_bias", False)
-	)
+	needs_cat = model_requires_cat_features(model, cat_config)
 	model.train()
 	total_loss = 0.0
 	for batch_x, batch_cat, batch_implied, batch_y, batch_raw_margin in train_loader:
@@ -141,11 +138,7 @@ def _fit_model(
 	optimizer = create_optimizer(model, config)
 	scheduler = create_scheduler(optimizer, config)
 	cat_config = getattr(config, "cat_config", None)
-	needs_cat = (
-		cat_config is not None
-		or config.model_kwargs.get("learn_league_market_bias", False)
-		or config.model_kwargs.get("learn_league_residual_bias", False)
-	)
+	needs_cat = model_requires_cat_features(model, cat_config)
 	use_validation = val_loader is not None
 	history = {"train_loss": [], "val_loss": [], "gate_mean": [], "gate_std": []}
 	best_val_loss = float("inf")

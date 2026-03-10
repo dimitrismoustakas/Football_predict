@@ -27,6 +27,16 @@ class FakeModel:
 		return torch.log(implied.clamp_min(1e-6)) + bias
 
 
+class LeagueBiasFakeModel(FakeModel):
+	learn_league_market_bias = True
+	learn_league_residual_bias = True
+
+	def __call__(self, X, cat_features, implied, raw_margin):
+		if cat_features is None:
+			raise ValueError("cat_features required")
+		return super().__call__(X, cat_features, implied, raw_margin)
+
+
 def _build_merged_frame() -> pd.DataFrame:
 	rows = []
 	fixtures = [
@@ -44,6 +54,9 @@ def _build_merged_frame() -> pd.DataFrame:
 			"odds_home": odds_home,
 			"odds_draw": odds_draw,
 			"odds_away": odds_away,
+			"league_idx": 0,
+			"home_promoted": 0,
+			"away_promoted": 0,
 		}
 		for feature in FEATURE_COLS:
 			row[feature] = 0.0
@@ -112,6 +125,20 @@ class ProductionOutputTests(unittest.TestCase):
 
 		self.assertIn("Budget split strategy", report_html)
 		self.assertIn("Result_Budget_Amount", report_html)
+
+	def test_scoring_passes_cat_features_for_league_bias_models(self):
+		merged = _build_merged_frame()
+		bundle = SimpleNamespace(
+			model=LeagueBiasFakeModel(),
+			scaler=IdentityScaler(),
+			feature_cols=FEATURE_COLS,
+			cat_config=None,
+		)
+
+		scored = score_result_predictions(merged, bundle, fixed_budget=100.0)
+
+		self.assertFalse(scored.empty)
+		self.assertIn("Result_Value_Side", scored.columns)
 
 
 if __name__ == "__main__":

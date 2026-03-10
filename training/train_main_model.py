@@ -217,6 +217,7 @@ def build_bundle_metadata(
 	training_config: dict,
 	evaluation_config: dict,
 	cat_config: CategoricalConfig | None,
+	num_leagues: int,
 	feature_cols: list[str],
 	objective_metrics: dict,
 	objective_baseline_metrics: dict,
@@ -254,6 +255,7 @@ def build_bundle_metadata(
 			"learn_market_bias": training_config.get("learn_market_bias", False),
 			"learn_league_market_bias": training_config.get("learn_league_market_bias", False),
 			"learn_league_residual_bias": training_config.get("learn_league_residual_bias", False),
+			"num_leagues": num_leagues,
 		},
 		"feature_cols": feature_cols,
 		"cat_config": None if cat_config is None else {
@@ -621,6 +623,7 @@ def train_main_model(description: str = "") -> dict:
 		training_config=training_config,
 		evaluation_config=evaluation_config,
 		cat_config=cat_config,
+		num_leagues=num_leagues,
 		feature_cols=feature_cols,
 		objective_metrics=cv_metrics,
 		objective_baseline_metrics=cv_baseline_metrics,

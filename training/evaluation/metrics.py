@@ -9,9 +9,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from sklearn.metrics import accuracy_score, log_loss
 
+from training.inference import forward_model
 from utils.portfolio import DEFAULT_BUDGET_STRATEGY, DEFAULT_KELLY_FRACTION, evaluate_budget_strategy
 
 
@@ -73,21 +73,6 @@ def evaluate_profit(
 	}
 
 
-def _model_forward(
-	model: nn.Module,
-	X: torch.Tensor,
-	cat_features: torch.Tensor | None,
-	implied: torch.Tensor,
-	raw_margin: torch.Tensor,
-) -> torch.Tensor:
-	"""Forward pass for the gated model."""
-
-	use_market = implied is not None and raw_margin is not None
-	if use_market and hasattr(model, "gate_head"):
-		return model(X, cat_features, implied, raw_margin)
-	return model(X, cat_features)
-
-
 def evaluate_model(
 	model: nn.Module,
 	data: Dict[str, np.ndarray],
@@ -109,8 +94,8 @@ def evaluate_model(
 	raw_margin = torch.tensor(data["raw_margin"], dtype=torch.float32).to(device)
 
 	with torch.no_grad():
-		pred_logits = _model_forward(model, X, cat_features, implied, raw_margin)
-		probs = F.softmax(pred_logits, dim=-1).cpu().numpy()
+		pred_logits = forward_model(model, X, cat_features, implied, raw_margin)
+		probs = torch.softmax(pred_logits, dim=-1).cpu().numpy()
 
 	y_true = data["y"]
 	implied_np = data["implied"]

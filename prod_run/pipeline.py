@@ -18,6 +18,7 @@ if __package__ is None or __package__ == "":
 
 from prod_run import build_prod_features, fetch_odds
 from prod_run.generate_html_report import generate_html_report
+from training.inference import model_requires_cat_features, predict_probabilities
 from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
 from utils import send_email
 from utils.portfolio import DEFAULT_BUDGET_STRATEGY, DEFAULT_KELLY_FRACTION, allocate_fixed_budget, select_best_result_value
@@ -60,19 +61,6 @@ def resolve_merged_col(frame: pd.DataFrame, base_name: str) -> str:
 	return base_name
 
 
-def predict_result(model, scaler, feature_cols, X_raw, cat_features, implied_probs, raw_margin) -> np.ndarray:
-	X_scaled = np.nan_to_num(scaler.transform(X_raw), nan=0.0)
-	X_tensor = torch.tensor(X_scaled, dtype=torch.float32).to(DEVICE)
-	cat_tensor = None
-	if cat_features is not None:
-		cat_tensor = torch.tensor(cat_features, dtype=torch.long).to(DEVICE)
-	implied_tensor = torch.tensor(implied_probs, dtype=torch.float32).to(DEVICE)
-	raw_margin_tensor = torch.tensor(raw_margin, dtype=torch.float32).to(DEVICE)
-	with torch.no_grad():
-		pred_logits = model(X_tensor, cat_tensor, implied_tensor, raw_margin_tensor)
-		return torch.softmax(pred_logits, dim=-1).cpu().numpy()
-
-
 def _round_budget_amounts(stake_amounts: np.ndarray, total_budget: float) -> np.ndarray:
 	"""Round currency amounts while preserving the requested total budget."""
 
@@ -97,6 +85,7 @@ def score_result_predictions(
 	scaler = model_bundle.scaler
 	feature_cols = model_bundle.feature_cols
 	cat_config = model_bundle.cat_config
+	needs_cat = model_requires_cat_features(model, cat_config)
 	odds_home_col = resolve_merged_col(merged, "odds_home")
 	odds_draw_col = resolve_merged_col(merged, "odds_draw")
 	odds_away_col = resolve_merged_col(merged, "odds_away")
@@ -110,7 +99,7 @@ def score_result_predictions(
 			f"{missing_feature_cols[:8]}{'...' if len(missing_feature_cols) > 8 else ''}"
 		)
 	required_cols = [odds_home_col, odds_draw_col, odds_away_col]
-	if cat_config is not None:
+	if needs_cat:
 		required_cols.extend(["league_idx", "home_promoted", "away_promoted"])
 
 	ready = working.dropna(subset=required_cols).copy()
@@ -126,14 +115,14 @@ def score_result_predictions(
 	implied_probs = inv_odds / norm
 	raw_margin = norm.reshape(-1) - 1
 	cat_features = None
-	if cat_config is not None:
+	if needs_cat:
 		cat_features = ready[["league_idx", "home_promoted", "away_promoted"]].to_numpy(dtype=np.int64)
 
-	probs = predict_result(
+	probs = predict_probabilities(
 		model=model,
 		scaler=scaler,
-		feature_cols=feature_cols,
 		X_raw=ready[feature_cols].to_numpy(dtype=float),
+		device=DEVICE,
 		cat_features=cat_features,
 		implied_probs=implied_probs,
 		raw_margin=raw_margin,
