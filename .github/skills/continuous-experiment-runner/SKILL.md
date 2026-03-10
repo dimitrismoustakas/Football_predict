@@ -84,7 +84,7 @@ Good choices include:
 - importing a credible idea from recent papers or other technical references when repo-local ideas are thinning out
 
 Prefer ideas that are plausible and clean.
-If two directions look similar, prefer the one that simplifies the canonical path.
+If two directions look similar, prefer the one that simplifies the canonical path, including simplifying code.
 If one direction is already showing incremental gains, keep working that neighborhood before jumping to a new family.
 If the nearby neighborhood is exhausted, switch into idea-generation mode by reading papers and related technical material until you find another credible candidate.
 
