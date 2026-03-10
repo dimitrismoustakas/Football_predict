@@ -7,6 +7,7 @@ The evaluation loop is fixed by source-controlled config:
 - fixed held-out watch-only test season for monitoring
 """
 
+import argparse
 import json
 import os
 import random
@@ -57,40 +58,17 @@ LESS_IS_BETTER_METRICS = {"log_loss", "rps", "brier"}
 
 EXPERIMENT_LOG_COLUMNS = [
 	"recorded_at_utc",
-	"display_name",
-	"recipe_label",
-	"model_name",
-	"comparison_metric",
-	"objective_name",
-	"objective_value",
-	"objective_fold_count",
-	"objective_val_seasons",
-	"best_epoch",
-	"final_train_epochs",
-	"epoch_selection_season",
-	"test_role",
-	"min_objective_improvement",
-	"reference_status",
-	"reference_objective_value",
-	"objective_delta",
-	"meets_objective_threshold",
-	"data_fingerprint",
-	"season_row_counts_json",
-	"val_log_loss",
-	"val_rps",
-	"val_brier",
-	"held_out_test_season",
-	"test_log_loss",
-	"test_rps",
-	"test_brier",
-	"git_branch",
 	"git_commit",
-	"training_config_source",
-	"feature_manifest_source",
-	"evaluation_config_source",
+	"git_branch",
+	"cv_log_loss",
+	"delta",
+	"best_epoch",
+	"status",
+	"description",
+	"cv_rps",
+	"val_log_loss",
+	"test_log_loss",
 	"cv_metrics_json",
-	"cv_fold_metrics_json",
-	"val_metrics_json",
 	"test_metrics_json",
 ]
 
@@ -243,7 +221,7 @@ def build_bundle_metadata(
 	final_train_epochs: int,
 	best_val_loss: float,
 	data_snapshot: dict,
-	reference_comparison: dict,
+	delta: float | None,
 ) -> dict:
 	return {
 		"display_name": DISPLAY_NAME,
@@ -292,7 +270,7 @@ def build_bundle_metadata(
 			"final_train_epochs": final_train_epochs,
 			"best_val_loss": float(best_val_loss),
 			"epoch_selection_season": final_val_season,
-			"reference_comparison": reference_comparison,
+			"delta": delta,
 		},
 		"data_snapshot": data_snapshot,
 		"validation_metrics": validation_metrics,
@@ -390,62 +368,28 @@ def load_experiment_rows(path: Path | str) -> list[dict]:
 		return [row for row in reader]
 
 
-def get_latest_comparable_reference(
-	path: Path,
-	comparison_metric: str,
-	objective_fold_count: int,
-	objective_val_seasons: list[str],
-	test_season: str,
-	test_role: str,
-	data_fingerprint: str,
-) -> dict | None:
-	expected_val_seasons = serialize_log_value(objective_val_seasons)
+def get_latest_comparable_reference(path: Path) -> dict | None:
 	for row in reversed(load_experiment_rows(path)):
-		if row.get("comparison_metric") != comparison_metric:
-			continue
-		if row.get("objective_fold_count") != str(objective_fold_count):
-			continue
-		if row.get("objective_val_seasons") != expected_val_seasons:
-			continue
-		if row.get("held_out_test_season") != test_season:
-			continue
-		if row.get("test_role") != test_role:
-			continue
-		if row.get("data_fingerprint") != data_fingerprint:
-			continue
-		return row
+		if row.get("status") == "keep":
+			return row
 	return None
 
 
-def build_reference_comparison(
+def compute_delta(
 	candidate_objective: float,
-	evaluation_config: dict,
+	comparison_metric: str,
 	reference_row: dict | None,
-) -> dict:
-	comparison = {
-		"status": "no_reference",
-		"reference_objective_value": None,
-		"objective_delta": None,
-		"meets_objective_threshold": None,
-	}
+) -> float | None:
 	if reference_row is None:
-		return comparison
-
-	reference_objective = reference_row.get("objective_value")
+		return None
+	reference_objective = reference_row.get("cv_log_loss")
 	if reference_objective in (None, ""):
-		comparison["status"] = "reference_missing_objective"
-		return comparison
-
-	reference_value = float(reference_objective)
-	comparison["reference_objective_value"] = reference_value
-	comparison["objective_delta"] = metric_improvement(
+		return None
+	return metric_improvement(
 		candidate_value=candidate_objective,
-		reference_value=reference_value,
-		metric_name=evaluation_config["comparison_metric"],
+		reference_value=float(reference_objective),
+		metric_name=comparison_metric,
 	)
-	comparison["meets_objective_threshold"] = comparison["objective_delta"] > 0
-	comparison["status"] = "candidate_improved" if comparison["meets_objective_threshold"] else "candidate_not_improved"
-	return comparison
 
 
 def print_data_snapshot(data_snapshot: dict):
@@ -453,13 +397,11 @@ def print_data_snapshot(data_snapshot: dict):
 	print(f"Season rows: {data_snapshot['season_row_counts']}")
 
 
-def print_reference_comparison(reference_comparison: dict, comparison_metric: str):
-	status = reference_comparison["status"]
-	delta = reference_comparison.get("objective_delta")
+def print_delta(delta: float | None, comparison_metric: str):
 	if delta is None:
-		print(f"Reference comparison: {status}")
+		print("Delta: n/a (no prior keep reference)")
 		return
-	print(f"Reference comparison: {status} | delta_{comparison_metric}={delta:.6f}")
+	print(f"Delta_{comparison_metric}: {delta:.6f}")
 
 
 def evaluate_cv_objective(
@@ -505,7 +447,7 @@ def evaluate_cv_objective(
 	return fold_metrics, mean_fold_metrics, mean_baseline_metrics
 
 
-def train_main_model() -> dict:
+def train_main_model(description: str = "") -> dict:
 	training_config = load_training_config()
 	evaluation_config = load_evaluation_config()
 	comparison_metric = evaluation_config["comparison_metric"]
@@ -620,21 +562,13 @@ def train_main_model() -> dict:
 	print(f"\n--- Model Performance on Fixed Test Set ({evaluation_config['test_role']}) ---")
 	test_metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True)
 
-	reference_row = get_latest_comparable_reference(
-		path=EXPERIMENT_LOG_PATH,
-		comparison_metric=comparison_metric,
-		objective_fold_count=len(objective_folds),
-		objective_val_seasons=objective_val_seasons,
-		test_season=test_season,
-		test_role=evaluation_config["test_role"],
-		data_fingerprint=data_snapshot["data_fingerprint"],
-	)
-	reference_comparison = build_reference_comparison(
+	reference_row = get_latest_comparable_reference(path=EXPERIMENT_LOG_PATH)
+	delta = compute_delta(
 		candidate_objective=objective_value,
-		evaluation_config=evaluation_config,
+		comparison_metric=comparison_metric,
 		reference_row=reference_row,
 	)
-	print_reference_comparison(reference_comparison, comparison_metric)
+	print_delta(delta, comparison_metric)
 
 	run_record = {
 		"recorded_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -657,7 +591,7 @@ def train_main_model() -> dict:
 		"best_epoch": best_epoch,
 		"best_val_loss": float(best_val_loss),
 		"data_snapshot": data_snapshot,
-		"reference_comparison": reference_comparison,
+		"delta": delta,
 		"val_metrics": summarize_metrics(validation_metrics),
 		"test_metrics": summarize_metrics(test_metrics),
 		**git_metadata,
@@ -691,47 +625,24 @@ def train_main_model() -> dict:
 		final_train_epochs=final_train_epochs,
 		best_val_loss=best_val_loss,
 		data_snapshot=data_snapshot,
-		reference_comparison=reference_comparison,
+		delta=delta,
 	)
 	save_bundle(RESULT_MODEL_BUNDLE_PATHS, model, data_train["scaler"], bundle_metadata)
 	append_tsv_row(
 		EXPERIMENT_LOG_PATH,
 		{
 			"recorded_at_utc": run_record["recorded_at_utc"],
-			"display_name": DISPLAY_NAME,
-			"recipe_label": "result",
-			"model_name": MODEL_NAME,
-			"comparison_metric": comparison_metric,
-			"objective_name": run_record["objective_name"],
-			"objective_value": run_record["objective_value"],
-			"objective_fold_count": run_record["objective_fold_count"],
-			"objective_val_seasons": run_record["objective_val_seasons"],
-			"best_epoch": best_epoch,
-			"final_train_epochs": final_train_epochs,
-			"epoch_selection_season": epoch_selection_season,
-			"test_role": evaluation_config["test_role"],
-			"min_objective_improvement": "",
-			"reference_status": reference_comparison["status"],
-			"reference_objective_value": reference_comparison["reference_objective_value"],
-			"objective_delta": reference_comparison["objective_delta"],
-			"meets_objective_threshold": reference_comparison["meets_objective_threshold"],
-			"data_fingerprint": data_snapshot["data_fingerprint"],
-			"season_row_counts_json": data_snapshot["season_row_counts"],
-			"val_log_loss": run_record["val_metrics"].get("log_loss"),
-			"val_rps": run_record["val_metrics"].get("rps"),
-			"val_brier": run_record["val_metrics"].get("brier"),
-			"held_out_test_season": test_season,
-			"test_log_loss": run_record["test_metrics"].get("log_loss"),
-			"test_rps": run_record["test_metrics"].get("rps"),
-			"test_brier": run_record["test_metrics"].get("brier"),
+			"git_commit": git_metadata["git_commit"][:7],
 			"git_branch": git_metadata["git_branch"],
-			"git_commit": git_metadata["git_commit"],
-			"training_config_source": run_record["training_config_source"],
-			"feature_manifest_source": run_record["feature_manifest_source"],
-			"evaluation_config_source": run_record["evaluation_config_source"],
+			"cv_log_loss": f"{run_record['objective_value']:.6f}",
+			"delta": f"{delta:.6f}" if delta is not None else "",
+			"best_epoch": best_epoch,
+			"status": "",
+			"description": description,
+			"cv_rps": f"{cv_metrics.get('rps', 0):.6f}",
+			"val_log_loss": f"{run_record['val_metrics'].get('log_loss', 0):.6f}",
+			"test_log_loss": f"{run_record['test_metrics'].get('log_loss', 0):.6f}",
 			"cv_metrics_json": run_record["objective_metrics"],
-			"cv_fold_metrics_json": run_record["objective_fold_metrics"],
-			"val_metrics_json": run_record["val_metrics"],
 			"test_metrics_json": run_record["test_metrics"],
 		},
 	)
@@ -746,7 +657,10 @@ def train_main_model() -> dict:
 
 
 def main():
-	train_main_model()
+	parser = argparse.ArgumentParser()
+	parser.add_argument("--description", type=str, default="", help="Short text description of what this experiment tried")
+	args = parser.parse_args()
+	train_main_model(description=args.description)
 
 
 if __name__ == "__main__":
