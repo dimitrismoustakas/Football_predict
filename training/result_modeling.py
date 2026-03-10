@@ -57,6 +57,33 @@ def normalize_probabilities(probs: np.ndarray, eps: float = 1e-9) -> np.ndarray:
 	return probs / probs.sum(axis=1, keepdims=True)
 
 
+def build_market_feature_enrichment(
+	implied_probs: np.ndarray,
+	raw_margin: np.ndarray,
+	input_recipe: dict,
+) -> np.ndarray | None:
+	"""Build optional global bookmaker feature enrichments."""
+
+	enrichment_mode = str(input_recipe.get("market_feature_enrichment", "none"))
+	if enrichment_mode == "none":
+		return None
+
+	logit_values = safe_logit(implied_probs.astype(np.float64))
+	pieces = []
+	if enrichment_mode in {"quadratic", "quadratic_plus_margin"}:
+		pieces.append(logit_values ** 2)
+		pieces.append(np.stack([
+			logit_values[:, 0] * logit_values[:, 1],
+			logit_values[:, 0] * logit_values[:, 2],
+			logit_values[:, 1] * logit_values[:, 2],
+		], axis=1))
+	if enrichment_mode == "quadratic_plus_margin":
+		pieces.append(logit_values * raw_margin.reshape(-1, 1).astype(np.float64))
+	if not pieces:
+		raise ValueError(f"Unsupported market feature enrichment mode: {enrichment_mode}")
+	return np.concatenate(pieces, axis=1)
+
+
 def build_input_recipe(model_family: str, training_config: dict | None = None) -> dict:
 	"""Describe how a family expects its tabular inputs."""
 
@@ -151,6 +178,10 @@ def build_design_matrix(
 		# Let linear models learn league/context-specific adjustments to bookmaker logits.
 		pieces.extend(context_matrix[:, [idx]] * market_values for idx in range(context_matrix.shape[1]))
 
+	market_enrichment = build_market_feature_enrichment(implied_probs, raw_margin, input_recipe)
+	if market_enrichment is not None:
+		pieces.append(market_enrichment)
+
 	return np.concatenate(pieces, axis=1)
 
 
@@ -173,12 +204,40 @@ def get_blend_alpha_grid(training_config: dict) -> list[float]:
 	return [float(value) for value in values]
 
 
-def apply_implied_blend(probs: np.ndarray, implied_probs: np.ndarray, blend_alpha: float | None) -> np.ndarray:
+def get_blend_mode(training_config: dict) -> str:
+	"""Return the configured bookmaker-blend parameterization."""
+
+	return str(training_config.get("blend_mode", "global"))
+
+
+def get_class_blend_alpha_grid(training_config: dict) -> list[float]:
+	"""Return the per-class alpha grid used on the selection season."""
+
+	values = training_config.get("class_blend_alpha_grid")
+	if values is None:
+		values = training_config.get("blend_alpha_grid", DEFAULT_BLEND_ALPHA_GRID)
+	return [float(value) for value in values]
+
+
+def apply_implied_blend(
+	probs: np.ndarray,
+	implied_probs: np.ndarray,
+	blend_alpha: float | list[float] | tuple[float, ...] | np.ndarray | None,
+) -> np.ndarray:
 	"""Blend model probabilities back toward market implied probabilities."""
 
 	if blend_alpha is None:
 		return normalize_probabilities(probs)
-	blended = blend_alpha * probs + (1.0 - blend_alpha) * implied_probs
+	alpha = np.asarray(blend_alpha, dtype=np.float64)
+	if alpha.ndim == 0:
+		alpha = np.full((1, probs.shape[1]), float(alpha))
+	elif alpha.ndim == 1:
+		if alpha.shape[0] != probs.shape[1]:
+			raise ValueError("Per-class blend alpha must match the number of outcomes")
+		alpha = alpha.reshape(1, -1)
+	else:
+		raise ValueError("Blend alpha must be a scalar or a length-K vector")
+	blended = alpha * probs + (1.0 - alpha) * implied_probs
 	return normalize_probabilities(blended)
 
 
@@ -196,6 +255,25 @@ def tune_blend_alpha(
 		loss = log_loss(y_true, apply_implied_blend(probs, implied_probs, alpha), labels=[0, 1, 2])
 		if best_loss is None or loss < best_loss:
 			best_alpha = float(alpha)
+			best_loss = float(loss)
+	return best_alpha, float(best_loss)
+
+
+def tune_class_blend_alpha(
+	probs: np.ndarray,
+	implied_probs: np.ndarray,
+	y_true: np.ndarray,
+	alpha_grid: list[float],
+) -> tuple[list[float], float]:
+	"""Select the best per-outcome implied-blend weights on the selection season."""
+
+	best_alpha = None
+	best_loss = None
+	for alpha_values in np.array(np.meshgrid(*([alpha_grid] * probs.shape[1]))).T.reshape(-1, probs.shape[1]):
+		alpha_vector = [float(value) for value in alpha_values]
+		loss = log_loss(y_true, apply_implied_blend(probs, implied_probs, alpha_vector), labels=[0, 1, 2])
+		if best_loss is None or loss < best_loss:
+			best_alpha = alpha_vector
 			best_loss = float(loss)
 	return best_alpha, float(best_loss)
 
@@ -249,13 +327,23 @@ def fit_non_torch_selection_model(
 	X_val = build_design_from_data(val_data, input_recipe)
 	model.fit(X_train, train_data["y"])
 	val_probs = normalize_probabilities(model.predict_proba(X_val))
-	blend_alpha, blend_val_loss = tune_blend_alpha(
-		val_probs,
-		val_data["implied"],
-		val_data["y"],
-		get_blend_alpha_grid(training_config),
-	)
+	blend_mode = get_blend_mode(training_config)
+	if blend_mode == "classwise":
+		blend_alpha, blend_val_loss = tune_class_blend_alpha(
+			val_probs,
+			val_data["implied"],
+			val_data["y"],
+			get_class_blend_alpha_grid(training_config),
+		)
+	else:
+		blend_alpha, blend_val_loss = tune_blend_alpha(
+			val_probs,
+			val_data["implied"],
+			val_data["y"],
+			get_blend_alpha_grid(training_config),
+		)
 	return model, {
+		"blend_mode": blend_mode,
 		"blend_alpha": blend_alpha,
 		"blend_val_log_loss": blend_val_loss,
 	}
