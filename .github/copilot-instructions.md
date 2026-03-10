@@ -25,14 +25,6 @@ Always preserve this unless the user explicitly asks to change it:
 - the fixed test season is watch-only and not part of branch acceptance
 - use the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv` as the default comparison point
 
-## Research workflow
-Keep the repo surface small.
-If an experiment needs custom search or analysis code, prefer a narrow branch-specific helper over permanent research scripts.
-Cheap local prescreens are encouraged when they help rank nearby ideas quickly, but they are only a guide.
-For close calls, prefer a stricter local support scorer that mirrors the canonical protocol: choose `best_epoch` on the fixed epoch-selection season, then score the objective folds at that epoch count without appending a ledger row.
-Do not trust the epoch-selection season alone when deciding whether a nearby variant deserves a canonical run.
-Any candidate that matters still needs the canonical `training/train_main_model.py` run before it counts.
-
 ## Production
 - `prod_run/pipeline.py` loads the canonical model bundle from `artifacts/models/`
 - `prod_run/fetch_odds.py` fetches match-result prices
@@ -43,45 +35,17 @@ Any candidate that matters still needs the canonical `training/train_main_model.
 - GitHub CLI is available at `C:/Program Files/GitHub CLI/gh.exe` on this machine even if `gh` is not on `PATH`
 - prefer using it for branch/PR actions when needed
 
-## Experiment surface
-Keep the experiment surface lean:
-- prefer editing `training/train_main_model.py` for canonical training changes
-- use `artifacts/experiment_metrics/result_main_runs.tsv` as the default experiment ledger
-- do not add report workflows or extra experiment registries unless the user explicitly asks for them
-- name experiment branches `experiment/<name>`
-
-When iterating:
-- start from `main` for a fresh line of inquiry
-- if a branch improves on the canonical objective and nearby variants still look promising, keep iterating on that branch until the neighborhood is exhausted
-- if a branch clearly regresses, abandon it rather than accumulating dead changes
-- if a prescreen helper suggests a good direction, make sure the exact canonical candidate matches what was prescreened before trusting the result
-- if the prescreen is only looking at the epoch-selection season, treat it as weak evidence and promote only large wins; use the stricter support scorer for close comparisons
-
-For experiments, everything relevant to improving the canonical path is fair game.
-This includes, when justified:
-- model architecture
-- optimizer
-- hyperparameters
-- training loop details
-- batch size and model size
-- feature engineering
-- feature selection
-- preprocessing choices
-
-Do not limit experiments to abstract ideas only.
-The agent should be free to choose any concrete change it thinks can improve the main metric.
-It may use ablations, sweeps, helper analysis, or targeted searches when they help choose or validate the next branch.
-Promising lines should be worked, not just sampled once.
-It is better to iterate a live direction through a few coherent nearby adjustments than to abandon it after the first non-winning attempt.
+## General experiment guidance
+- Keep the repo surface lean.
+- Prefer editing canonical files over adding permanent experiment scaffolding.
+- If experiment-specific search or analysis code is needed, keep it narrow and branch-local unless it clearly belongs in the canonical path.
+- Use `artifacts/experiment_metrics/result_main_runs.tsv` as the default experiment ledger and keep it append-only.
+- Do not add report workflows or extra experiment registries unless the user explicitly asks for them.
 
 ## Skill
-If the user asks to run an experiment, use the single `experiment-runner` skill.
-It should:
-- branch from `main` unless the user explicitly wants another base
-- name the branch `experiment/<name>`
-- run the canonical evaluation path
-- rely on `artifacts/experiment_metrics/result_main_runs.tsv` and `artifacts/models/latest_main_model_metrics.json` as the handoff
-- avoid markdown reports unless the user explicitly asks for one
+If the user asks for a bounded experiment pass, use `experiment-runner`.
+If the user asks for autonomous continuous experimentation without pausing for feedback, use `continuous-experiment-runner`.
+Keep detailed experiment-loop behavior in the skill definitions instead of duplicating it here.
 
 ## Betting diagnostics
 Use proper scoring metrics as the primary quality gate.
