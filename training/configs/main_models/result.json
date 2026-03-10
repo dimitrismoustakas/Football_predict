@@ -26,6 +26,6 @@
 	"gate_target_budget": 0.15,
 	"gate_mean_weight": 0.09,
 	"gate_sat_weight": 0.0,
-	"lambda_repulsion": 0.4,
+	"lambda_repulsion": 1.5,
 	"lambda_corr": 0.0
 }
