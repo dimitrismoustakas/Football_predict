@@ -1,31 +1,23 @@
 {
-	"hidden_layers": [
-		384,
-		384,
-		384
+	"model_family": "elastic_net_blend",
+	"blend_alpha_grid": [
+		0.45,
+		0.5,
+		0.55,
+		0.6,
+		0.65,
+		0.75,
+		0.85,
+		0.95,
+		1.0
 	],
-	"backbone_type": "cross_resnet",
-	"cross_layers": 2,
-	"activation": "gelu",
-	"norm": "none",
-	"dropout": 0.15,
-	"lr": 0.0008,
-	"weight_decay": 5e-05,
-	"beta1": 0.85,
-	"batch_size": 256,
-	"max_epochs": 35,
-	"patience": 10,
-	"use_categorical": false,
-	"shared_gate": true,
-	"linear_gate": true,
-	"learn_market_bias": true,
-	"learn_league_market_bias": true,
-	"learn_league_residual_bias": true,
-	"market_logit_scale": 1.08,
-	"gate_hidden_dim": 16,
-	"gate_target_budget": 0.15,
-	"gate_mean_weight": 0.09,
-	"gate_sat_weight": 0.0,
-	"lambda_repulsion": 0.4,
-	"lambda_corr": 0.0
+	"elastic_net_params": {
+		"l1_ratio": 0.75,
+		"C": 0.04,
+		"max_iter": 7000,
+		"random_state": 42
+	},
+	"elastic_net_input_recipe": {
+		"market_interactions": "league_and_promoted"
+	}
 }

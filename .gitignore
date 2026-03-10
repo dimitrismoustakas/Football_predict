@@ -12,6 +12,7 @@ wheels/
 
 # Folders
 secrets/
+catboost_info/
 
 # Files
 .env

@@ -28,6 +28,14 @@ import torch
 from training.evaluation import evaluate_model
 from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, save_model_bundle as save_bundle
 from training.models import CategoricalConfig, TrainConfig
+from training.result_modeling import (
+	build_input_recipe,
+	fit_non_torch_final_model,
+	fit_non_torch_selection_model,
+	resolve_model_family,
+	resolve_model_name,
+	uses_torch_backend,
+)
 from training.training_loop import train_fixed_epochs, train_with_early_stopping
 from training.train_utils import (
 	add_targets_and_implied,
@@ -48,7 +56,6 @@ DEFAULT_PARQUET = Path(os.environ.get("PARQUET_PATH", "data/training/understat_d
 LATEST_MAIN_METRICS_PATH = MODELS_DIR / "latest_main_model_metrics.json"
 EXPERIMENT_LOG_PATH = EXPERIMENT_METRICS_DIR / "result_main_runs.tsv"
 DISPLAY_NAME = "Match Result"
-MODEL_NAME = "gated_residual"
 TRAINING_CONFIG_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "result.json"
 FEATURE_MANIFEST_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "result_features.json"
 EVALUATION_CONFIG_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "evaluation.json"
@@ -223,6 +230,33 @@ def build_train_config(
 	)
 
 
+def build_model_config_snapshot(training_config: dict, model_family: str) -> dict:
+	"""Capture the persisted config for the active model family."""
+
+	if model_family == "gated_residual":
+		return {
+			"hidden_layers": training_config["hidden_layers"],
+			"backbone_type": training_config.get("backbone_type", "mlp"),
+			"cross_layers": training_config.get("cross_layers", 2),
+			"dropout": training_config["dropout"],
+			"norm": training_config["norm"],
+			"activation": training_config["activation"],
+			"gate_hidden_dim": training_config["gate_hidden_dim"],
+			"gate_target_budget": training_config["gate_target_budget"],
+			"shared_gate": training_config.get("shared_gate", False),
+			"linear_gate": training_config.get("linear_gate", False),
+			"market_logit_scale": training_config.get("market_logit_scale", 1.0),
+			"learn_market_bias": training_config.get("learn_market_bias", False),
+			"learn_league_market_bias": training_config.get("learn_league_market_bias", False),
+			"learn_league_residual_bias": training_config.get("learn_league_residual_bias", False),
+		}
+	if model_family == "hist_gradient_boosting_blend":
+		return dict(training_config.get("hgb_params", {}))
+	if model_family == "elastic_net_blend":
+		return dict(training_config.get("elastic_net_params", {}))
+	raise ValueError(f"Unsupported model family: {model_family}")
+
+
 def build_bundle_metadata(
 	training_config: dict,
 	evaluation_config: dict,
@@ -245,33 +279,24 @@ def build_bundle_metadata(
 	data_snapshot: dict,
 	reference_comparison: dict,
 ) -> dict:
+	model_family = resolve_model_family(training_config)
+	model_name = resolve_model_name(training_config)
+	model_config = build_model_config_snapshot(training_config, model_family)
+	input_recipe = build_input_recipe(model_family, training_config)
 	return {
 		"display_name": DISPLAY_NAME,
-		"model_name": MODEL_NAME,
+		"model_family": model_family,
+		"model_name": model_name,
 		"comparison_metric": evaluation_config["comparison_metric"],
-		"model_kwargs": {
-			"hidden_layers": training_config["hidden_layers"],
-			"backbone_type": training_config.get("backbone_type", "mlp"),
-			"cross_layers": training_config.get("cross_layers", 2),
-			"dropout": training_config["dropout"],
-			"norm": training_config["norm"],
-			"activation": training_config["activation"],
-			"gate_hidden_dim": training_config["gate_hidden_dim"],
-			"gate_target_budget": training_config["gate_target_budget"],
-			"shared_gate": training_config.get("shared_gate", False),
-			"linear_gate": training_config.get("linear_gate", False),
-			"market_logit_scale": training_config.get("market_logit_scale", 1.0),
-			"learn_market_bias": training_config.get("learn_market_bias", False),
-			"learn_league_market_bias": training_config.get("learn_league_market_bias", False),
-			"learn_league_residual_bias": training_config.get("learn_league_residual_bias", False),
-		},
+		"model_kwargs": model_config,
+		"input_recipe": input_recipe,
 		"feature_cols": feature_cols,
 		"cat_config": None if cat_config is None else {
 			"num_leagues": cat_config.num_leagues,
 			"league_embed_dim": cat_config.league_embed_dim,
 		},
 		"final_epochs": final_train_epochs,
-		"final_epoch_mode": "best",
+		"final_epoch_mode": "best" if uses_torch_backend(model_family) else "selection",
 		"evaluation_protocol": {
 			"comparison_metric": evaluation_config["comparison_metric"],
 			"cv_strategy": "rolling_origin_expanding_window",
@@ -462,6 +487,38 @@ def print_reference_comparison(reference_comparison: dict, comparison_metric: st
 	print(f"Reference comparison: {status} | delta_{comparison_metric}={delta:.6f}")
 
 
+def build_runtime_metadata(
+	training_config: dict,
+	reference_comparison: dict | None = None,
+	selection_summary: dict | None = None,
+) -> dict:
+	"""Build inference metadata for evaluation and bundle persistence."""
+
+	model_family = resolve_model_family(training_config)
+	return {
+		"model_family": model_family,
+		"model_name": resolve_model_name(training_config),
+		"input_recipe": build_input_recipe(model_family, training_config),
+		"selection_summary": {
+			"reference_comparison": reference_comparison,
+			**(selection_summary or {}),
+		},
+	}
+
+
+def prepare_non_torch_phase_data(
+	df,
+	feature_cols: list[str],
+	train_seasons: list[str],
+	eval_seasons: list[str],
+):
+	"""Prepare non-torch data without the external torch scaler."""
+
+	train_data = prepare_data(df, feature_cols, train_seasons, fit_scaler=False)
+	eval_data = prepare_data(df, feature_cols, eval_seasons, fit_scaler=False)
+	return train_data, eval_data
+
+
 def evaluate_cv_objective(
 	df,
 	feature_cols: list[str],
@@ -491,6 +548,42 @@ def evaluate_cv_objective(
 		fold_model, _, _ = train_fixed_epochs(fold_config, train_loader, device=DEVICE, verbose=True)
 		baseline_metrics = summarize_metrics(evaluate_implied_baseline(data_val))
 		metrics = summarize_metrics(evaluate_model(fold_model, data_val, device=DEVICE, verbose=True))
+		fold_baseline_metrics.append(baseline_metrics)
+		fold_metrics.append({
+			"fold_index": fold_idx,
+			"train_start_season": train_seasons[0],
+			"train_end_season": train_seasons[-1],
+			"val_season": val_season,
+			"baseline_metrics": baseline_metrics,
+			"metrics": metrics,
+		})
+	mean_fold_metrics = mean_metric([fold["metrics"] for fold in fold_metrics])
+	mean_baseline_metrics = mean_metric(fold_baseline_metrics)
+	return fold_metrics, mean_fold_metrics, mean_baseline_metrics
+
+
+def evaluate_non_torch_cv_objective(
+	df,
+	feature_cols: list[str],
+	training_config: dict,
+	objective_folds: list[tuple[list[str], str]],
+	selection_summary: dict,
+) -> tuple[list[dict], Dict[str, float], Dict[str, float]]:
+	"""Evaluate a fixed non-torch candidate over the canonical CV folds."""
+
+	fold_metrics = []
+	fold_baseline_metrics = []
+	runtime_metadata = build_runtime_metadata(training_config, selection_summary=selection_summary)
+	for fold_idx, (train_seasons, val_season) in enumerate(objective_folds, start=1):
+		print(
+			f"\n--- CV Objective Fold {fold_idx}/{len(objective_folds)}: {train_seasons[0]}..{train_seasons[-1]} -> {val_season} ---"
+		)
+		train_data, val_data = prepare_non_torch_phase_data(df, feature_cols, train_seasons, [val_season])
+		fold_model = fit_non_torch_final_model(training_config, train_data)
+		baseline_metrics = summarize_metrics(evaluate_implied_baseline(val_data))
+		metrics = summarize_metrics(
+			evaluate_model(fold_model, val_data, device=DEVICE, verbose=True, metadata=runtime_metadata, scaler=None)
+		)
 		fold_baseline_metrics.append(baseline_metrics)
 		fold_metrics.append({
 			"fold_index": fold_idx,
@@ -555,70 +648,135 @@ def train_main_model() -> dict:
 		evaluation_config["test_role"],
 	)
 	git_metadata = get_git_metadata()
+	model_family = resolve_model_family(training_config)
+	model_name = resolve_model_name(training_config)
+	selection_summary = {}
+	bundle_cat_config = cat_config if uses_torch_backend(model_family) else None
+	bundle_scaler = None
 
-	set_seed(training_seed, deterministic=True)
-	data_initial_train, data_final_val, initial_train_loader, final_val_loader = prepare_phase_loaders(
-		df,
-		feature_cols,
-		training_config["batch_size"],
-		epoch_train_seasons,
-		[epoch_selection_season],
-		training_seed,
-	)
+	if uses_torch_backend(model_family):
+		set_seed(training_seed, deterministic=True)
+		data_initial_train, data_final_val, initial_train_loader, final_val_loader = prepare_phase_loaders(
+			df,
+			feature_cols,
+			training_config["batch_size"],
+			epoch_train_seasons,
+			[epoch_selection_season],
+			training_seed,
+		)
 
-	early_stop_config = build_train_config(
-		training_config,
-		data_initial_train["X"].shape[1],
-		cat_config,
-		training_config["max_epochs"],
-		num_leagues,
-	)
-	early_stop_model, early_stop_history, best_val_loss = train_with_early_stopping(
-		early_stop_config,
-		initial_train_loader,
-		final_val_loader,
-		device=DEVICE,
-		verbose=True,
-	)
-	best_epoch = early_stop_history["val_loss"].index(min(early_stop_history["val_loss"])) + 1
-	print(f"Early stopping best epoch: {best_epoch} (val_loss={best_val_loss:.5f})")
-	final_train_epochs = resolve_final_training_epochs(training_config["max_epochs"], best_epoch)
-	print(f"Final retrain epochs: {final_train_epochs} (mode=best)")
+		early_stop_config = build_train_config(
+			training_config,
+			data_initial_train["X"].shape[1],
+			cat_config,
+			training_config["max_epochs"],
+			num_leagues,
+		)
+		early_stop_model, early_stop_history, best_val_loss = train_with_early_stopping(
+			early_stop_config,
+			initial_train_loader,
+			final_val_loader,
+			device=DEVICE,
+			verbose=True,
+		)
+		best_epoch = early_stop_history["val_loss"].index(min(early_stop_history["val_loss"])) + 1
+		print(f"Early stopping best epoch: {best_epoch} (val_loss={best_val_loss:.5f})")
+		final_train_epochs = resolve_final_training_epochs(training_config["max_epochs"], best_epoch)
+		print(f"Final retrain epochs: {final_train_epochs} (mode=best)")
 
-	cv_fold_metrics, cv_metrics, cv_baseline_metrics = evaluate_cv_objective(
-		df,
-		feature_cols,
-		training_config,
-		cat_config,
-		objective_folds,
-		final_train_epochs,
-		training_seed,
-		num_leagues,
-	)
-	objective_value = float(cv_metrics[comparison_metric])
-	print(f"\nCV objective ({comparison_metric}): {objective_value:.5f}")
+		cv_fold_metrics, cv_metrics, cv_baseline_metrics = evaluate_cv_objective(
+			df,
+			feature_cols,
+			training_config,
+			cat_config,
+			objective_folds,
+			final_train_epochs,
+			training_seed,
+			num_leagues,
+		)
+		objective_value = float(cv_metrics[comparison_metric])
+		print(f"\nCV objective ({comparison_metric}): {objective_value:.5f}")
 
-	print("\n--- Early-stop Model Performance on Epoch-selection Season ---")
-	validation_baseline_metrics = evaluate_implied_baseline(data_final_val)
-	validation_metrics = evaluate_model(early_stop_model, data_final_val, device=DEVICE, verbose=True)
+		print("\n--- Early-stop Model Performance on Epoch-selection Season ---")
+		validation_baseline_metrics = evaluate_implied_baseline(data_final_val)
+		validation_metrics = evaluate_model(early_stop_model, data_final_val, device=DEVICE, verbose=True)
 
-	data_train, data_test, train_loader, _ = prepare_phase_loaders(
-		df,
-		feature_cols,
-		training_config["batch_size"],
-		all_cv_seasons,
-		[test_season],
-		training_seed + 10_000,
-	)
-	final_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs, num_leagues)
+		data_train, data_test, train_loader, _ = prepare_phase_loaders(
+			df,
+			feature_cols,
+			training_config["batch_size"],
+			all_cv_seasons,
+			[test_season],
+			training_seed + 10_000,
+		)
+		final_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs, num_leagues)
+		bundle_scaler = data_train["scaler"]
 
-	test_baseline_metrics = evaluate_implied_baseline(data_test)
+		test_baseline_metrics = evaluate_implied_baseline(data_test)
 
-	print("\n--- Training Final Model ---")
-	model, _, _ = train_fixed_epochs(final_config, train_loader, device=DEVICE, verbose=True)
+		print("\n--- Training Final Model ---")
+		model, _, _ = train_fixed_epochs(final_config, train_loader, device=DEVICE, verbose=True)
 
-	print(f"\n--- Model Performance on Fixed Test Set ({evaluation_config['test_role']}) ---")
-	test_metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True)
+		print(f"\n--- Model Performance on Fixed Test Set ({evaluation_config['test_role']}) ---")
+		test_metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True)
+	else:
+		print(f"Model family: {model_family}")
+		selection_train_data, selection_val_data = prepare_non_torch_phase_data(
+			df,
+			feature_cols,
+			epoch_train_seasons,
+			[epoch_selection_season],
+		)
+		selection_model, selection_summary = fit_non_torch_selection_model(
+			training_config,
+			selection_train_data,
+			selection_val_data,
+		)
+		best_epoch = ""
+		final_train_epochs = ""
+		best_val_loss = float(selection_summary["blend_val_log_loss"])
+		print(
+			f"Selection blend alpha: {selection_summary['blend_alpha']:.2f} "
+			f"(val_{comparison_metric}={best_val_loss:.5f})"
+		)
+
+		cv_fold_metrics, cv_metrics, cv_baseline_metrics = evaluate_non_torch_cv_objective(
+			df,
+			feature_cols,
+			training_config,
+			objective_folds,
+			selection_summary,
+		)
+		objective_value = float(cv_metrics[comparison_metric])
+		print(f"\nCV objective ({comparison_metric}): {objective_value:.5f}")
+
+		print("\n--- Selection-split Model Performance on Epoch-selection Season ---")
+		runtime_metadata = build_runtime_metadata(training_config, selection_summary=selection_summary)
+		validation_baseline_metrics = evaluate_implied_baseline(selection_val_data)
+		validation_metrics = evaluate_model(
+			selection_model,
+			selection_val_data,
+			device=DEVICE,
+			verbose=True,
+			metadata=runtime_metadata,
+			scaler=None,
+		)
+
+		data_train, data_test = prepare_non_torch_phase_data(df, feature_cols, all_cv_seasons, [test_season])
+		test_baseline_metrics = evaluate_implied_baseline(data_test)
+
+		print("\n--- Training Final Model ---")
+		model = fit_non_torch_final_model(training_config, data_train)
+
+		print(f"\n--- Model Performance on Fixed Test Set ({evaluation_config['test_role']}) ---")
+		test_metrics = evaluate_model(
+			model,
+			data_test,
+			device=DEVICE,
+			verbose=True,
+			metadata=runtime_metadata,
+			scaler=None,
+		)
 
 	reference_row = get_latest_comparable_reference(
 		path=EXPERIMENT_LOG_PATH,
@@ -635,17 +793,23 @@ def train_main_model() -> dict:
 		reference_row=reference_row,
 	)
 	print_reference_comparison(reference_comparison, comparison_metric)
+	runtime_metadata = build_runtime_metadata(
+		training_config,
+		reference_comparison=reference_comparison,
+		selection_summary=selection_summary,
+	)
 
 	run_record = {
 		"recorded_at_utc": datetime.now(timezone.utc).isoformat(),
 		"display_name": DISPLAY_NAME,
+		"model_family": model_family,
 		"comparison_metric": comparison_metric,
 		"objective_name": f"cv_mean_{comparison_metric}",
 		"objective_value": objective_value,
 		"training_config_source": str(TRAINING_CONFIG_PATH.relative_to(PROJECT_ROOT)),
 		"feature_manifest_source": str(FEATURE_MANIFEST_PATH.relative_to(PROJECT_ROOT)),
 		"evaluation_config_source": str(EVALUATION_CONFIG_PATH.relative_to(PROJECT_ROOT)),
-		"model_name": MODEL_NAME,
+		"model_name": model_name,
 		"objective_fold_count": len(objective_folds),
 		"objective_val_seasons": objective_val_seasons,
 		"objective_metrics": cv_metrics,
@@ -656,6 +820,7 @@ def train_main_model() -> dict:
 		"test_role": evaluation_config["test_role"],
 		"best_epoch": best_epoch,
 		"best_val_loss": float(best_val_loss),
+		"selection_summary": selection_summary,
 		"data_snapshot": data_snapshot,
 		"reference_comparison": reference_comparison,
 		"val_metrics": summarize_metrics(validation_metrics),
@@ -674,7 +839,7 @@ def train_main_model() -> dict:
 	bundle_metadata = build_bundle_metadata(
 		training_config=training_config,
 		evaluation_config=evaluation_config,
-		cat_config=cat_config,
+		cat_config=bundle_cat_config,
 		feature_cols=feature_cols,
 		objective_metrics=cv_metrics,
 		objective_baseline_metrics=cv_baseline_metrics,
@@ -693,14 +858,15 @@ def train_main_model() -> dict:
 		data_snapshot=data_snapshot,
 		reference_comparison=reference_comparison,
 	)
-	save_bundle(RESULT_MODEL_BUNDLE_PATHS, model, data_train["scaler"], bundle_metadata)
+	bundle_metadata["selection_summary"].update(runtime_metadata["selection_summary"])
+	save_bundle(RESULT_MODEL_BUNDLE_PATHS, model, bundle_scaler, bundle_metadata)
 	append_tsv_row(
 		EXPERIMENT_LOG_PATH,
 		{
 			"recorded_at_utc": run_record["recorded_at_utc"],
 			"display_name": DISPLAY_NAME,
 			"recipe_label": "result",
-			"model_name": MODEL_NAME,
+			"model_name": model_name,
 			"comparison_metric": comparison_metric,
 			"objective_name": run_record["objective_name"],
 			"objective_value": run_record["objective_value"],

@@ -19,6 +19,7 @@ if __package__ is None or __package__ == "":
 from prod_run import build_prod_features, fetch_odds
 from prod_run.generate_html_report import generate_html_report
 from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
+from training.result_modeling import predict_result_proba, requires_categorical_inputs
 from utils import send_email
 
 load_dotenv()
@@ -52,17 +53,17 @@ def resolve_merged_col(frame: pd.DataFrame, base_name: str) -> str:
 	return base_name
 
 
-def predict_result(model, scaler, feature_cols, X_raw, cat_features, implied_probs, raw_margin) -> np.ndarray:
-	X_scaled = scaler.transform(X_raw)
-	X_tensor = torch.tensor(X_scaled, dtype=torch.float32).to(DEVICE)
-	cat_tensor = None
-	if cat_features is not None:
-		cat_tensor = torch.tensor(cat_features, dtype=torch.long).to(DEVICE)
-	implied_tensor = torch.tensor(implied_probs, dtype=torch.float32).to(DEVICE)
-	raw_margin_tensor = torch.tensor(raw_margin, dtype=torch.float32).to(DEVICE)
-	with torch.no_grad():
-		pred_logits = model(X_tensor, cat_tensor, implied_tensor, raw_margin_tensor)
-		return torch.softmax(pred_logits, dim=-1).cpu().numpy()
+def predict_result(model, scaler, metadata, X_raw, cat_features, implied_probs, raw_margin) -> np.ndarray:
+	return predict_result_proba(
+		model=model,
+		X_numeric=X_raw,
+		cat_features=cat_features,
+		implied_probs=implied_probs,
+		raw_margin=raw_margin,
+		metadata=metadata,
+		scaler=scaler,
+		device=DEVICE,
+	)
 
 
 def score_result_predictions(merged: pd.DataFrame, model_bundle) -> pd.DataFrame:
@@ -70,11 +71,12 @@ def score_result_predictions(merged: pd.DataFrame, model_bundle) -> pd.DataFrame
 	scaler = model_bundle.scaler
 	feature_cols = model_bundle.feature_cols
 	cat_config = model_bundle.cat_config
+	metadata = model_bundle.metadata
 	odds_home_col = resolve_merged_col(merged, "odds_home")
 	odds_draw_col = resolve_merged_col(merged, "odds_draw")
 	odds_away_col = resolve_merged_col(merged, "odds_away")
 	required_cols = list(feature_cols) + [odds_home_col, odds_draw_col, odds_away_col]
-	if cat_config is not None:
+	if cat_config is not None or requires_categorical_inputs(metadata):
 		required_cols.extend(["league_idx", "home_promoted", "away_promoted"])
 
 	ready = merged.dropna(subset=required_cols).copy()
@@ -96,7 +98,7 @@ def score_result_predictions(merged: pd.DataFrame, model_bundle) -> pd.DataFrame
 	probs = predict_result(
 		model=model,
 		scaler=scaler,
-		feature_cols=feature_cols,
+		metadata=metadata,
 		X_raw=ready[feature_cols].to_numpy(dtype=float),
 		cat_features=cat_features,
 		implied_probs=implied_probs,

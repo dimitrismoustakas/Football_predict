@@ -11,6 +11,7 @@ import joblib
 import torch
 
 from training.models import CategoricalConfig, GatedResidualModel
+from training.result_modeling import uses_torch_backend
 from utils.paths import MODELS_DIR
 
 
@@ -29,7 +30,7 @@ class LoadedModelBundle:
 	"""Loaded production-ready model bundle."""
 
 	name: str
-	model: GatedResidualModel
+	model: Any
 	scaler: Any
 	feature_cols: list[str]
 	cat_config: CategoricalConfig | None
@@ -100,11 +101,15 @@ def build_result_model(feature_cols: list[str], metadata: dict) -> tuple[GatedRe
 	return model, cat_config
 
 
-def save_model_bundle(paths: ModelBundlePaths, model: GatedResidualModel, scaler: Any, metadata: dict):
+def save_model_bundle(paths: ModelBundlePaths, model: Any, scaler: Any, metadata: dict):
 	"""Save model weights, scaler, and metadata."""
 
 	paths.model_path.parent.mkdir(parents=True, exist_ok=True)
-	torch.save(model.state_dict(), paths.model_path)
+	model_family = metadata.get("model_family", "gated_residual")
+	if uses_torch_backend(model_family):
+		torch.save(model.state_dict(), paths.model_path)
+	else:
+		joblib.dump(model, paths.model_path)
 	joblib.dump(scaler, paths.scaler_path)
 	write_bundle_metadata(paths.config_path, metadata)
 
@@ -118,14 +123,19 @@ def load_model_bundle(paths: ModelBundlePaths, device: torch.device) -> LoadedMo
 	if not feature_cols:
 		raise ValueError(f"No feature column list found in {paths.config_path}")
 
-	model, cat_config = build_result_model(feature_cols, metadata)
-	try:
-		state_dict = torch.load(paths.model_path, map_location=device, weights_only=True)
-	except TypeError:
-		state_dict = torch.load(paths.model_path, map_location=device)
-	model.load_state_dict(state_dict)
-	model.to(device)
-	model.eval()
+	model_family = metadata.get("model_family", "gated_residual")
+	if uses_torch_backend(model_family):
+		model, cat_config = build_result_model(feature_cols, metadata)
+		try:
+			state_dict = torch.load(paths.model_path, map_location=device, weights_only=True)
+		except TypeError:
+			state_dict = torch.load(paths.model_path, map_location=device)
+		model.load_state_dict(state_dict)
+		model.to(device)
+		model.eval()
+	else:
+		model = joblib.load(paths.model_path)
+		cat_config = None
 
 	return LoadedModelBundle(
 		name=paths.name,
