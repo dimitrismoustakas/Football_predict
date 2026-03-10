@@ -18,8 +18,10 @@ if __package__ is None or __package__ == "":
 
 from prod_run import build_prod_features, fetch_odds
 from prod_run.generate_html_report import generate_html_report
+from training.inference import model_requires_cat_features, predict_probabilities
 from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
 from utils import send_email
+from utils.portfolio import DEFAULT_BUDGET_STRATEGY, DEFAULT_KELLY_FRACTION, allocate_fixed_budget, select_best_result_value
 
 load_dotenv()
 
@@ -40,6 +42,13 @@ def _env_flag(name: str, default: bool) -> bool:
 	return value.strip().lower() not in {"0", "false", "no", "off", ""}
 
 
+def _env_float(name: str, default: float) -> float:
+	value = os.environ.get(name)
+	if value is None:
+		return default
+	return float(value)
+
+
 def load_model():
 	bundle = load_model_bundle(RESULT_MODEL_BUNDLE_PATHS, device=DEVICE)
 	print(f"Loading model bundle: {bundle.name}")
@@ -52,32 +61,48 @@ def resolve_merged_col(frame: pd.DataFrame, base_name: str) -> str:
 	return base_name
 
 
-def predict_result(model, scaler, feature_cols, X_raw, cat_features, implied_probs, raw_margin) -> np.ndarray:
-	X_scaled = scaler.transform(X_raw)
-	X_tensor = torch.tensor(X_scaled, dtype=torch.float32).to(DEVICE)
-	cat_tensor = None
-	if cat_features is not None:
-		cat_tensor = torch.tensor(cat_features, dtype=torch.long).to(DEVICE)
-	implied_tensor = torch.tensor(implied_probs, dtype=torch.float32).to(DEVICE)
-	raw_margin_tensor = torch.tensor(raw_margin, dtype=torch.float32).to(DEVICE)
-	with torch.no_grad():
-		pred_logits = model(X_tensor, cat_tensor, implied_tensor, raw_margin_tensor)
-		return torch.softmax(pred_logits, dim=-1).cpu().numpy()
+def _round_budget_amounts(stake_amounts: np.ndarray, total_budget: float) -> np.ndarray:
+	"""Round currency amounts while preserving the requested total budget."""
+
+	rounded = np.round(stake_amounts, 2)
+	positive_idx = np.flatnonzero(stake_amounts > 0.0)
+	if positive_idx.size == 0:
+		return rounded
+	delta = round(float(total_budget) - float(rounded.sum()), 2)
+	if delta != 0.0:
+		rounded[positive_idx[-1]] = np.round(rounded[positive_idx[-1]] + delta, 2)
+	return rounded
 
 
-def score_result_predictions(merged: pd.DataFrame, model_bundle) -> pd.DataFrame:
+def score_result_predictions(
+	merged: pd.DataFrame,
+	model_bundle,
+	fixed_budget: float = 100.0,
+	budget_strategy: str = DEFAULT_BUDGET_STRATEGY,
+	kelly_fraction: float = DEFAULT_KELLY_FRACTION,
+) -> pd.DataFrame:
 	model = model_bundle.model
 	scaler = model_bundle.scaler
 	feature_cols = model_bundle.feature_cols
 	cat_config = model_bundle.cat_config
+	needs_cat = model_requires_cat_features(model, cat_config)
 	odds_home_col = resolve_merged_col(merged, "odds_home")
 	odds_draw_col = resolve_merged_col(merged, "odds_draw")
 	odds_away_col = resolve_merged_col(merged, "odds_away")
-	required_cols = list(feature_cols) + [odds_home_col, odds_draw_col, odds_away_col]
-	if cat_config is not None:
+	working = merged.copy()
+	missing_feature_cols = [col for col in feature_cols if col not in working.columns]
+	for col in missing_feature_cols:
+		working[col] = np.nan
+	if missing_feature_cols:
+		print(
+			f"Warning: filling {len(missing_feature_cols)} missing feature columns with neutral defaults: "
+			f"{missing_feature_cols[:8]}{'...' if len(missing_feature_cols) > 8 else ''}"
+		)
+	required_cols = [odds_home_col, odds_draw_col, odds_away_col]
+	if needs_cat:
 		required_cols.extend(["league_idx", "home_promoted", "away_promoted"])
 
-	ready = merged.dropna(subset=required_cols).copy()
+	ready = working.dropna(subset=required_cols).copy()
 	if ready.empty:
 		return pd.DataFrame()
 
@@ -90,14 +115,14 @@ def score_result_predictions(merged: pd.DataFrame, model_bundle) -> pd.DataFrame
 	implied_probs = inv_odds / norm
 	raw_margin = norm.reshape(-1) - 1
 	cat_features = None
-	if cat_config is not None:
+	if needs_cat:
 		cat_features = ready[["league_idx", "home_promoted", "away_promoted"]].to_numpy(dtype=np.int64)
 
-	probs = predict_result(
+	probs = predict_probabilities(
 		model=model,
 		scaler=scaler,
-		feature_cols=feature_cols,
 		X_raw=ready[feature_cols].to_numpy(dtype=float),
+		device=DEVICE,
 		cat_features=cat_features,
 		implied_probs=implied_probs,
 		raw_margin=raw_margin,
@@ -108,9 +133,15 @@ def score_result_predictions(merged: pd.DataFrame, model_bundle) -> pd.DataFrame
 		ready[odds_draw_col].to_numpy(dtype=float),
 		ready[odds_away_col].to_numpy(dtype=float),
 	], axis=1)
-	ev = probs * odds_matrix - 1
-	value_pick_idx = np.argmax(ev, axis=1)
-	best_ev = ev[np.arange(len(ev)), value_pick_idx]
+	selection = select_best_result_value(probs, odds_matrix, implied_probs=implied_probs)
+	allocation = allocate_fixed_budget(
+		selection=selection,
+		total_budget=fixed_budget,
+		strategy=budget_strategy,
+		kelly_fraction=kelly_fraction,
+	)
+	rounded_budget_amounts = _round_budget_amounts(allocation["stake_amounts"], total_budget=fixed_budget)
+	positive_mask = selection["positive_mask"]
 
 	return pd.DataFrame({
 		"_row_id": ready["_row_id"],
@@ -124,28 +155,52 @@ def score_result_predictions(merged: pd.DataFrame, model_bundle) -> pd.DataFrame
 		"Odds_Draw": ready[odds_draw_col].round(3),
 		"Odds_Away": ready[odds_away_col].round(3),
 		"Result_Model_Pick": RESULT_LABELS[result_pick_idx],
-		"Result_Value_Side": np.where(best_ev > 0, RESULT_LABELS[value_pick_idx], ""),
-		"Result_EV": np.where(best_ev > 0, np.round(best_ev, 4), np.nan),
+		"Result_Value_Side": np.where(positive_mask, RESULT_LABELS[selection["best_index"]], ""),
+		"Result_Value_Prob": np.where(positive_mask, np.round(selection["selected_probs"], 3), np.nan),
+		"Result_Value_Implied": np.where(positive_mask, np.round(selection["selected_implied"], 3), np.nan),
+		"Result_Edge": np.where(positive_mask, np.round(selection["edge"], 4), np.nan),
+		"Result_EV": np.where(positive_mask, np.round(selection["best_ev"], 4), np.nan),
+		"Result_Kelly_Fraction": np.where(
+			positive_mask,
+			np.round(selection["full_kelly"] * kelly_fraction, 4),
+			np.nan,
+		),
+		"Result_Budget_Share": np.where(positive_mask, np.round(allocation["stake_shares"], 4), 0.0),
+		"Result_Budget_Amount": np.where(positive_mask, rounded_budget_amounts, 0.0),
 	})
+
+
+def build_prediction_outputs(merged: pd.DataFrame, result_predictions: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+	"""Assemble final production tables from merged fixtures and scored outputs."""
+
+	base_output = pd.DataFrame({
+		"_row_id": merged["_row_id"],
+		"League": merged["league"],
+		"Date": merged["commence_time"].dt.tz_convert("Europe/Athens").dt.strftime("%Y-%m-%d"),
+		"Time": merged["commence_time"].dt.tz_convert("Europe/Athens").dt.strftime("%H:%M"),
+		"Home": merged["home_team"],
+		"Away": merged["away_team"],
+	})
+	output_df = base_output.merge(result_predictions, on="_row_id", how="left")
+	output_df = output_df.drop(columns=["_row_id"])
+	output_df = output_df.sort_values(["Date", "League", "Time", "Home", "Away"]).reset_index(drop=True)
+	value_output = output_df[output_df["Result_EV"].notna()].copy()
+	return output_df, value_output
 
 
 def main():
 	odds_api_key = os.environ.get("ODDS_API_KEY")
 	send_email_enabled = _env_flag("SEND_EMAIL", True)
-	prediction_window_days = int(os.environ.get("PREDICTION_WINDOW_DAYS", "5"))
+	prediction_window_days = int(os.environ.get("PREDICTION_WINDOW_DAYS", "6"))
+	fixed_budget = _env_float("FIXED_BUDGET", 100.0)
+	budget_strategy = os.environ.get("BUDGET_STRATEGY", DEFAULT_BUDGET_STRATEGY).strip().lower() or DEFAULT_BUDGET_STRATEGY
+	kelly_fraction = _env_float("KELLY_FRACTION", DEFAULT_KELLY_FRACTION)
 
 	print("=" * 60)
 	print("FOOTBALL PRODUCTION PIPELINE")
 	print("=" * 60)
 
-	print("\n--- Step 1: Building Production Features ---")
-	build_prod_features.main()
-
-	print("\n--- Step 2: Loading Model ---")
-	model_bundle = load_model()
-	print(f"Loaded result model with {len(model_bundle.feature_cols)} features")
-
-	print("\n--- Step 3: Fetching Odds ---")
+	print("\n--- Step 1: Fetching Odds ---")
 	raw_odds = fetch_odds.get_all_leagues_odds(odds_api_key)
 	parsed_odds = fetch_odds.parse_odds_data(raw_odds)
 	print(f"Fetched {len(parsed_odds)} games with odds across all leagues")
@@ -159,6 +214,13 @@ def main():
 	print(f"Found {len(odds_df)} upcoming games")
 	if odds_df.empty:
 		raise RuntimeError("No upcoming games found in odds data")
+
+	print("\n--- Step 2: Building Production Features ---")
+	build_prod_features.main(upcoming_fixtures=odds_df)
+
+	print("\n--- Step 3: Loading Model ---")
+	model_bundle = load_model()
+	print(f"Loaded result model with {len(model_bundle.feature_cols)} features")
 
 	features_df = pl.read_parquet(PROD_FEATURES_PATH)
 	supported_leagues = list(fetch_odds.LEAGUE_TO_SPORT_KEY.keys())
@@ -178,28 +240,28 @@ def main():
 	merged["_row_id"] = merged.index
 
 	print("\n--- Step 4: Scoring Model ---")
-	result_predictions = score_result_predictions(merged, model_bundle)
+	result_predictions = score_result_predictions(
+		merged,
+		model_bundle,
+		fixed_budget=fixed_budget,
+		budget_strategy=budget_strategy,
+		kelly_fraction=kelly_fraction,
+	)
 	if result_predictions.empty:
 		raise RuntimeError("No games had all required features for scoring")
-
-	base_output = pd.DataFrame({
-		"_row_id": merged["_row_id"],
-		"League": merged["league"],
-		"Date": merged["commence_time"].dt.tz_convert("Europe/Athens").dt.strftime("%Y-%m-%d"),
-		"Time": merged["commence_time"].dt.tz_convert("Europe/Athens").dt.strftime("%H:%M"),
-		"Home": merged["home_team"],
-		"Away": merged["away_team"],
-	})
-	output_df = base_output.merge(result_predictions, on="_row_id", how="left")
-	output_df = output_df.drop(columns=["_row_id"])
-	output_df = output_df.sort_values(["Date", "Time", "League", "Home", "Away"]).reset_index(drop=True)
-	value_output = output_df[output_df["Result_EV"].notna()].copy()
+	output_df, value_output = build_prediction_outputs(merged, result_predictions)
 
 	print("\n--- Step 5: Saving Output ---")
 	PREDICTIONS_DIR.mkdir(parents=True, exist_ok=True)
 	output_df.to_csv(OUTPUT_CSV_PATH, index=False)
 	print(f"Saved predictions to {OUTPUT_CSV_PATH}")
-	generate_html_report(output_df, OUTPUT_HTML_PATH)
+	generate_html_report(
+		output_df,
+		OUTPUT_HTML_PATH,
+		fixed_budget=fixed_budget,
+		budget_strategy=budget_strategy,
+		kelly_fraction=kelly_fraction,
+	)
 
 	print("\n" + "=" * 60)
 	print("PREDICTIONS SUMMARY")
@@ -210,7 +272,28 @@ def main():
 		print("\n" + "=" * 60)
 		print("RESULT VALUE RECOMMENDATIONS")
 		print("=" * 60)
-		print(value_output[["Date", "Time", "League", "Home", "Away", "Result_Value_Side", "Result_EV"]].to_string(index=False))
+		print(
+			value_output[
+				[
+					"Date",
+					"Time",
+					"League",
+					"Home",
+					"Away",
+					"Result_Value_Side",
+					"Result_Value_Prob",
+					"Result_Value_Implied",
+					"Result_Edge",
+					"Result_EV",
+					"Result_Budget_Share",
+					"Result_Budget_Amount",
+				]
+			].to_string(index=False)
+		)
+		print(
+			f"\nBudget split ({budget_strategy}, kelly_fraction={kelly_fraction:.2f}): "
+			f"{value_output['Result_Budget_Amount'].sum():.2f} allocated from {fixed_budget:.2f}"
+		)
 	else:
 		print("\nNo positive EV result bets found")
 
@@ -218,7 +301,16 @@ def main():
 	if send_email_enabled:
 		recipients_str = os.environ.get("EMAIL_RECIPIENTS", "")
 		recipients = [recipient.strip() for recipient in recipients_str.split(",") if recipient.strip()]
-		send_email(OUTPUT_CSV_PATH, OUTPUT_HTML_PATH, output_df, value_output if not value_output.empty else None, recipients)
+		send_email(
+			OUTPUT_CSV_PATH,
+			OUTPUT_HTML_PATH,
+			output_df,
+			value_output if not value_output.empty else None,
+			recipients,
+			fixed_budget=fixed_budget,
+			budget_strategy=budget_strategy,
+			kelly_fraction=kelly_fraction,
+		)
 	else:
 		print("SEND_EMAIL is disabled. Skipping email.")
 
