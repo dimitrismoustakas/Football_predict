@@ -16,7 +16,7 @@ Run an autonomous experiment loop that keeps going for as long as there is a cre
 3. put the chosen source changes on an `experiment/<name>` branch
 4. run the canonical evaluation path with `training/train_main_model.py`
 5. inspect the TSV and latest-metrics JSON
-6. decide the next move yourself and continue without asking the user for feedback unless genuinely blocked
+6. decide the next move yourself and continue without asking the user for feedback
 
 This skill is not one idea per invocation.
 It should keep iterating until:
@@ -49,7 +49,7 @@ Read these first:
 - If a prescreened direction looks good, confirm the exact candidate with the canonical trainer before treating it as a real improvement.
 - If a branch improves canonically and nearby variants still look promising, keep iterating on that same branch until the local neighborhood looks exhausted.
 - If a branch regresses clearly, abandon or delete it and move on instead of carrying dead ideas forward.
-- Do not pause for user confirmation between iterations unless there is a real blocker or ambiguity that cannot be resolved from the repo and prior results.
+- Do not pause for user confirmation between iterations
 - Running out of local ideas is not enough reason to stop; if the current search space is exhausted, actively look for papers, blog posts, repo references, or other credible external sources of new experiment ideas and try to translate them into branch-local candidates.
 
 Everything relevant to improving the canonical path is fair game.
@@ -63,6 +63,8 @@ This includes, when justified:
 - feature engineering
 - feature selection
 - preprocessing choices
+
+The list is not exhaustive; if you find a credible next step that does not fit into one of those buckets, it is still fair game.
 
 ## Choosing the next idea
 
@@ -93,12 +95,10 @@ After each experiment cycle, choose one of these paths yourself:
 
 1. continue on the same branch if the line still looks live
 2. abandon the branch and start a fresh branch from `main` for a new direction if the line clearly regressed
-3. if repo-local ideas are weak, do literature search and paper review before deciding there is no viable next step
-4. stop only when the remaining options are weak even after external idea search, blocked, or too expensive relative to expected value
+3. if repo-local ideas are weak, do literature search and paper review
 
 Default behavior is to keep going.
 Do not stop just because one canonical run completed.
-Do not treat idea exhaustion as final until you have tried to refresh the queue from external technical sources.
 
 ## Canonical experiment path
 
@@ -127,13 +127,3 @@ The trainer is the default experiment harness and writes the main outputs to:
 - `artifacts/models/latest_main_model_metrics.json`
 
 Use those as the default experiment record.
-
-## What good completion looks like
-
-A completed invocation should stop only when the loop is genuinely finished for now, and it should leave behind:
-
-- the best cumulative code state found during the live line of work
-- experiment branches in a reviewable state
-- updated experiment evidence in `artifacts/experiment_metrics/result_main_runs.tsv`
-- updated runtime candidate metrics in `artifacts/models/latest_main_model_metrics.json`
-- a concise end summary that explains what was tried, what won, what lost, and why the loop stopped
