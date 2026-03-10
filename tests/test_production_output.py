@@ -99,9 +99,17 @@ class ProductionOutputTests(unittest.TestCase):
 			kelly_fraction=0.5,
 		)
 		self.assertIn("</html>", html)
-		self.assertIn("Result_Budget_Amount", html)
+		self.assertIn("Suggested Bets", html)
+		self.assertIn("Split %", html)
+		self.assertIn("Odds", html)
+		self.assertIn("Model %", html)
+		self.assertIn("Market %", html)
+		self.assertIn("Edge", html)
+		self.assertIn("EV %", html)
+		self.assertNotIn("Budget split strategy", html)
+		self.assertNotIn("All Predictions", html)
 
-	def test_html_report_renders_budget_summary(self):
+	def test_html_report_renders_interactive_table(self):
 		merged = _build_merged_frame()
 		bundle = SimpleNamespace(
 			model=FakeModel(),
@@ -123,8 +131,15 @@ class ProductionOutputTests(unittest.TestCase):
 			)
 			report_html = output_path.read_text(encoding="utf-8")
 
-		self.assertIn("Budget split strategy", report_html)
-		self.assertIn("Result_Budget_Amount", report_html)
+		self.assertIn("Model Home %", report_html)
+		self.assertIn("Best Bet Now", report_html)
+		self.assertIn("Split % Now", report_html)
+		self.assertIn("Amount Now", report_html)
+		self.assertIn('id="total-budget"', report_html)
+		self.assertIn('value="10.00"', report_html)
+		self.assertIn('type="number"', report_html)
+		self.assertNotIn("Value Picks", report_html)
+		self.assertNotIn("All Predictions", report_html)
 
 	def test_scoring_passes_cat_features_for_league_bias_models(self):
 		merged = _build_merged_frame()

@@ -14,6 +14,31 @@ from pathlib import Path
 import pandas as pd
 
 
+def _build_email_bets_table(bets_df: pd.DataFrame) -> str:
+	"""Render a compact suggested-bets table for the email body."""
+
+	display = bets_df.copy()
+	display["Match"] = display["Home"] + " vs " + display["Away"]
+	display["Bet"] = display["Result_Value_Side"]
+	display["Odds"] = display.apply(
+		lambda row: (
+			row["Odds_Home"]
+			if row["Result_Value_Side"] == "Home"
+			else row["Odds_Draw"]
+			if row["Result_Value_Side"] == "Draw"
+			else row["Odds_Away"]
+		),
+		axis=1,
+	).map(lambda value: f"{value:.2f}")
+	display["Model %"] = (display["Result_Value_Prob"] * 100).map(lambda value: f"{value:.2f}%")
+	display["Market %"] = (display["Result_Value_Implied"] * 100).map(lambda value: f"{value:.2f}%")
+	display["Edge"] = (display["Result_Edge"] * 100).map(lambda value: f"{value:.2f} pts")
+	display["EV %"] = (display["Result_EV"] * 100).map(lambda value: f"{value:.2f}%")
+	display["Split %"] = (display["Result_Budget_Share"] * 100).map(lambda value: f"{value:.2f}%")
+	columns = ["Date", "Time", "League", "Match", "Bet", "Odds", "Model %", "Market %", "Edge", "EV %", "Split %"]
+	return display[columns].to_html(index=False)
+
+
 def build_email_html(
 	predictions_df: pd.DataFrame,
 	bets_df: pd.DataFrame | None,
@@ -25,32 +50,17 @@ def build_email_html(
 	"""Render the HTML email body for prediction reports."""
 
 	value_display = bets_df if bets_df is not None and not bets_df.empty else None
-	budget_label = f"{fixed_budget:.2f}" if fixed_budget is not None else "n/a"
-	strategy_label = budget_strategy or "n/a"
-	kelly_label = f"{kelly_fraction:.2f}" if kelly_fraction is not None else "n/a"
+	match_count = len(predictions_df)
+	bet_count = len(value_display) if value_display is not None else 0
 	value_section = ""
 	if value_display is not None:
-		columns = [
-			"Date",
-			"Time",
-			"League",
-			"Home",
-			"Away",
-			"Result_Value_Side",
-			"Result_Value_Prob",
-			"Result_Value_Implied",
-			"Result_Edge",
-			"Result_EV",
-			"Result_Budget_Share",
-			"Result_Budget_Amount",
-		]
 		value_section = f"""
-		<h4>Positive EV Result Picks</h4>
-		{value_display[columns].to_html(index=False)}
+		<h4>Suggested Bets</h4>
+		{_build_email_bets_table(value_display)}
 		"""
 	else:
 		value_section = """
-		<h4>Positive EV Result Picks</h4>
+		<h4>Suggested Bets</h4>
 		<p>No positive EV result bets found for this period.</p>
 		"""
 
@@ -68,13 +78,12 @@ def build_email_html(
 	<body>
 		<h2>Football Predictions - {report_date}</h2>
 		<h3>Match Result - Top 5 European Leagues</h3>
-		<p>Budget split strategy: <strong>{strategy_label}</strong> | Kelly fraction: <strong>{kelly_label}</strong> | Fixed budget: <strong>{budget_label}</strong></p>
-		<h4>All Predictions</h4>
-		{predictions_df.to_html(index=False)}
+		<p>Scanned <strong>{match_count}</strong> matches and identified <strong>{bet_count}</strong> suggested bets.</p>
 		{value_section}
 		<hr>
-		<h4>Interactive HTML Attached</h4>
-		<p>Open the attached <strong>upcoming_predictions.html</strong> file in your browser for a formatted version of the report.</p>
+		<h4>HTML Attachment</h4>
+		<p>If the odds available to you differ from the odds shown in this email, use the HTML attachment to enter your prices and recalculate the suggested bets.</p>
+		<p>The attached <strong>upcoming_predictions.html</strong> file contains the full slate, configurable odds inputs, and automatic recalculation of value and split percentages.</p>
 	</body>
 	</html>
 	"""
@@ -119,7 +128,7 @@ def send_email(
 	msg["To"] = ", ".join(recipients)
 	msg.attach(MIMEText(html_body, "html"))
 
-	for attachment_path in [csv_path, html_path]:
+	for attachment_path in [html_path]:
 		with open(attachment_path, "rb") as file:
 			part = MIMEBase("application", "octet-stream")
 			part.set_payload(file.read())
