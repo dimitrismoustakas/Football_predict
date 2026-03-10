@@ -735,8 +735,13 @@ def train_main_model() -> dict:
 		best_epoch = ""
 		final_train_epochs = ""
 		best_val_loss = float(selection_summary["blend_val_log_loss"])
+		blend_alpha = selection_summary["blend_alpha"]
+		if isinstance(blend_alpha, list):
+			blend_alpha_display = "[" + ", ".join(f"{value:.2f}" for value in blend_alpha) + "]"
+		else:
+			blend_alpha_display = f"{blend_alpha:.2f}"
 		print(
-			f"Selection blend alpha: {selection_summary['blend_alpha']:.2f} "
+			f"Selection blend alpha: {blend_alpha_display} "
 			f"(val_{comparison_metric}={best_val_loss:.5f})"
 		)
 

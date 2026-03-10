@@ -1,5 +1,6 @@
 {
 	"model_family": "elastic_net_blend",
+	"blend_mode": "classwise",
 	"blend_alpha_grid": [
 		0.45,
 		0.5,
@@ -11,13 +12,22 @@
 		0.95,
 		1.0
 	],
+	"class_blend_alpha_grid": [
+		0.35,
+		0.45,
+		0.5,
+		0.65,
+		0.75,
+		1.0
+	],
 	"elastic_net_params": {
-		"l1_ratio": 0.75,
-		"C": 0.04,
+		"l1_ratio": 0.5,
+		"C": 0.08,
 		"max_iter": 7000,
 		"random_state": 42
 	},
 	"elastic_net_input_recipe": {
-		"market_interactions": "league_and_promoted"
+		"market_interactions": "league_only",
+		"market_feature_enrichment": "quadratic_plus_margin"
 	}
 }
