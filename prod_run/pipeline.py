@@ -183,7 +183,7 @@ def build_prediction_outputs(merged: pd.DataFrame, result_predictions: pd.DataFr
 	})
 	output_df = base_output.merge(result_predictions, on="_row_id", how="left")
 	output_df = output_df.drop(columns=["_row_id"])
-	output_df = output_df.sort_values(["Date", "Time", "League", "Home", "Away"]).reset_index(drop=True)
+	output_df = output_df.sort_values(["Date", "League", "Time", "Home", "Away"]).reset_index(drop=True)
 	value_output = output_df[output_df["Result_EV"].notna()].copy()
 	return output_df, value_output
 
@@ -200,14 +200,7 @@ def main():
 	print("FOOTBALL PRODUCTION PIPELINE")
 	print("=" * 60)
 
-	print("\n--- Step 1: Building Production Features ---")
-	build_prod_features.main()
-
-	print("\n--- Step 2: Loading Model ---")
-	model_bundle = load_model()
-	print(f"Loaded result model with {len(model_bundle.feature_cols)} features")
-
-	print("\n--- Step 3: Fetching Odds ---")
+	print("\n--- Step 1: Fetching Odds ---")
 	raw_odds = fetch_odds.get_all_leagues_odds(odds_api_key)
 	parsed_odds = fetch_odds.parse_odds_data(raw_odds)
 	print(f"Fetched {len(parsed_odds)} games with odds across all leagues")
@@ -221,6 +214,13 @@ def main():
 	print(f"Found {len(odds_df)} upcoming games")
 	if odds_df.empty:
 		raise RuntimeError("No upcoming games found in odds data")
+
+	print("\n--- Step 2: Building Production Features ---")
+	build_prod_features.main(upcoming_fixtures=odds_df)
+
+	print("\n--- Step 3: Loading Model ---")
+	model_bundle = load_model()
+	print(f"Loaded result model with {len(model_bundle.feature_cols)} features")
 
 	features_df = pl.read_parquet(PROD_FEATURES_PATH)
 	supported_leagues = list(fetch_odds.LEAGUE_TO_SPORT_KEY.keys())
