@@ -27,7 +27,7 @@
 		"random_state": 42
 	},
 	"elastic_net_input_recipe": {
-		"market_interactions": "league_and_promoted",
+		"market_interactions": "league_only",
 		"market_feature_enrichment": "quadratic_plus_margin"
 	}
 }
