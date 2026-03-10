@@ -191,7 +191,7 @@ def build_prediction_outputs(merged: pd.DataFrame, result_predictions: pd.DataFr
 def main():
 	odds_api_key = os.environ.get("ODDS_API_KEY")
 	send_email_enabled = _env_flag("SEND_EMAIL", True)
-	prediction_window_days = int(os.environ.get("PREDICTION_WINDOW_DAYS", "5"))
+	prediction_window_days = int(os.environ.get("PREDICTION_WINDOW_DAYS", "6"))
 	fixed_budget = _env_float("FIXED_BUDGET", 100.0)
 	budget_strategy = os.environ.get("BUDGET_STRATEGY", DEFAULT_BUDGET_STRATEGY).strip().lower() or DEFAULT_BUDGET_STRATEGY
 	kelly_fraction = _env_float("KELLY_FRACTION", DEFAULT_KELLY_FRACTION)
