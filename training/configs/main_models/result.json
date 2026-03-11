@@ -58,7 +58,7 @@
 		"component_blend_mode": "logit",
 		"draw_component_blend_mode": "logit",
 		"draw_component_base_weight_grid": [
-			0.975
+			0.925
 		],
 		"elastic_weight_grid": [
 			0.8
