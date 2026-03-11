@@ -244,6 +244,14 @@ def build_model_config_snapshot(training_config: dict, model_family: str) -> dic
 		return dict(training_config.get("hgb_params", {}))
 	if model_family == "elastic_net_blend":
 		return dict(training_config.get("elastic_net_params", {}))
+	if model_family == "elastic_hgb_blend":
+		return {
+			"elastic_net_params": dict(training_config.get("elastic_net_params", {})),
+			"elastic_net_input_recipe": dict(training_config.get("elastic_net_input_recipe", {})),
+			"hgb_params": dict(training_config.get("hgb_params", {})),
+			"hgb_input_recipe": dict(training_config.get("hgb_input_recipe", {})),
+			"hybrid_blend_params": dict(training_config.get("hybrid_blend_params", {})),
+		}
 	raise ValueError(f"Unsupported model family: {model_family}")
 
 
