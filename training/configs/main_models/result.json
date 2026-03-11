@@ -11,7 +11,7 @@
 	"dropout": 0.15,
 	"lr": 0.0012,
 	"weight_decay": 5e-05,
-	"beta1": 0.85,
+	"beta1": 0.86,
 	"batch_size": 256,
 	"max_epochs": 35,
 	"patience": 3,
@@ -21,11 +21,11 @@
 	"learn_market_bias": true,
 	"learn_league_market_bias": true,
 	"learn_league_residual_bias": false,
-	"market_logit_scale": 1.08,
+	"market_logit_scale": 1.065,
 	"gate_hidden_dim": 16,
 	"gate_target_budget": 0.17,
-	"gate_mean_weight": 0.09,
+	"gate_mean_weight": 0.095,
 	"gate_sat_weight": 0.0,
-	"lambda_repulsion": 1.5,
+	"lambda_repulsion": 2.3,
 	"lambda_corr": 0.0
 }
