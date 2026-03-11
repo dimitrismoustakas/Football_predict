@@ -61,6 +61,15 @@ The output includes:
 - result probabilities
 - model pick
 - positive-EV result side diagnostics
+- fixed-budget split fields for positive-EV picks (`Result_Value_Prob`, `Result_Value_Implied`, `Result_Edge`, `Result_EV`, `Result_Budget_Share`, `Result_Budget_Amount`)
+
+Offline smoke-test command:
+- `.venv\Scripts\python.exe prod_run\smoke_test.py`
+
+Budget split knobs for production:
+- `FIXED_BUDGET` default `100`
+- `BUDGET_STRATEGY` default `kelly` (`kelly`, `edge`, `flat`)
+- `KELLY_FRACTION` default `0.5`
 
 ## Repo hygiene
 

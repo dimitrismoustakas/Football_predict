@@ -379,21 +379,24 @@ def predict_result_proba(
 		if device is None:
 			device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 		X_scaled = X_numeric if scaler is None else scaler.transform(X_numeric)
+		X_scaled = np.nan_to_num(X_scaled, nan=0.0)
 		X_tensor = torch.tensor(X_scaled, dtype=torch.float32, device=device)
 		cat_tensor = None if cat_features is None else torch.tensor(cat_features, dtype=torch.long, device=device)
 		implied_tensor = torch.tensor(implied_probs, dtype=torch.float32, device=device)
 		raw_margin_tensor = torch.tensor(raw_margin, dtype=torch.float32, device=device)
-		model = model.to(device)
-		model.eval()
+		if hasattr(model, "to"):
+			model = model.to(device)
+		if hasattr(model, "eval"):
+			model.eval()
 		with torch.no_grad():
-			if hasattr(model, "gate_head"):
+			try:
 				logits = model(X_tensor, cat_tensor, implied_tensor, raw_margin_tensor)
-			else:
+			except TypeError:
 				logits = model(X_tensor, cat_tensor)
 			return F.softmax(logits, dim=-1).cpu().numpy()
 
 	input_recipe = metadata.get("input_recipe") or build_input_recipe(model_family)
-	design = build_design_matrix(X_numeric, cat_features, implied_probs, raw_margin, input_recipe)
+	design = build_design_matrix(np.nan_to_num(X_numeric, nan=0.0), cat_features, implied_probs, raw_margin, input_recipe)
 	probs = normalize_probabilities(model.predict_proba(design))
 	blend_alpha = metadata.get("selection_summary", {}).get("blend_alpha")
 	return apply_implied_blend(probs, implied_probs, blend_alpha)

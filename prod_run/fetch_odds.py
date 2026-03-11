@@ -20,6 +20,7 @@ LEAGUE_TO_SPORT_KEY = {
 SPORT_KEY_TO_LEAGUE = {value: key for key, value in LEAGUE_TO_SPORT_KEY.items()}
 CACHE_DIR = Path("data/prod/odds")
 TEAM_MAPPING_PATH = MAPPINGS_DIR / "theoddsapi_to_canonical.json"
+PREFERRED_BOOKMAKER_KEYS = ("betsson", "williamhill")
 
 
 def _load_team_mapping() -> dict:
@@ -48,6 +49,7 @@ def fetch_league_odds(sport_key: str, api_key: str) -> list[dict]:
 		"apiKey": api_key,
 		"regions": "eu",
 		"markets": "h2h",
+		"bookmakers": ",".join(PREFERRED_BOOKMAKER_KEYS),
 	}
 	response = requests.get(url, params=params, timeout=30)
 	response.raise_for_status()
@@ -87,7 +89,7 @@ def get_all_leagues_odds(api_key: str | None) -> list[dict]:
 
 
 def parse_odds_data(games: list[dict]) -> list[dict]:
-	"""Extract best result odds across bookmakers."""
+	"""Extract result odds from Betsson, falling back to William Hill."""
 
 	parsed = []
 	for game in games:
@@ -98,25 +100,35 @@ def parse_odds_data(games: list[dict]) -> list[dict]:
 		home_team = TEAM_MAPPING.get(home_team_raw, home_team_raw)
 		away_team = TEAM_MAPPING.get(away_team_raw, away_team_raw)
 
-		best_home = None
-		best_draw = None
-		best_away = None
-		for bookmaker in game.get("bookmakers", []):
-			for market in bookmaker.get("markets", []):
-				if market.get("key") != "h2h":
-					continue
-				for outcome in market.get("outcomes", []):
-					price = outcome.get("price")
-					if price is None:
-						continue
-					if outcome["name"] == home_team_raw and (best_home is None or price > best_home):
-						best_home = price
-					elif outcome["name"] == away_team_raw and (best_away is None or price > best_away):
-						best_away = price
-					elif outcome["name"].lower() == "draw" and (best_draw is None or price > best_draw):
-						best_draw = price
+		selected_bookmaker = None
+		bookmakers = {bookmaker.get("key"): bookmaker for bookmaker in game.get("bookmakers", [])}
+		for bookmaker_key in PREFERRED_BOOKMAKER_KEYS:
+			bookmaker = bookmakers.get(bookmaker_key)
+			if bookmaker is not None:
+				selected_bookmaker = bookmaker
+				break
 
-		if any(value is not None for value in [best_home, best_draw, best_away]):
+		if selected_bookmaker is None:
+			continue
+
+		selected_home = None
+		selected_draw = None
+		selected_away = None
+		for market in selected_bookmaker.get("markets", []):
+			if market.get("key") != "h2h":
+				continue
+			for outcome in market.get("outcomes", []):
+				price = outcome.get("price")
+				if price is None:
+					continue
+				if outcome["name"] == home_team_raw:
+					selected_home = price
+				elif outcome["name"] == away_team_raw:
+					selected_away = price
+				elif outcome["name"].lower() == "draw":
+					selected_draw = price
+
+		if all(value is not None for value in [selected_home, selected_draw, selected_away]):
 			parsed.append({
 				"home_team": home_team,
 				"away_team": away_team,
@@ -124,8 +136,8 @@ def parse_odds_data(games: list[dict]) -> list[dict]:
 				"away_team_raw": away_team_raw,
 				"league_id": league_id,
 				"commence_time": commence_time,
-				"odds_home": best_home,
-				"odds_draw": best_draw,
-				"odds_away": best_away,
+				"odds_home": selected_home,
+				"odds_draw": selected_draw,
+				"odds_away": selected_away,
 			})
 	return parsed

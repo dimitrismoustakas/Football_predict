@@ -9,7 +9,7 @@ Use this skill when asked to run repo experiments continuously without waiting f
 
 ## Mission
 
-Run an autonomous experiment loop that keeps going for as long as there is a credible next step:
+Run an autonomous experiment loop that keeps going until the user stop you:
 
 1. choose a promising next direction unless the user already constrained the search space
 2. make whatever supporting analysis, ablations, or sweeps help you decide
@@ -49,7 +49,7 @@ Read these first:
 - If a prescreened direction looks good, confirm the exact candidate with the canonical trainer before treating it as a real improvement.
 - If a branch improves canonically and nearby variants still look promising, keep iterating on that same branch until the local neighborhood looks exhausted.
 - If a branch regresses clearly, abandon or delete it and move on instead of carrying dead ideas forward.
-- Do not pause for user confirmation between iterations
+- Do not pause for user confirmation between iterations.
 - Running out of local ideas is not enough reason to stop; if the current search space is exhausted, actively look for papers, blog posts, repo references, or other credible external sources of new experiment ideas and try to translate them into branch-local candidates.
 
 Everything relevant to improving the canonical path is fair game.
@@ -64,7 +64,7 @@ This includes, when justified:
 - feature selection
 - preprocessing choices
 
-The list is not exhaustive; if you find a credible next step that does not fit into one of those buckets, it is still fair game.
+The list is not exhaustive; if you have a credible idea that does not fit into one of those buckets, it is still worth trying.
 
 ## Choosing the next idea
 
@@ -94,7 +94,7 @@ If the nearby neighborhood is exhausted, switch into idea-generation mode by rea
 After each experiment cycle, choose one of these paths yourself:
 
 1. continue on the same branch if the line still looks live
-2. abandon the branch and start a fresh branch from `main` for a new direction if the line clearly regressed
+2. abandon the branch and start a fresh branch from the current best branch (usually `main` if the best work is already merged there) for a new direction if the line clearly regressed
 3. if repo-local ideas are weak, do literature search and paper review
 
 Default behavior is to keep going.
@@ -105,7 +105,9 @@ Do not stop just because one canonical run completed.
 Default commands:
 
 1. refresh any required data inputs
-2. run `uv run python training/train_main_model.py`
+2. run `uv run python training/train_main_model.py --description "short text of what this experiment tried"`
+
+The `--description` flag is **mandatory** for every canonical run. Write a concise description of what the experiment tried (e.g. "remove season_progress feature", "resnet backbone with cross-attention", "increase LR to 0.04"). Do not use commas in the description (the TSV uses tabs but commas in descriptions still cause readability issues).
 
 Before spending a full canonical run, it is reasonable to do narrow branch-local support work such as:
 
@@ -127,3 +129,30 @@ The trainer is the default experiment harness and writes the main outputs to:
 - `artifacts/models/latest_main_model_metrics.json`
 
 Use those as the default experiment record.
+
+## Experiment ledger format
+
+The TSV at `artifacts/experiment_metrics/result_main_runs.tsv` uses tab-separated columns (never use commas in descriptions):
+
+| Column | Description |
+|---|---|
+| `recorded_at_utc` | ISO timestamp |
+| `git_commit` | 7-char short hash |
+| `git_branch` | Branch name |
+| `cv_log_loss` | CV mean log_loss (the decision metric) |
+| `delta` | Signed improvement over previous reference row |
+| `best_epoch` | Epoch selected by early stopping |
+| `status` | `keep`, `discard`, or `crash` |
+| `description` | Short text of what this experiment tried |
+| `cv_rps` | CV mean RPS (secondary) |
+| `val_log_loss` | Epoch-selection season log_loss |
+| `test_log_loss` | Watch-only test season log_loss |
+| `cv_metrics_json` | Full CV metrics dict as JSON |
+| `test_metrics_json` | Full test metrics dict as JSON |
+
+**Every** canonical run gets logged - including discards. The trainer writes the row with an **empty `status`** field. After reviewing the training output and delta, **you must update the status** in the TSV yourself:
+- `keep` - worth keeping as the new reference point
+- `discard` - did not improve or not worth keeping
+- `crash` - OOM or other failure (use `0.000000` for cv_log_loss)
+
+To update the status, edit the last line of the TSV and fill in the `status` column. Do not leave it empty.

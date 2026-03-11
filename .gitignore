@@ -23,7 +23,6 @@ downloaded_files/
 artifacts/models/*
 !artifacts/models/README.md
 artifacts/experiment_metrics/*
-!artifacts/experiment_metrics/result_main_runs.tsv
 
 # Data
 data/

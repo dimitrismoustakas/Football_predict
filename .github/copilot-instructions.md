@@ -33,7 +33,7 @@ Always preserve this unless the user explicitly asks to change it:
 
 ## GitHub tooling
 - GitHub CLI is available at `C:/Program Files/GitHub CLI/gh.exe` on this machine even if `gh` is not on `PATH`
-- prefer using it for branch/PR actions when needed
+- use it for branch/PR actions when needed
 
 ## General experiment guidance
 - Keep the repo surface lean.
@@ -41,11 +41,6 @@ Always preserve this unless the user explicitly asks to change it:
 - If experiment-specific search or analysis code is needed, keep it narrow and branch-local unless it clearly belongs in the canonical path.
 - Use `artifacts/experiment_metrics/result_main_runs.tsv` as the default experiment ledger and keep it append-only.
 - Do not add report workflows or extra experiment registries unless the user explicitly asks for them.
-
-## Skill
-If the user asks for a bounded experiment pass, use `experiment-runner`.
-If the user asks for autonomous continuous experimentation without pausing for feedback, use `continuous-experiment-runner`.
-Keep detailed experiment-loop behavior in the skill definitions instead of duplicating it here.
 
 ## Betting diagnostics
 Use proper scoring metrics as the primary quality gate.
