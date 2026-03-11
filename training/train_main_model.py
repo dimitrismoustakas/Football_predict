@@ -247,7 +247,7 @@ def build_model_config_snapshot(training_config: dict, model_family: str) -> dic
 	if model_family == "elastic_net_blend":
 		return dict(training_config.get("elastic_net_params", {}))
 	if model_family == "elastic_hgb_blend":
-		return {
+		snapshot = {
 			"elastic_net_params": dict(training_config.get("elastic_net_params", {})),
 			"elastic_net_input_recipe": dict(training_config.get("elastic_net_input_recipe", {})),
 			"hgb_params": dict(training_config.get("hgb_params", {})),
@@ -255,8 +255,15 @@ def build_model_config_snapshot(training_config: dict, model_family: str) -> dic
 			"hybrid_blend_params": dict(training_config.get("hybrid_blend_params", {})),
 			"hybrid_component_feature_cols": dict(training_config.get("hybrid_component_feature_cols", {})),
 		}
+		if "draw_decomp_params" in training_config:
+			snapshot["draw_decomp_params"] = dict(training_config.get("draw_decomp_params", {}))
+		if "draw_decomp_input_recipe" in training_config:
+			snapshot["draw_decomp_input_recipe"] = dict(training_config.get("draw_decomp_input_recipe", {}))
+		if "draw_decomp_feature_cols" in training_config:
+			snapshot["draw_decomp_feature_cols"] = list(training_config.get("draw_decomp_feature_cols", []))
+		return snapshot
 	if model_family == "elastic_lgbm_blend":
-		return {
+		snapshot = {
 			"elastic_net_params": dict(training_config.get("elastic_net_params", {})),
 			"elastic_net_input_recipe": dict(training_config.get("elastic_net_input_recipe", {})),
 			"lightgbm_params": dict(training_config.get("lightgbm_params", {})),
@@ -264,6 +271,13 @@ def build_model_config_snapshot(training_config: dict, model_family: str) -> dic
 			"hybrid_blend_params": dict(training_config.get("hybrid_blend_params", {})),
 			"hybrid_component_feature_cols": dict(training_config.get("hybrid_component_feature_cols", {})),
 		}
+		if "draw_decomp_params" in training_config:
+			snapshot["draw_decomp_params"] = dict(training_config.get("draw_decomp_params", {}))
+		if "draw_decomp_input_recipe" in training_config:
+			snapshot["draw_decomp_input_recipe"] = dict(training_config.get("draw_decomp_input_recipe", {}))
+		if "draw_decomp_feature_cols" in training_config:
+			snapshot["draw_decomp_feature_cols"] = list(training_config.get("draw_decomp_feature_cols", []))
+		return snapshot
 	raise ValueError(f"Unsupported model family: {model_family}")
 
 
