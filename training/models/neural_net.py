@@ -401,11 +401,17 @@ class GatedResidualModel(nn.Module):
 		cat_features: Optional[torch.Tensor] = None,
 		implied_probs: Optional[torch.Tensor] = None,
 		raw_margin: Optional[torch.Tensor] = None,
+		return_details: bool = False,
 	) -> torch.Tensor:
 		h = self.base_model.get_hidden(x, cat_features)
 		residual_logits = self._compute_residual_logits(h, cat_features)
 
 		if implied_probs is None:
+			if return_details:
+				return {
+					"logits": residual_logits,
+					"gate": None,
+				}
 			return residual_logits
 		if raw_margin is None:
 			raise ValueError("raw_margin is required when implied_probs is provided")
@@ -417,7 +423,13 @@ class GatedResidualModel(nn.Module):
 		if self.shared_gate:
 			gate = gate.expand(-1, self.n_classes)
 		implied_logits = self._compute_implied_logits(implied_probs, cat_features)
-		return implied_logits + gate * residual_logits
+		pred_logits = implied_logits + gate * residual_logits
+		if return_details:
+			return {
+				"logits": pred_logits,
+				"gate": gate,
+			}
+		return pred_logits
 
 	def _compute_residual_logits(
 		self,
@@ -477,6 +489,11 @@ class TrainConfig:
 	gate_sat_weight: float = 0.001
 	lambda_repulsion: float = 0.0
 	lambda_corr: float = 0.0
+	curriculum_type: str = "none"
+	curriculum_start: float = 0.35
+	curriculum_warmup_epochs: int = 8
+	curriculum_temperature: float = 0.1
+	curriculum_min_weight: float = 0.25
 
 
 def _log_softmax_from_implied(implied_probs: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -527,6 +544,64 @@ def _multiclass_conditional_corr(
 	return rho_weighted
 
 
+def _weighted_mean(values: torch.Tensor, weights: Optional[torch.Tensor], eps: float = 1e-6) -> torch.Tensor:
+	"""Average values with optional per-sample weights."""
+
+	if weights is None:
+		return values.mean()
+	return (values * weights).sum() / torch.clamp(weights.sum(), min=eps)
+
+
+def _normalized_market_entropy(implied_probs: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+	"""Normalized market entropy in [0, 1]."""
+
+	entropy = -torch.sum(implied_probs * torch.log(implied_probs + eps), dim=-1)
+	return entropy / math.log(implied_probs.shape[-1])
+
+
+def curriculum_difficulty(
+	implied_probs: torch.Tensor,
+	target: torch.Tensor,
+	curriculum_type: str,
+	eps: float = 1e-6,
+) -> Optional[torch.Tensor]:
+	"""Compute curriculum difficulty scores from bookmaker uncertainty."""
+
+	if curriculum_type == "none":
+		return None
+	if curriculum_type == "market_entropy":
+		return _normalized_market_entropy(implied_probs, eps=eps)
+	raise ValueError(f"Unknown curriculum_type: {curriculum_type}")
+
+
+def _curriculum_weights(
+	implied_probs: torch.Tensor,
+	target: torch.Tensor,
+	epoch: int,
+	curriculum_type: str,
+	curriculum_start: float,
+	curriculum_warmup_epochs: int,
+	curriculum_temperature: float,
+	curriculum_min_weight: float,
+	eps: float = 1e-6,
+) -> Optional[torch.Tensor]:
+	"""Compute optional curriculum weights from market difficulty."""
+
+	difficulty = curriculum_difficulty(implied_probs, target, curriculum_type, eps=eps)
+	if difficulty is None:
+		return None
+
+	if curriculum_warmup_epochs <= 1:
+		return torch.ones_like(difficulty)
+
+	progress = min(1.0, max(0.0, (epoch - 1) / max(1, curriculum_warmup_epochs - 1)))
+	threshold = curriculum_start + (1.0 - curriculum_start) * progress
+	temperature = max(curriculum_temperature, eps)
+	min_weight = min(max(curriculum_min_weight, 0.0), 1.0)
+	weights = torch.sigmoid((threshold - difficulty) / temperature)
+	return min_weight + (1.0 - min_weight) * weights
+
+
 def gated_loss(
 	model: GatedResidualModel,
 	x: torch.Tensor,
@@ -538,19 +613,40 @@ def gated_loss(
 	gate_sat_weight: float = 0.001,
 	lambda_repulsion: float = 0.0,
 	lambda_corr: float = 0.0,
+	curriculum_type: str = "none",
+	curriculum_start: float = 0.35,
+	curriculum_warmup_epochs: int = 8,
+	curriculum_temperature: float = 0.1,
+	curriculum_min_weight: float = 0.25,
+	epoch: int = 1,
 	eps: float = 1e-6,
 ) -> torch.Tensor:
 	"""Loss for the multiclass gated residual model."""
 
-	pred_logits = model(x, cat_features, implied_probs, raw_margin)
+	pred_output = model(x, cat_features, implied_probs, raw_margin, return_details=True)
+	pred_logits = pred_output["logits"]
+	gate = pred_output["gate"]
 	pred_probs = F.softmax(pred_logits, dim=-1)
 	implied_log = _log_softmax_from_implied(implied_probs)
 	target = target.view(-1).long()
-	loss = F.cross_entropy(pred_logits, target)
+	sample_weights = _curriculum_weights(
+		implied_probs,
+		target,
+		epoch,
+		curriculum_type=curriculum_type,
+		curriculum_start=curriculum_start,
+		curriculum_warmup_epochs=curriculum_warmup_epochs,
+		curriculum_temperature=curriculum_temperature,
+		curriculum_min_weight=curriculum_min_weight,
+		eps=eps,
+	)
+	primary_loss = F.cross_entropy(pred_logits, target, reduction="none")
+	loss = _weighted_mean(primary_loss, sample_weights, eps=eps)
 
 	if lambda_repulsion > 0:
 		implied_normalized = implied_probs / implied_probs.sum(dim=-1, keepdim=True)
-		repulsion = ((pred_probs - implied_normalized) ** 2).mean()
+		repulsion = ((pred_probs - implied_normalized) ** 2).mean(dim=-1)
+		repulsion = _weighted_mean(repulsion, sample_weights, eps=eps)
 		loss = loss - lambda_repulsion * repulsion
 
 	if lambda_corr > 0:
@@ -558,21 +654,19 @@ def gated_loss(
 		corr_penalty = (rho + 1.0) ** 2
 		loss = loss + lambda_corr * corr_penalty
 
-	if gate_mean_weight > 0 or gate_sat_weight > 0:
-		h = model.base_model.get_hidden(x, cat_features)
-		market_features = model._compute_market_features(implied_probs, raw_margin)
-		gate_input = torch.cat([h, market_features], dim=-1)
-		gate_logits = model.gate_head(gate_input)
-		gate = torch.sigmoid(gate_logits + model.gate_bias)
-		if model.shared_gate:
-			gate = gate.expand(-1, model.n_classes)
-
+	if gate is not None and (gate_mean_weight > 0 or gate_sat_weight > 0):
 		if gate_mean_weight > 0:
-			gate_mean_loss = (gate.mean() - model.gate_target_budget).pow(2)
+			if sample_weights is None:
+				gate_mean = gate.mean()
+			else:
+				expanded_weights = sample_weights.unsqueeze(-1).expand_as(gate)
+				gate_mean = expanded_weights.mul(gate).sum() / torch.clamp(expanded_weights.sum(), min=eps)
+			gate_mean_loss = (gate_mean - model.gate_target_budget).pow(2)
 			loss = loss + gate_mean_weight * gate_mean_loss
 
 		if gate_sat_weight > 0:
-			sat_loss = (-torch.log(gate * (1 - gate) + eps)).mean()
+			sat_loss = (-torch.log(gate * (1 - gate) + eps)).mean(dim=-1)
+			sat_loss = _weighted_mean(sat_loss, sample_weights, eps=eps)
 			loss = loss + gate_sat_weight * sat_loss
 
 	return loss

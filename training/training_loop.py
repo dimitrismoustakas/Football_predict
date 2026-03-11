@@ -57,6 +57,7 @@ def run_train_epoch(
 	optimizer: torch.optim.Optimizer,
 	device: torch.device,
 	config: TrainConfig,
+	epoch: int,
 ) -> float:
 	"""Run one training epoch."""
 
@@ -84,6 +85,12 @@ def run_train_epoch(
 			gate_sat_weight=config.gate_sat_weight,
 			lambda_repulsion=config.lambda_repulsion,
 			lambda_corr=config.lambda_corr,
+			curriculum_type=config.curriculum_type,
+			curriculum_start=config.curriculum_start,
+			curriculum_warmup_epochs=config.curriculum_warmup_epochs,
+			curriculum_temperature=config.curriculum_temperature,
+			curriculum_min_weight=config.curriculum_min_weight,
+			epoch=epoch,
 		)
 		loss.backward()
 		optimizer.step()
@@ -146,7 +153,7 @@ def _fit_model(
 	stalled_epochs = 0
 
 	for epoch in range(1, config.epochs + 1):
-		avg_train_loss = run_train_epoch(model, train_loader, optimizer, device, config)
+		avg_train_loss = run_train_epoch(model, train_loader, optimizer, device, config, epoch)
 		history["train_loss"].append(avg_train_loss)
 
 		if not use_validation:

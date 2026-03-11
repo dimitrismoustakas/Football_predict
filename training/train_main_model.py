@@ -175,6 +175,7 @@ def build_train_config(
 	cat_config: CategoricalConfig,
 	epochs: int,
 	num_leagues: int,
+	apply_curriculum: bool = True,
 ) -> TrainConfig:
 	model_kwargs = {
 		"hidden_layers": training_config["hidden_layers"],
@@ -210,6 +211,11 @@ def build_train_config(
 		gate_sat_weight=training_config["gate_sat_weight"],
 		lambda_repulsion=training_config.get("lambda_repulsion", 0.0),
 		lambda_corr=training_config.get("lambda_corr", 0.0),
+		curriculum_type=training_config.get("curriculum_type", "none") if apply_curriculum else "none",
+		curriculum_start=training_config.get("curriculum_start", 0.35),
+		curriculum_warmup_epochs=training_config.get("curriculum_warmup_epochs", 8),
+		curriculum_temperature=training_config.get("curriculum_temperature", 0.1),
+		curriculum_min_weight=training_config.get("curriculum_min_weight", 0.25),
 	)
 
 
@@ -430,6 +436,7 @@ def evaluate_cv_objective(
 ) -> tuple[list[dict], Dict[str, float], Dict[str, float]]:
 	fold_metrics = []
 	fold_baseline_metrics = []
+	apply_curriculum = training_config.get("curriculum_phase", "all") == "all"
 	for fold_idx, (train_seasons, val_season) in enumerate(objective_folds, start=1):
 		print(
 			f"\n--- CV Objective Fold {fold_idx}/{len(objective_folds)}: {train_seasons[0]}..{train_seasons[-1]} -> {val_season} ---"
@@ -443,7 +450,14 @@ def evaluate_cv_objective(
 			[val_season],
 			training_seed + fold_idx,
 		)
-		fold_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs, num_leagues)
+		fold_config = build_train_config(
+			training_config,
+			data_train["X"].shape[1],
+			cat_config,
+			final_train_epochs,
+			num_leagues,
+			apply_curriculum=apply_curriculum,
+		)
 		fold_model, _, _ = train_fixed_epochs(fold_config, train_loader, device=DEVICE, verbose=True)
 		baseline_metrics = summarize_metrics(evaluate_implied_baseline(data_val))
 		metrics = summarize_metrics(evaluate_model(fold_model, data_val, device=DEVICE, verbose=True))
@@ -528,6 +542,7 @@ def train_main_model(description: str = "") -> dict:
 		cat_config,
 		training_config["max_epochs"],
 		num_leagues,
+		apply_curriculum=training_config.get("curriculum_phase", "all") in {"all", "selection_only"},
 	)
 	early_stop_model, early_stop_history, best_val_loss = train_with_early_stopping(
 		early_stop_config,
@@ -566,7 +581,14 @@ def train_main_model(description: str = "") -> dict:
 		[test_season],
 		training_seed + 10_000,
 	)
-	final_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs, num_leagues)
+	final_config = build_train_config(
+		training_config,
+		data_train["X"].shape[1],
+		cat_config,
+		final_train_epochs,
+		num_leagues,
+		apply_curriculum=training_config.get("curriculum_phase", "all") == "all",
+	)
 
 	test_baseline_metrics = evaluate_implied_baseline(data_test)
 
