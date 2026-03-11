@@ -3,13 +3,9 @@ name: continuous-experiment-runner
 description: Run experiment ideas continuously with no user feedback loop until blocked, exhausted, or explicitly stopped.
 ---
 
-# Continuous experiment runner
-
-Use this skill when asked to run repo experiments continuously without waiting for user feedback between iterations.
-
 ## Mission
 
-Run an autonomous experiment loop that keeps going until the user stop you:
+You are the Lead ML Researcher for this project. Your job is to run autonomous experiments loop that keeps going until the user stops you:
 
 1. choose a promising next direction unless the user already constrained the search space
 2. make whatever supporting analysis, ablations, or sweeps help you decide
@@ -34,13 +30,12 @@ Read these first:
 ## Hard rules
 
 - Preserve the canonical workflow unless the user explicitly asks to change it.
-- Prefer editing existing canonical files over adding permanent experiment scaffolding.
 - Keep the repo surface lean.
 - Do not write markdown reports unless the user explicitly asks for one.
 - Do not commit generated model bundles under `artifacts/models/`.
 - Do not rewrite prior rows in `artifacts/experiment_metrics/result_main_runs.tsv`.
 - Name experiment branches `experiment/<name>`.
-- Use CV `log_loss` as the decision metric.
+- Use CV `log_loss` as the decision metric subject to code simplicity criteria. Solutions with fewer lines of code with the same CV `log_loss` is preferred.
 - Treat the fixed test season as watch-only monitoring output.
 - Compare against the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv`.
 - Cheap local prescreens are allowed when they help rank nearby ideas, but they do not replace the canonical trainer and must not append to the TSV ledger.
@@ -52,39 +47,14 @@ Read these first:
 - Running out of local ideas is not enough reason to stop; if the current search space is exhausted, actively look for papers, blog posts, repo references, or other credible external sources of new experiment ideas and try to translate them into branch-local candidates.
 
 Everything relevant to improving the canonical path is fair game.
-This includes, when justified:
-
-- model architecture
-- optimizer
-- hyperparameters
-- training loop details
-- batch size and model size
-- feature engineering
-- feature selection
-- preprocessing choices
-
-The list is not exhaustive; if you have a credible idea that does not fit into one of those buckets, it is still worth trying.
 
 ## Choosing the next idea
 
 If the user gives a direction, stay within it until that neighborhood is exhausted.
 
-If not, choose the next step yourself from the code and current results.
-Good choices include:
+If not, which will be the norm, you decide the next direction yourself.
 
-- simplifying code while plausibly preserving or improving the main metric
-- removing a component that may be unnecessary
-- running a sweep or ablation to decide which component to keep
-- trying a reasonable model or optimizer adjustment
-- trying a reasonable training-loop or batch-size adjustment
-- trying a reasonable feature-engineering or feature-selection adjustment
-- tightening the canonical path where the current setup looks overbuilt
-- recalibrating how the model uses bookmaker information
-- iterating on a promising direction that is not yet better, when nearby adjustments are still plausible
-- importing a credible idea from recent papers or other technical references when repo-local ideas are thinning out
-
-Prefer ideas that are plausible and clean.
-If two directions look similar, prefer the one that simplifies the canonical path, including simplifying code.
+If two directions look similar, prefer the one that simplifies the code complexity of the canonical path. Simpler conceptually doesn't matter if it leads to code bloat and unnesseary 'just in case' code. Preferably for new experiments code will be produced if needed.
 If one direction is already showing incremental gains, keep working that neighborhood before jumping to a new family.
 If the nearby neighborhood is exhausted, switch into idea-generation mode by reading papers and related technical material until you find another credible candidate.
 
@@ -92,7 +62,7 @@ If the nearby neighborhood is exhausted, switch into idea-generation mode by rea
 
 After each experiment cycle, choose one of these paths yourself:
 
-1. continue on the same branch if the line still looks live
+1. continue on the same line if it still looks live
 2. abandon the branch and start a fresh branch from the current best branch (could be `main` if everything has been merged there) for a new direction if the line clearly regressed
 3. if repo-local ideas are weak, do literature search and paper review
 
