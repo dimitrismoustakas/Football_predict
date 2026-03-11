@@ -9,6 +9,7 @@ dependencies = [
     "pyarrow>=21.0.0",
     "python-dotenv>=1.2.1",
     "scikit-learn>=1.7.2",
+    "lightgbm>=4.6.0",
     "soccerdata>=1.8.7",
     "torch>=2.6.0",
 ]

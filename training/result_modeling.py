@@ -2,11 +2,13 @@
 Shared helpers for canonical result-model families.
 """
 
+import warnings
 from typing import Any, Dict
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+from lightgbm import LGBMClassifier
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
@@ -35,8 +37,10 @@ def resolve_model_name(training_config: dict | None) -> str:
 	return {
 		"gated_residual": "gated_residual",
 		"hist_gradient_boosting_blend": "hist_gradient_boosting_blend",
+		"lightgbm_blend": "lightgbm_blend",
 		"elastic_net_blend": "elastic_net_blend",
 		"elastic_hgb_blend": "elastic_hgb_blend",
+		"elastic_lgbm_blend": "elastic_lgbm_blend",
 	}.get(family, family)
 
 
@@ -54,7 +58,7 @@ def build_component_training_config(training_config: dict, model_family: str) ->
 	component_feature_cols = dict(training_config.get("hybrid_component_feature_cols", {}))
 	if model_family == "elastic_net_blend" and component_feature_cols.get("elastic") is not None:
 		component_config["component_feature_cols"] = list(component_feature_cols["elastic"])
-	if model_family == "hist_gradient_boosting_blend" and component_feature_cols.get("tree") is not None:
+	if model_family in {"hist_gradient_boosting_blend", "lightgbm_blend"} and component_feature_cols.get("tree") is not None:
 		component_config["component_feature_cols"] = list(component_feature_cols["tree"])
 	return component_config
 
@@ -126,14 +130,30 @@ def build_input_recipe(model_family: str, training_config: dict | None = None) -
 		if (training_config or {}).get("component_feature_cols") is not None:
 			recipe["feature_cols"] = list((training_config or {})["component_feature_cols"])
 		return recipe
-	if model_family == "elastic_hgb_blend":
+	if model_family == "lightgbm_blend":
+		recipe = {
+			"numeric_scaling": "raw",
+			"league_encoding": "one_hot",
+			"include_promoted_flags": True,
+			"market_features": "raw_probs_and_margin",
+		}
+		recipe.update(dict((training_config or {}).get("lightgbm_input_recipe", {})))
+		if (training_config or {}).get("component_feature_cols") is not None:
+			recipe["feature_cols"] = list((training_config or {})["component_feature_cols"])
+		return recipe
+	if model_family in {"elastic_hgb_blend", "elastic_lgbm_blend"}:
+		tree_component_family = (
+			"hist_gradient_boosting_blend"
+			if model_family == "elastic_hgb_blend"
+			else "lightgbm_blend"
+		)
 		elastic_recipe = build_input_recipe(
 			"elastic_net_blend",
 			build_component_training_config(training_config or {}, "elastic_net_blend"),
 		)
 		tree_recipe = build_input_recipe(
-			"hist_gradient_boosting_blend",
-			build_component_training_config(training_config or {}, "hist_gradient_boosting_blend"),
+			tree_component_family,
+			build_component_training_config(training_config or {}, tree_component_family),
 		)
 		return {
 			"ensemble_type": "probability_blend",
@@ -424,6 +444,20 @@ def build_non_torch_model(training_config: dict):
 			max_iter=int(params.get("max_iter", 300)),
 			random_state=int(params.get("random_state", 42)),
 		)
+	if model_family == "lightgbm_blend":
+		params = dict(training_config.get("lightgbm_params", {}))
+		return LGBMClassifier(
+			objective="multiclass",
+			num_class=3,
+			n_estimators=int(params.get("n_estimators", 300)),
+			learning_rate=float(params.get("learning_rate", 0.05)),
+			num_leaves=int(params.get("num_leaves", 31)),
+			min_child_samples=int(params.get("min_child_samples", 20)),
+			reg_lambda=float(params.get("reg_lambda", 0.0)),
+			random_state=int(params.get("random_state", 42)),
+			n_jobs=int(params.get("n_jobs", -1)),
+			verbosity=int(params.get("verbosity", -1)),
+		)
 	raise ValueError(f"Unsupported non-torch model family: {model_family}")
 
 
@@ -433,7 +467,13 @@ def predict_non_torch_model_proba(
 ) -> np.ndarray:
 	"""Predict calibrated probabilities for a non-torch estimator."""
 
-	return normalize_probabilities(model.predict_proba(design))
+	with warnings.catch_warnings():
+		warnings.filterwarnings(
+			"ignore",
+			message="X does not have valid feature names, but LGBMClassifier was fitted with feature names",
+			category=UserWarning,
+		)
+		return normalize_probabilities(model.predict_proba(design))
 
 
 def fit_non_torch_selection_model(
@@ -446,11 +486,16 @@ def fit_non_torch_selection_model(
 	model_family = resolve_model_family(training_config)
 	if uses_torch_backend(model_family):
 		raise ValueError("Torch models should not use fit_non_torch_selection_model")
-	if model_family == "elastic_hgb_blend":
+	if model_family in {"elastic_hgb_blend", "elastic_lgbm_blend"}:
+		tree_component_family = (
+			"hist_gradient_boosting_blend"
+			if model_family == "elastic_hgb_blend"
+			else "lightgbm_blend"
+		)
 		elastic_config = build_component_training_config(training_config, "elastic_net_blend")
-		tree_config = build_component_training_config(training_config, "hist_gradient_boosting_blend")
+		tree_config = build_component_training_config(training_config, tree_component_family)
 		elastic_recipe = build_input_recipe("elastic_net_blend", elastic_config)
-		tree_recipe = build_input_recipe("hist_gradient_boosting_blend", tree_config)
+		tree_recipe = build_input_recipe(tree_component_family, tree_config)
 		elastic_model = build_non_torch_model(elastic_config)
 		tree_model = build_non_torch_model(tree_config)
 		X_train_elastic = build_design_from_data(train_data, elastic_recipe)
@@ -514,9 +559,14 @@ def fit_non_torch_final_model(training_config: dict, train_data: Dict[str, np.nd
 	model_family = resolve_model_family(training_config)
 	if uses_torch_backend(model_family):
 		raise ValueError("Torch models should not use fit_non_torch_final_model")
-	if model_family == "elastic_hgb_blend":
+	if model_family in {"elastic_hgb_blend", "elastic_lgbm_blend"}:
+		tree_component_family = (
+			"hist_gradient_boosting_blend"
+			if model_family == "elastic_hgb_blend"
+			else "lightgbm_blend"
+		)
 		elastic_config = build_component_training_config(training_config, "elastic_net_blend")
-		tree_config = build_component_training_config(training_config, "hist_gradient_boosting_blend")
+		tree_config = build_component_training_config(training_config, tree_component_family)
 		return {
 			"elastic": fit_non_torch_final_model(elastic_config, train_data),
 			"tree": fit_non_torch_final_model(tree_config, train_data),
@@ -562,7 +612,7 @@ def predict_result_proba(
 			return F.softmax(logits, dim=-1).cpu().numpy()
 
 	input_recipe = metadata.get("input_recipe") or build_input_recipe(model_family)
-	if model_family == "elastic_hgb_blend":
+	if model_family in {"elastic_hgb_blend", "elastic_lgbm_blend"}:
 		component_recipes = input_recipe.get("component_recipes") or {}
 		elastic_recipe = component_recipes.get("elastic")
 		tree_recipe = component_recipes.get("tree")

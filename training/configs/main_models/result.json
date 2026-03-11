@@ -1,5 +1,5 @@
 {
-	"model_family": "elastic_hgb_blend",
+	"model_family": "elastic_lgbm_blend",
 	"blend_mode": "classwise",
 	"blend_alpha_grid": [
 		0.45,
@@ -30,22 +30,22 @@
 		"market_interactions": "league_only",
 		"market_feature_enrichment": "quadratic_plus_margin"
 	},
-	"hgb_params": {
+	"lightgbm_params": {
 		"learning_rate": 0.05,
-		"max_leaf_nodes": 63,
-		"min_samples_leaf": 20,
-		"l2_regularization": 0.3,
-		"max_iter": 300,
+		"num_leaves": 63,
+		"min_child_samples": 20,
+		"reg_lambda": 0.3,
+		"n_estimators": 300,
 		"random_state": 42
 	},
-	"hgb_input_recipe": {
+	"lightgbm_input_recipe": {
 		"market_features": "logit_probs_and_margin",
 		"market_feature_enrichment": "quadratic_plus_margin"
 	},
 	"hybrid_blend_params": {
 		"component_blend_mode": "logit",
 		"elastic_weight_grid": [
-			0.85
+			0.8
 		]
 	},
 	"hybrid_component_feature_cols": {

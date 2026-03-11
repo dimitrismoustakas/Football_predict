@@ -242,6 +242,8 @@ def build_model_config_snapshot(training_config: dict, model_family: str) -> dic
 		}
 	if model_family == "hist_gradient_boosting_blend":
 		return dict(training_config.get("hgb_params", {}))
+	if model_family == "lightgbm_blend":
+		return dict(training_config.get("lightgbm_params", {}))
 	if model_family == "elastic_net_blend":
 		return dict(training_config.get("elastic_net_params", {}))
 	if model_family == "elastic_hgb_blend":
@@ -250,6 +252,15 @@ def build_model_config_snapshot(training_config: dict, model_family: str) -> dic
 			"elastic_net_input_recipe": dict(training_config.get("elastic_net_input_recipe", {})),
 			"hgb_params": dict(training_config.get("hgb_params", {})),
 			"hgb_input_recipe": dict(training_config.get("hgb_input_recipe", {})),
+			"hybrid_blend_params": dict(training_config.get("hybrid_blend_params", {})),
+			"hybrid_component_feature_cols": dict(training_config.get("hybrid_component_feature_cols", {})),
+		}
+	if model_family == "elastic_lgbm_blend":
+		return {
+			"elastic_net_params": dict(training_config.get("elastic_net_params", {})),
+			"elastic_net_input_recipe": dict(training_config.get("elastic_net_input_recipe", {})),
+			"lightgbm_params": dict(training_config.get("lightgbm_params", {})),
+			"lightgbm_input_recipe": dict(training_config.get("lightgbm_input_recipe", {})),
 			"hybrid_blend_params": dict(training_config.get("hybrid_blend_params", {})),
 			"hybrid_component_feature_cols": dict(training_config.get("hybrid_component_feature_cols", {})),
 		}
@@ -493,7 +504,7 @@ def resolve_active_feature_columns(df, training_config: dict) -> list[str]:
 
 	default_feature_cols = select_feature_columns(df, FEATURE_MANIFEST_PATH)
 	model_family = resolve_model_family(training_config)
-	if model_family != "elastic_hgb_blend":
+	if model_family not in {"elastic_hgb_blend", "elastic_lgbm_blend"}:
 		return default_feature_cols
 
 	component_feature_cols = dict(training_config.get("hybrid_component_feature_cols", {}))
