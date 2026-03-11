@@ -13,6 +13,8 @@ def model_requires_cat_features(model: Any, cat_config: Any | None) -> bool:
 	return (
 		cat_config is not None
 		or getattr(model, "learn_league_market_bias", False)
+		or getattr(model, "learn_league_market_scale", False)
+		or getattr(model, "learn_league_gate_bias", False)
 		or getattr(model, "learn_league_residual_bias", False)
 	)
 
