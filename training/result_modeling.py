@@ -51,6 +51,11 @@ def build_component_training_config(training_config: dict, model_family: str) ->
 
 	component_config = dict(training_config)
 	component_config["model_family"] = model_family
+	component_feature_cols = dict(training_config.get("hybrid_component_feature_cols", {}))
+	if model_family == "elastic_net_blend" and component_feature_cols.get("elastic") is not None:
+		component_config["component_feature_cols"] = list(component_feature_cols["elastic"])
+	if model_family == "hist_gradient_boosting_blend" and component_feature_cols.get("tree") is not None:
+		component_config["component_feature_cols"] = list(component_feature_cols["tree"])
 	return component_config
 
 
@@ -107,6 +112,8 @@ def build_input_recipe(model_family: str, training_config: dict | None = None) -
 			"market_interactions": "none",
 		}
 		recipe.update(dict((training_config or {}).get("elastic_net_input_recipe", {})))
+		if (training_config or {}).get("component_feature_cols") is not None:
+			recipe["feature_cols"] = list((training_config or {})["component_feature_cols"])
 		return recipe
 	if model_family == "hist_gradient_boosting_blend":
 		recipe = {
@@ -116,6 +123,8 @@ def build_input_recipe(model_family: str, training_config: dict | None = None) -
 			"market_features": "raw_probs_and_margin",
 		}
 		recipe.update(dict((training_config or {}).get("hgb_input_recipe", {})))
+		if (training_config or {}).get("component_feature_cols") is not None:
+			recipe["feature_cols"] = list((training_config or {})["component_feature_cols"])
 		return recipe
 	if model_family == "elastic_hgb_blend":
 		elastic_recipe = build_input_recipe(
@@ -221,8 +230,20 @@ def build_design_matrix(
 def build_design_from_data(data: Dict[str, np.ndarray], input_recipe: dict) -> np.ndarray:
 	"""Build a design matrix directly from prepared data."""
 
+	X_numeric = data["X"]
+	selected_feature_cols = input_recipe.get("feature_cols")
+	available_feature_cols = data.get("feature_cols")
+	if selected_feature_cols is not None:
+		if available_feature_cols is None:
+			raise ValueError("feature_cols are required to select a component-specific design block")
+		index_by_name = {name: idx for idx, name in enumerate(available_feature_cols)}
+		try:
+			selected_indices = [index_by_name[name] for name in selected_feature_cols]
+		except KeyError as exc:
+			raise ValueError(f"Selected feature column missing from prepared data: {exc.args[0]}") from exc
+		X_numeric = X_numeric[:, selected_indices]
 	return build_design_matrix(
-		X_numeric=data["X"],
+		X_numeric=X_numeric,
 		cat_features=data.get("cat_features"),
 		implied_probs=data["implied"],
 		raw_margin=data["raw_margin"],
@@ -547,15 +568,27 @@ def predict_result_proba(
 		tree_recipe = component_recipes.get("tree")
 		if elastic_recipe is None or tree_recipe is None:
 			raise ValueError("Hybrid blend metadata is missing component recipes")
+		available_feature_cols = metadata.get("feature_cols")
+		if available_feature_cols is None:
+			raise ValueError("Hybrid blend metadata is missing feature_cols")
+		feature_index = {name: idx for idx, name in enumerate(available_feature_cols)}
+		elastic_selected_cols = elastic_recipe.get("feature_cols")
+		tree_selected_cols = tree_recipe.get("feature_cols")
+		elastic_X_numeric = np.nan_to_num(X_numeric, nan=0.0)
+		tree_X_numeric = np.nan_to_num(X_numeric, nan=0.0)
+		if elastic_selected_cols is not None:
+			elastic_X_numeric = elastic_X_numeric[:, [feature_index[name] for name in elastic_selected_cols]]
+		if tree_selected_cols is not None:
+			tree_X_numeric = tree_X_numeric[:, [feature_index[name] for name in tree_selected_cols]]
 		elastic_design = build_design_matrix(
-			np.nan_to_num(X_numeric, nan=0.0),
+			elastic_X_numeric,
 			cat_features,
 			implied_probs,
 			raw_margin,
 			elastic_recipe,
 		)
 		tree_design = build_design_matrix(
-			np.nan_to_num(X_numeric, nan=0.0),
+			tree_X_numeric,
 			cat_features,
 			implied_probs,
 			raw_margin,

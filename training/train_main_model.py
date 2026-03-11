@@ -251,6 +251,7 @@ def build_model_config_snapshot(training_config: dict, model_family: str) -> dic
 			"hgb_params": dict(training_config.get("hgb_params", {})),
 			"hgb_input_recipe": dict(training_config.get("hgb_input_recipe", {})),
 			"hybrid_blend_params": dict(training_config.get("hybrid_blend_params", {})),
+			"hybrid_component_feature_cols": dict(training_config.get("hybrid_component_feature_cols", {})),
 		}
 	raise ValueError(f"Unsupported model family: {model_family}")
 
@@ -455,6 +456,7 @@ def print_delta(delta: float | None, comparison_metric: str):
 
 def build_runtime_metadata(
 	training_config: dict,
+	feature_cols: list[str] | None = None,
 	reference_comparison: dict | None = None,
 	selection_summary: dict | None = None,
 ) -> dict:
@@ -464,6 +466,7 @@ def build_runtime_metadata(
 	return {
 		"model_family": model_family,
 		"model_name": resolve_model_name(training_config),
+		"feature_cols": feature_cols,
 		"input_recipe": build_input_recipe(model_family, training_config),
 		"selection_summary": {
 			"reference_comparison": reference_comparison,
@@ -483,6 +486,23 @@ def prepare_non_torch_phase_data(
 	train_data = prepare_data(df, feature_cols, train_seasons, fit_scaler=False)
 	eval_data = prepare_data(df, feature_cols, eval_seasons, fit_scaler=False)
 	return train_data, eval_data
+
+
+def resolve_active_feature_columns(df, training_config: dict) -> list[str]:
+	"""Resolve the feature table used by the active model family."""
+
+	default_feature_cols = select_feature_columns(df, FEATURE_MANIFEST_PATH)
+	model_family = resolve_model_family(training_config)
+	if model_family != "elastic_hgb_blend":
+		return default_feature_cols
+
+	component_feature_cols = dict(training_config.get("hybrid_component_feature_cols", {}))
+	elastic_feature_cols = list(component_feature_cols.get("elastic", default_feature_cols))
+	tree_feature_cols = list(component_feature_cols.get("tree", default_feature_cols))
+	missing = [col for col in [*elastic_feature_cols, *tree_feature_cols] if col not in df.columns]
+	if missing:
+		raise ValueError(f"Missing hybrid component feature columns: {sorted(set(missing))}")
+	return elastic_feature_cols + [col for col in tree_feature_cols if col not in elastic_feature_cols]
 
 
 def evaluate_cv_objective(
@@ -539,7 +559,11 @@ def evaluate_non_torch_cv_objective(
 
 	fold_metrics = []
 	fold_baseline_metrics = []
-	runtime_metadata = build_runtime_metadata(training_config, selection_summary=selection_summary)
+	runtime_metadata = build_runtime_metadata(
+		training_config,
+		feature_cols=feature_cols,
+		selection_summary=selection_summary,
+	)
 	for fold_idx, (train_seasons, val_season) in enumerate(objective_folds, start=1):
 		print(
 			f"\n--- CV Objective Fold {fold_idx}/{len(objective_folds)}: {train_seasons[0]}..{train_seasons[-1]} -> {val_season} ---"
@@ -583,7 +607,7 @@ def train_main_model(description: str = "") -> dict:
 	df = df.drop_nulls(subset=["odds_home", "odds_draw", "odds_away"])
 	print(f"Total rows with odds: {len(df)}")
 
-	feature_cols = select_feature_columns(df, FEATURE_MANIFEST_PATH)
+	feature_cols = resolve_active_feature_columns(df, training_config)
 	print(f"Features: {len(feature_cols)}")
 	num_leagues = get_num_leagues(df)
 	use_categorical = training_config.get("use_categorical", True)
@@ -722,7 +746,11 @@ def train_main_model(description: str = "") -> dict:
 		print(f"\nCV objective ({comparison_metric}): {objective_value:.5f}")
 
 		print("\n--- Selection-split Model Performance on Epoch-selection Season ---")
-		runtime_metadata = build_runtime_metadata(training_config, selection_summary=selection_summary)
+		runtime_metadata = build_runtime_metadata(
+			training_config,
+			feature_cols=feature_cols,
+			selection_summary=selection_summary,
+		)
 		validation_baseline_metrics = evaluate_implied_baseline(selection_val_data)
 		validation_metrics = evaluate_model(
 			selection_model,
@@ -757,6 +785,7 @@ def train_main_model(description: str = "") -> dict:
 	)
 	runtime_metadata = build_runtime_metadata(
 		training_config,
+		feature_cols=feature_cols,
 		selection_summary=selection_summary,
 	)
 	print_delta(delta, comparison_metric)
