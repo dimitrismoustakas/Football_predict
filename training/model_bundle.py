@@ -89,7 +89,7 @@ def cat_config_from_metadata(metadata: dict) -> CategoricalConfig | None:
 def infer_num_leagues_from_state_dict(state_dict: dict[str, Any]) -> int | None:
 	"""Recover league count for older bundles that omitted it from metadata."""
 
-	for key in ("league_market_bias.weight", "league_residual_bias.weight"):
+	for key in ("league_market_bias.weight", "league_gate_bias.weight", "league_residual_bias.weight"):
 		weights = state_dict.get(key)
 		if weights is not None and getattr(weights, "ndim", 0) >= 1:
 			return int(weights.shape[0])
