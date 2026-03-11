@@ -56,7 +56,7 @@
 	},
 	"hybrid_blend_params": {
 		"component_blend_mode": "logit",
-		"draw_component_blend_mode": "convex",
+		"draw_component_blend_mode": "logit",
 		"draw_component_base_weight_grid": [
 			0.975
 		],
