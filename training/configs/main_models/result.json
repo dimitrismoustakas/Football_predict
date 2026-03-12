@@ -24,7 +24,7 @@
 	"learn_league_market_scale": true,
 	"league_market_scale_enabled_leagues": [1, 3],
 	"learn_league_market_class_scale": true,
-	"league_market_class_scale_enabled_leagues": [2, 3, 4],
+	"league_market_class_scale_enabled_leagues": [2, 3],
 	"learn_league_market_logit_mixer": true,
 	"learn_league_gate_bias": false,
 	"learn_league_residual_bias": false,
