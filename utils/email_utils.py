@@ -15,7 +15,7 @@ import pandas as pd
 
 
 def _build_email_bets_table(bets_df: pd.DataFrame) -> str:
-	"""Render a compact suggested-bets table for the email body."""
+	"""Render a compact positive-EV table for the email body."""
 
 	display = bets_df.copy()
 	display["Match"] = display["Home"] + " vs " + display["Away"]
@@ -34,8 +34,7 @@ def _build_email_bets_table(bets_df: pd.DataFrame) -> str:
 	display["Market %"] = (display["Result_Value_Implied"] * 100).map(lambda value: f"{value:.2f}%")
 	display["Edge"] = (display["Result_Edge"] * 100).map(lambda value: f"{value:.2f} pts")
 	display["EV %"] = (display["Result_EV"] * 100).map(lambda value: f"{value:.2f}%")
-	display["Split %"] = (display["Result_Budget_Share"] * 100).map(lambda value: f"{value:.2f}%")
-	columns = ["Date", "Time", "League", "Match", "Bet", "Odds", "Model %", "Market %", "Edge", "EV %", "Split %"]
+	columns = ["Date", "Time", "League", "Match", "Bet", "Odds", "Model %", "Market %", "Edge", "EV %"]
 	return display[columns].to_html(index=False)
 
 
@@ -43,25 +42,22 @@ def build_email_html(
 	predictions_df: pd.DataFrame,
 	bets_df: pd.DataFrame | None,
 	report_date: str,
-	fixed_budget: float | None = None,
-	budget_strategy: str | None = None,
-	kelly_fraction: float | None = None,
 ) -> str:
 	"""Render the HTML email body for prediction reports."""
 
 	value_display = bets_df if bets_df is not None and not bets_df.empty else None
 	match_count = len(predictions_df)
-	bet_count = len(value_display) if value_display is not None else 0
-	value_section = ""
+	value_count = len(value_display) if value_display is not None else 0
 	if value_display is not None:
 		value_section = f"""
-		<h4>Suggested Bets</h4>
+		<h4>Positive EV Games</h4>
+		<p>These are the games with positive expected value from this production run.</p>
 		{_build_email_bets_table(value_display)}
 		"""
 	else:
 		value_section = """
-		<h4>Suggested Bets</h4>
-		<p>No positive EV result bets found for this period.</p>
+		<h4>Positive EV Games</h4>
+		<p>No positive expected value result bets found for this period.</p>
 		"""
 
 	return f"""
@@ -78,28 +74,24 @@ def build_email_html(
 	<body>
 		<h2>Football Predictions - {report_date}</h2>
 		<h3>Match Result - Top 5 European Leagues</h3>
-		<p>Scanned <strong>{match_count}</strong> matches and identified <strong>{bet_count}</strong> suggested bets.</p>
+		<p>Scanned <strong>{match_count}</strong> matches and identified <strong>{value_count}</strong> games with positive expected value.</p>
+		<p>To get bankroll allocation, download the attached HTML file and open it in a browser.</p>
 		{value_section}
 		<hr>
 		<h4>HTML Attachment</h4>
-		<p>If the odds available to you differ from the odds shown in this email, use the HTML attachment to enter your prices and recalculate the suggested bets.</p>
-		<p>The attached <strong>upcoming_predictions.html</strong> file contains the full slate, configurable odds inputs, and automatic recalculation of value and split percentages.</p>
+		<p>The attached <strong>upcoming_predictions.html</strong> file lets you edit odds, enter your current bankroll, and recalculate the suggested stakes.</p>
 	</body>
 	</html>
 	"""
 
 
 def send_email(
-	csv_path: Path,
 	html_path: Path,
 	predictions_df: pd.DataFrame,
 	bets_df: pd.DataFrame | None,
-	recipients: list,
-	fixed_budget: float | None = None,
-	budget_strategy: str | None = None,
-	kelly_fraction: float | None = None,
+	recipients: list[str],
 ):
-	"""Send the result prediction report and attachments."""
+	"""Send the result prediction report and HTML attachment."""
 
 	if not recipients:
 		print("No email recipients defined. Skipping email.")
@@ -117,9 +109,6 @@ def send_email(
 		predictions_df=predictions_df,
 		bets_df=bets_df,
 		report_date=today_str,
-		fixed_budget=fixed_budget,
-		budget_strategy=budget_strategy,
-		kelly_fraction=kelly_fraction,
 	)
 
 	msg = MIMEMultipart("alternative")
@@ -128,13 +117,12 @@ def send_email(
 	msg["To"] = ", ".join(recipients)
 	msg.attach(MIMEText(html_body, "html"))
 
-	for attachment_path in [html_path]:
-		with open(attachment_path, "rb") as file:
-			part = MIMEBase("application", "octet-stream")
-			part.set_payload(file.read())
-			encoders.encode_base64(part)
-			part.add_header("Content-Disposition", f"attachment; filename={attachment_path.name}")
-			msg.attach(part)
+	with open(html_path, "rb") as file:
+		part = MIMEBase("application", "octet-stream")
+		part.set_payload(file.read())
+		encoders.encode_base64(part)
+		part.add_header("Content-Disposition", f"attachment; filename={html_path.name}")
+		msg.attach(part)
 
 	try:
 		with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:

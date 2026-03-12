@@ -21,7 +21,7 @@ from prod_run.generate_html_report import generate_html_report
 from training.inference import model_requires_cat_features, predict_probabilities
 from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
 from utils import send_email
-from utils.portfolio import DEFAULT_BUDGET_STRATEGY, DEFAULT_KELLY_FRACTION, allocate_fixed_budget, select_best_result_value
+from utils.portfolio import DEFAULT_KELLY_FRACTION, select_best_result_value
 
 load_dotenv()
 
@@ -33,6 +33,7 @@ OUTPUT_CSV_PATH = PREDICTIONS_DIR / "upcoming_predictions.csv"
 OUTPUT_HTML_PATH = PREDICTIONS_DIR / "upcoming_predictions.html"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RESULT_LABELS = np.array(["Home", "Draw", "Away"])
+DEFAULT_MIN_BET_AMOUNT = 0.1
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -74,12 +75,93 @@ def _round_budget_amounts(stake_amounts: np.ndarray, total_budget: float) -> np.
 	return rounded
 
 
+def allocate_bankroll_kelly(
+	selection: dict[str, np.ndarray],
+	total_bankroll: float,
+	kelly_fraction: float,
+) -> dict[str, np.ndarray | float | str]:
+	"""Allocate proper partial Kelly stakes from a bankroll without forcing full deployment."""
+
+	raw_fractions = np.where(
+		selection["positive_mask"],
+		selection["full_kelly"] * max(0.0, float(kelly_fraction)),
+		0.0,
+	)
+	raw_fractions = np.clip(raw_fractions, 0.0, None)
+	fraction_sum = float(raw_fractions.sum())
+	scale = 1.0 / fraction_sum if fraction_sum > 1.0 and fraction_sum > 0.0 else 1.0
+	stake_shares = raw_fractions * scale
+	stake_amounts = stake_shares * float(total_bankroll)
+	return {
+		"strategy": "bankroll_kelly",
+		"kelly_fraction": float(kelly_fraction),
+		"raw_weights": raw_fractions,
+		"stake_shares": stake_shares,
+		"stake_amounts": stake_amounts,
+		"allocated_budget": float(stake_amounts.sum()),
+	}
+
+
+def allocate_recommended_stakes(
+	selection: dict[str, np.ndarray],
+	total_budget: float,
+	kelly_fraction: float,
+	min_bet_amount: float = DEFAULT_MIN_BET_AMOUNT,
+) -> dict[str, np.ndarray | float | str]:
+	"""Allocate bankroll Kelly stakes, pruning sub-minimum bets until stable."""
+
+	active_mask = selection["positive_mask"].astype(bool).copy()
+	final_allocation = {
+		"strategy": "bankroll_kelly",
+		"kelly_fraction": float(kelly_fraction),
+		"raw_weights": np.zeros_like(selection["best_ev"], dtype=float),
+		"stake_shares": np.zeros_like(selection["best_ev"], dtype=float),
+		"stake_amounts": np.zeros_like(selection["best_ev"], dtype=float),
+		"allocated_budget": 0.0,
+	}
+
+	while True:
+		constrained_selection = {
+			key: value.copy() if isinstance(value, np.ndarray) else value
+			for key, value in selection.items()
+		}
+		constrained_selection["positive_mask"] = active_mask.copy()
+		allocation = allocate_bankroll_kelly(
+			selection=constrained_selection,
+			total_bankroll=total_budget,
+			kelly_fraction=kelly_fraction,
+		)
+		rounded_amounts = _round_budget_amounts(
+			allocation["stake_amounts"],
+			total_budget=float(allocation["allocated_budget"]),
+		)
+		too_small_mask = (rounded_amounts > 0.0) & (rounded_amounts + 1e-12 < float(min_bet_amount))
+		final_allocation = allocation | {"stake_amounts": rounded_amounts}
+		if not np.any(too_small_mask):
+			break
+		next_active_mask = active_mask & ~too_small_mask
+		if np.array_equal(next_active_mask, active_mask):
+			break
+		active_mask = next_active_mask
+
+	display_shares = np.zeros_like(final_allocation["stake_amounts"], dtype=float)
+	if float(total_budget) > 0.0:
+		display_shares = final_allocation["stake_amounts"] / float(total_budget)
+
+	return final_allocation | {
+		"stake_shares": display_shares,
+		"allocated_budget": float(final_allocation["stake_amounts"].sum()),
+		"recommended_mask": final_allocation["stake_amounts"] > 0.0,
+		"min_bet_amount": float(min_bet_amount),
+	}
+
+
 def score_result_predictions(
 	merged: pd.DataFrame,
 	model_bundle,
 	fixed_budget: float = 100.0,
-	budget_strategy: str = DEFAULT_BUDGET_STRATEGY,
 	kelly_fraction: float = DEFAULT_KELLY_FRACTION,
+	min_bet_amount: float = DEFAULT_MIN_BET_AMOUNT,
 ) -> pd.DataFrame:
 	model = model_bundle.model
 	scaler = model_bundle.scaler
@@ -134,14 +216,14 @@ def score_result_predictions(
 		ready[odds_away_col].to_numpy(dtype=float),
 	], axis=1)
 	selection = select_best_result_value(probs, odds_matrix, implied_probs=implied_probs)
-	allocation = allocate_fixed_budget(
+	allocation = allocate_recommended_stakes(
 		selection=selection,
 		total_budget=fixed_budget,
-		strategy=budget_strategy,
 		kelly_fraction=kelly_fraction,
+		min_bet_amount=min_bet_amount,
 	)
-	rounded_budget_amounts = _round_budget_amounts(allocation["stake_amounts"], total_budget=fixed_budget)
 	positive_mask = selection["positive_mask"]
+	recommended_mask = allocation["recommended_mask"]
 
 	return pd.DataFrame({
 		"_row_id": ready["_row_id"],
@@ -165,8 +247,8 @@ def score_result_predictions(
 			np.round(selection["full_kelly"] * kelly_fraction, 4),
 			np.nan,
 		),
-		"Result_Budget_Share": np.where(positive_mask, np.round(allocation["stake_shares"], 4), 0.0),
-		"Result_Budget_Amount": np.where(positive_mask, rounded_budget_amounts, 0.0),
+		"Result_Budget_Share": np.where(recommended_mask, np.round(allocation["stake_shares"], 4), 0.0),
+		"Result_Budget_Amount": np.where(recommended_mask, allocation["stake_amounts"], 0.0),
 	})
 
 
@@ -193,8 +275,8 @@ def main():
 	send_email_enabled = _env_flag("SEND_EMAIL", True)
 	prediction_window_days = int(os.environ.get("PREDICTION_WINDOW_DAYS", "6"))
 	fixed_budget = _env_float("FIXED_BUDGET", 100.0)
-	budget_strategy = os.environ.get("BUDGET_STRATEGY", DEFAULT_BUDGET_STRATEGY).strip().lower() or DEFAULT_BUDGET_STRATEGY
 	kelly_fraction = _env_float("KELLY_FRACTION", DEFAULT_KELLY_FRACTION)
+	min_bet_amount = _env_float("MIN_BET_AMOUNT", DEFAULT_MIN_BET_AMOUNT)
 
 	print("=" * 60)
 	print("FOOTBALL PRODUCTION PIPELINE")
@@ -244,12 +326,13 @@ def main():
 		merged,
 		model_bundle,
 		fixed_budget=fixed_budget,
-		budget_strategy=budget_strategy,
 		kelly_fraction=kelly_fraction,
+		min_bet_amount=min_bet_amount,
 	)
 	if result_predictions.empty:
 		raise RuntimeError("No games had all required features for scoring")
 	output_df, value_output = build_prediction_outputs(merged, result_predictions)
+	recommended_output = value_output[value_output["Result_Budget_Amount"] > 0.0].copy()
 
 	print("\n--- Step 5: Saving Output ---")
 	PREDICTIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -259,8 +342,8 @@ def main():
 		output_df,
 		OUTPUT_HTML_PATH,
 		fixed_budget=fixed_budget,
-		budget_strategy=budget_strategy,
 		kelly_fraction=kelly_fraction,
+		min_bet_amount=min_bet_amount,
 	)
 
 	print("\n" + "=" * 60)
@@ -270,7 +353,7 @@ def main():
 
 	if not value_output.empty:
 		print("\n" + "=" * 60)
-		print("RESULT VALUE RECOMMENDATIONS")
+		print("POSITIVE EV GAMES")
 		print("=" * 60)
 		print(
 			value_output[
@@ -290,9 +373,11 @@ def main():
 				]
 			].to_string(index=False)
 		)
+		print(f"\nPositive EV games: {len(value_output)}")
+		print(f"Suggested bets after min-stake filter: {len(recommended_output)}")
 		print(
-			f"\nBudget split ({budget_strategy}, kelly_fraction={kelly_fraction:.2f}): "
-			f"{value_output['Result_Budget_Amount'].sum():.2f} allocated from {fixed_budget:.2f}"
+			f"Proposed total stake ({kelly_fraction:.2f} fraction, min_bet={min_bet_amount:.2f}): "
+			f"{recommended_output['Result_Budget_Amount'].sum():.2f} from {fixed_budget:.2f}"
 		)
 	else:
 		print("\nNo positive EV result bets found")
@@ -302,14 +387,10 @@ def main():
 		recipients_str = os.environ.get("EMAIL_RECIPIENTS", "")
 		recipients = [recipient.strip() for recipient in recipients_str.split(",") if recipient.strip()]
 		send_email(
-			OUTPUT_CSV_PATH,
 			OUTPUT_HTML_PATH,
 			output_df,
 			value_output if not value_output.empty else None,
 			recipients,
-			fixed_budget=fixed_budget,
-			budget_strategy=budget_strategy,
-			kelly_fraction=kelly_fraction,
 		)
 	else:
 		print("SEND_EMAIL is disabled. Skipping email.")

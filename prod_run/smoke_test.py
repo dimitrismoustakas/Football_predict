@@ -97,7 +97,6 @@ def main() -> None:
 		merged,
 		bundle,
 		fixed_budget=FIXED_BUDGET,
-		budget_strategy="kelly",
 		kelly_fraction=0.5,
 	)
 	output_df, value_df = build_prediction_outputs(merged, result_predictions)
@@ -108,7 +107,6 @@ def main() -> None:
 		output_df,
 		SMOKE_HTML_PATH,
 		fixed_budget=FIXED_BUDGET,
-		budget_strategy="kelly",
 		kelly_fraction=0.5,
 	)
 
@@ -116,7 +114,7 @@ def main() -> None:
 	print(f"Wrote smoke-test HTML: {SMOKE_HTML_PATH}")
 	print(f"Fixtures scored: {len(output_df)}")
 	print(f"Positive EV picks: {len(value_df)}")
-	print(f"Allocated budget: {value_df['Result_Budget_Amount'].sum():.2f}")
+	print(f"Allocated bankroll: {value_df['Result_Budget_Amount'].sum():.2f}")
 
 
 if __name__ == "__main__":

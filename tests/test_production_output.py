@@ -3,13 +3,14 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 import torch
 
 from prod_run.generate_html_report import generate_html_report
-from prod_run.pipeline import build_prediction_outputs, score_result_predictions
+from prod_run.pipeline import allocate_recommended_stakes, build_prediction_outputs, score_result_predictions
 from utils.email_utils import build_email_html
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -65,7 +66,7 @@ def _build_merged_frame() -> pd.DataFrame:
 
 
 class ProductionOutputTests(unittest.TestCase):
-	def test_scored_predictions_include_budget_fields(self):
+	def test_scored_predictions_include_positive_ev_and_budget_fields(self):
 		merged = _build_merged_frame()
 		bundle = SimpleNamespace(
 			model=FakeModel(),
@@ -78,7 +79,6 @@ class ProductionOutputTests(unittest.TestCase):
 			merged,
 			bundle,
 			fixed_budget=100.0,
-			budget_strategy="kelly",
 			kelly_fraction=0.5,
 		)
 
@@ -86,7 +86,8 @@ class ProductionOutputTests(unittest.TestCase):
 		self.assertIn("Result_Budget_Share", scored.columns)
 		self.assertIn("Result_Value_Implied", scored.columns)
 		self.assertIn("Result_Edge", scored.columns)
-		self.assertAlmostEqual(scored["Result_Budget_Amount"].sum(), 100.0, places=2)
+		self.assertGreater(scored["Result_Budget_Amount"].sum(), 0.0)
+		self.assertLessEqual(scored["Result_Budget_Amount"].sum(), 100.0)
 
 		output_df, value_df = build_prediction_outputs(merged, scored)
 		self.assertFalse(value_df.empty)
@@ -94,20 +95,20 @@ class ProductionOutputTests(unittest.TestCase):
 			predictions_df=output_df,
 			bets_df=value_df,
 			report_date="2026-03-10",
-			fixed_budget=100.0,
-			budget_strategy="kelly",
-			kelly_fraction=0.5,
 		)
 		self.assertIn("</html>", html)
-		self.assertIn("Suggested Bets", html)
-		self.assertIn("Split %", html)
+		self.assertIn("Positive EV Games", html)
+		self.assertIn("games with positive expected value", html)
+		self.assertIn("open it in a browser", html)
 		self.assertIn("Odds", html)
 		self.assertIn("Model %", html)
 		self.assertIn("Market %", html)
 		self.assertIn("Edge", html)
 		self.assertIn("EV %", html)
-		self.assertNotIn("Budget split strategy", html)
-		self.assertNotIn("All Predictions", html)
+		self.assertNotIn("Stake % of Bankroll", html)
+		self.assertNotIn("Stake Amount", html)
+		self.assertNotIn("Proposed total stake", html)
+		self.assertNotIn("Minimum stake rule", html)
 
 	def test_html_report_renders_interactive_table(self):
 		merged = _build_merged_frame()
@@ -117,7 +118,7 @@ class ProductionOutputTests(unittest.TestCase):
 			feature_cols=FEATURE_COLS,
 			cat_config=None,
 		)
-		scored = score_result_predictions(merged, bundle, fixed_budget=100.0)
+		scored = score_result_predictions(merged, bundle, fixed_budget=100.0, kelly_fraction=0.5)
 		output_df, _ = build_prediction_outputs(merged, scored)
 
 		with tempfile.TemporaryDirectory() as tmp_dir:
@@ -126,20 +127,84 @@ class ProductionOutputTests(unittest.TestCase):
 				output_df,
 				output_path,
 				fixed_budget=100.0,
-				budget_strategy="kelly",
 				kelly_fraction=0.5,
+				min_bet_amount=0.1,
 			)
 			report_html = output_path.read_text(encoding="utf-8")
 
 		self.assertIn("Model Home %", report_html)
 		self.assertIn("Best Bet Now", report_html)
-		self.assertIn("Split % Now", report_html)
+		self.assertIn("Stake % Now", report_html)
 		self.assertIn("Amount Now", report_html)
 		self.assertIn('id="total-budget"', report_html)
-		self.assertIn('value="10.00"', report_html)
+		self.assertIn('value="100.00"', report_html)
+		self.assertIn("Current bankroll", report_html)
+		self.assertIn('id="summary-total-amount"', report_html)
 		self.assertIn('type="number"', report_html)
-		self.assertNotIn("Value Picks", report_html)
-		self.assertNotIn("All Predictions", report_html)
+		self.assertIn("Enter your current bankroll below to see the bankroll allocation", report_html)
+		self.assertNotIn("Minimum stake per bet", report_html)
+		self.assertNotIn("Kelly", report_html)
+
+	def test_scoring_keeps_positive_ev_rows_even_if_minimum_bet_prunes_stake(self):
+		merged = _build_merged_frame().iloc[:2].copy()
+		bundle = SimpleNamespace(
+			model=FakeModel(),
+			scaler=IdentityScaler(),
+			feature_cols=FEATURE_COLS,
+			cat_config=None,
+		)
+		crafted_selection = {
+			"best_index": np.array([0, 1]),
+			"selected_probs": np.array([0.55, 0.26]),
+			"selected_implied": np.array([0.40, 0.25]),
+			"selected_odds": np.array([2.5, 4.0]),
+			"best_ev": np.array([0.375, 0.04]),
+			"positive_mask": np.array([True, True]),
+			"edge": np.array([0.15, 0.01]),
+			"full_kelly": np.array([1.0, 0.0001]),
+		}
+
+		with patch("prod_run.pipeline.select_best_result_value", return_value=crafted_selection):
+			scored = score_result_predictions(
+				merged,
+				bundle,
+				fixed_budget=100.0,
+				kelly_fraction=1.0,
+				min_bet_amount=0.1,
+			)
+
+		self.assertEqual(scored["Result_EV"].notna().tolist(), [True, True])
+		self.assertAlmostEqual(scored["Result_Budget_Amount"].iloc[0], 100.0, places=2)
+		self.assertAlmostEqual(scored["Result_Budget_Amount"].iloc[1], 0.0, places=2)
+
+		output_df, value_df = build_prediction_outputs(merged, scored)
+		self.assertEqual(len(value_df), 2)
+		email_html = build_email_html(output_df, value_df, "2026-03-10")
+		self.assertIn("Barcelona vs Sevilla", email_html)
+		self.assertIn("Manchester United vs Aston Villa", email_html)
+
+	def test_minimum_bet_amount_prunes_and_recomputes(self):
+		selection = {
+			"best_index": np.array([0, 1]),
+			"selected_probs": np.array([0.55, 0.26]),
+			"selected_implied": np.array([0.40, 0.25]),
+			"selected_odds": np.array([2.5, 4.0]),
+			"best_ev": np.array([0.375, 0.04]),
+			"positive_mask": np.array([True, True]),
+			"edge": np.array([0.15, 0.01]),
+			"full_kelly": np.array([1.0, 0.0001]),
+		}
+
+		allocation = allocate_recommended_stakes(
+			selection=selection,
+			total_budget=100.0,
+			kelly_fraction=1.0,
+			min_bet_amount=0.1,
+		)
+
+		self.assertAlmostEqual(allocation["stake_amounts"][0], 100.0, places=2)
+		self.assertAlmostEqual(allocation["stake_amounts"][1], 0.0, places=2)
+		self.assertEqual(allocation["recommended_mask"].tolist(), [True, False])
 
 	def test_scoring_passes_cat_features_for_league_bias_models(self):
 		merged = _build_merged_frame()
