@@ -335,12 +335,12 @@ def get_class_blend_alpha_grid(training_config: dict) -> list[float]:
 	return [float(value) for value in values]
 
 
-def get_elastic_weight_grid(training_config: dict) -> list[float]:
+def get_elastic_weight_grid(training_config: dict) -> list[float | list[float]]:
 	"""Return the elastic/tree probability-mix grid for hybrid blends."""
 
 	params = dict(training_config.get("hybrid_blend_params", {}))
 	values = params.get("elastic_weight_grid", DEFAULT_ELASTIC_WEIGHT_GRID)
-	return [float(value) for value in values]
+	return [parse_component_weight_value(value) for value in values]
 
 
 def get_component_blend_mode(training_config: dict) -> str:
@@ -760,7 +760,7 @@ def fit_non_torch_selection_model(
 						"blend_mode": blend_mode,
 						"blend_alpha": blend_alpha,
 						"blend_val_log_loss": float(blend_val_loss),
-						"elastic_weight": float(elastic_weight),
+						"elastic_weight": parse_component_weight_value(elastic_weight),
 						"component_blend_mode": component_blend_mode,
 					}
 					if draw_probs is not None:
