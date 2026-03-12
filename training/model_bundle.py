@@ -93,6 +93,7 @@ def infer_num_leagues_from_state_dict(state_dict: dict[str, Any]) -> int | None:
 		"league_market_bias.weight",
 		"league_market_scale.weight",
 		"league_market_class_scale.weight",
+		"league_market_logit_mixer.weight",
 		"league_gate_bias.weight",
 		"league_residual_bias.weight",
 	):
@@ -118,6 +119,7 @@ def build_result_model(
 			model_kwargs.get("learn_league_market_bias")
 			or model_kwargs.get("learn_league_market_scale")
 			or model_kwargs.get("learn_league_market_class_scale")
+			or model_kwargs.get("learn_league_market_logit_mixer")
 			or model_kwargs.get("learn_league_gate_bias")
 			or model_kwargs.get("learn_league_residual_bias")
 		)
