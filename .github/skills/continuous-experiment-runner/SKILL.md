@@ -35,7 +35,7 @@ Read these first:
 - Do not commit generated model bundles under `artifacts/models/`.
 - Do not rewrite prior rows in `artifacts/experiment_metrics/result_main_runs.tsv`.
 - Name experiment branches `experiment/<name>`.
-- Use CV `log_loss` as the decision metric.
+- Use CV `log_loss` as the decision metric as long as the test set `log_loss` is not getting worse. If CV `log_loss` is staying the same but test set `log_loss` is improving, that is still a win. But you should always try to improve CV `log_loss` as your primary objective.
 - Compare against the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv`.
 - Cheap local prescreens are allowed when they help rank nearby ideas, but they do not replace the canonical trainer and must not append to the TSV ledger.
 - When ranking nearby candidates, prefer a stricter local support scorer: use the epoch-selection split only to choose `best_epoch`, then evaluate that fixed epoch count across the objective folds without appending a ledger row.

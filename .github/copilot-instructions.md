@@ -20,9 +20,8 @@ The canonical training and evaluation loop is fixed and should be the default pa
 ### Evaluation protocol
 Always preserve this unless the user explicitly asks to change it:
 - use `training/configs/main_models/evaluation.json` as the source of truth
-- rolling expanding-window CV mean `log_loss` is the single decision metric
+- rolling expanding-window CV mean `log_loss` is the decision metric
 - the last pre-test season is reserved for epoch selection
-- the fixed test season is watch-only and not part of branch acceptance
 - use the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv` as the default comparison point
 
 ## Production
