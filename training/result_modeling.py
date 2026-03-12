@@ -368,6 +368,22 @@ def get_draw_component_blend_mode(training_config: dict) -> str:
 	return str(params.get("draw_component_blend_mode", DEFAULT_DRAW_COMPONENT_BLEND_MODE))
 
 
+def get_draw_binary_params(training_config: dict) -> dict:
+	"""Return the parameter block for the draw-vs-non-draw auxiliary head."""
+
+	if "draw_binary_params" in training_config:
+		return dict(training_config.get("draw_binary_params", {}))
+	return dict(training_config.get("draw_decomp_params", {}))
+
+
+def get_home_non_draw_binary_params(training_config: dict) -> dict:
+	"""Return the parameter block for the home-vs-away-given-non-draw head."""
+
+	if "home_non_draw_binary_params" in training_config:
+		return dict(training_config.get("home_non_draw_binary_params", {}))
+	return dict(training_config.get("draw_decomp_params", {}))
+
+
 def apply_implied_blend(
 	probs: np.ndarray,
 	implied_probs: np.ndarray,
@@ -593,13 +609,20 @@ def build_draw_decomp_component(training_config: dict, train_data: Dict[str, np.
 	if input_recipe is None:
 		raise ValueError("Draw-decomposition component requested without an input recipe")
 	design = build_design_from_data(train_data, input_recipe)
-	params = dict(training_config.get("draw_decomp_params", {}))
 	draw_target = (train_data["y"] == 1).astype(int)
 	non_draw_mask = train_data["y"] != 1
 	home_given_non_draw_target = (train_data["y"][non_draw_mask] == 0).astype(int)
 	return {
-		"draw_binary": fit_binary_model(design, draw_target, params),
-		"home_non_draw_binary": fit_binary_model(design[non_draw_mask], home_given_non_draw_target, params),
+		"draw_binary": fit_binary_model(
+			design,
+			draw_target,
+			get_draw_binary_params(training_config),
+		),
+		"home_non_draw_binary": fit_binary_model(
+			design[non_draw_mask],
+			home_given_non_draw_target,
+			get_home_non_draw_binary_params(training_config),
+		),
 	}
 
 
