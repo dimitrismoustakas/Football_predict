@@ -350,6 +350,30 @@ def get_class_blend_alpha_vector_grid(training_config: dict) -> list[list[float]
 	return vector_grid
 
 
+def get_class_blend_alpha_regime_grid(training_config: dict) -> list[dict] | None:
+	"""Return optional regime-aware classwise alpha candidates."""
+
+	values = training_config.get("class_blend_alpha_regime_grid")
+	if values is None:
+		return None
+	regime_grid = []
+	for value in values:
+		if not isinstance(value, dict):
+			raise ValueError("Regime-aware class blend candidates must be objects")
+		feature = str(value.get("feature", "")).strip()
+		if feature not in {"draw_implied", "entropy"}:
+			raise ValueError(f"Unsupported class blend regime feature: {feature}")
+		if "threshold" not in value:
+			raise ValueError("Regime-aware class blend candidates require a threshold")
+		regime_grid.append({
+			"feature": feature,
+			"threshold": float(value["threshold"]),
+			"low_alpha": parse_component_weight_value(value.get("low_alpha", 1.0)),
+			"high_alpha": parse_component_weight_value(value.get("high_alpha", 1.0)),
+		})
+	return regime_grid
+
+
 def get_elastic_weight_grid(training_config: dict) -> list[float | list[float]]:
 	"""Return the elastic/tree probability-mix grid for hybrid blends."""
 
@@ -416,12 +440,14 @@ def get_home_non_draw_binary_params(training_config: dict) -> dict:
 def apply_implied_blend(
 	probs: np.ndarray,
 	implied_probs: np.ndarray,
-	blend_alpha: float | list[float] | tuple[float, ...] | np.ndarray | None,
+	blend_alpha: float | list[float] | tuple[float, ...] | np.ndarray | dict | None,
 ) -> np.ndarray:
 	"""Blend model probabilities back toward market implied probabilities."""
 
 	if blend_alpha is None:
 		return normalize_probabilities(probs)
+	if isinstance(blend_alpha, dict):
+		return apply_implied_blend_by_regime(probs, implied_probs, blend_alpha)
 	alpha = np.asarray(blend_alpha, dtype=np.float64)
 	if alpha.ndim == 0:
 		alpha = np.full((1, probs.shape[1]), float(alpha))
@@ -432,6 +458,37 @@ def apply_implied_blend(
 	else:
 		raise ValueError("Blend alpha must be a scalar or a length-K vector")
 	blended = alpha * probs + (1.0 - alpha) * implied_probs
+	return normalize_probabilities(blended)
+
+
+def compute_market_regime_signal(implied_probs: np.ndarray, feature: str) -> np.ndarray:
+	"""Compute the regime signal used for subgroup-aware market blending."""
+
+	if feature == "draw_implied":
+		return implied_probs[:, 1]
+	if feature == "entropy":
+		clipped = np.clip(implied_probs, 1e-12, 1.0)
+		return -(clipped * np.log(clipped)).sum(axis=1)
+	raise ValueError(f"Unsupported class blend regime feature: {feature}")
+
+
+def apply_implied_blend_by_regime(
+	probs: np.ndarray,
+	implied_probs: np.ndarray,
+	blend_alpha_regime: dict,
+) -> np.ndarray:
+	"""Blend toward market implied probabilities with separate alpha vectors by regime."""
+
+	feature = str(blend_alpha_regime.get("feature", "")).strip()
+	threshold = float(blend_alpha_regime["threshold"])
+	low_alpha = blend_alpha_regime.get("low_alpha")
+	high_alpha = blend_alpha_regime.get("high_alpha")
+	mask = compute_market_regime_signal(implied_probs, feature) >= threshold
+	blended = np.empty_like(probs)
+	if np.any(~mask):
+		blended[~mask] = apply_implied_blend(probs[~mask], implied_probs[~mask], low_alpha)
+	if np.any(mask):
+		blended[mask] = apply_implied_blend(probs[mask], implied_probs[mask], high_alpha)
 	return normalize_probabilities(blended)
 
 
@@ -523,18 +580,50 @@ def tune_class_blend_alpha_vectors(
 	return best_alpha, float(best_loss)
 
 
+def tune_class_blend_alpha_regimes(
+	probs: np.ndarray,
+	implied_probs: np.ndarray,
+	y_true: np.ndarray,
+	regime_grid: list[dict],
+) -> tuple[dict, float]:
+	"""Select the best regime-aware classwise alpha candidate on the selection season."""
+
+	best_regime = None
+	best_loss = None
+	for regime in regime_grid:
+		blended = apply_implied_blend_by_regime(probs, implied_probs, regime)
+		loss = log_loss(y_true, blended, labels=[0, 1, 2])
+		if best_loss is None or loss < best_loss:
+			best_regime = {
+				"feature": str(regime["feature"]),
+				"threshold": float(regime["threshold"]),
+				"low_alpha": parse_component_weight_value(regime["low_alpha"]),
+				"high_alpha": parse_component_weight_value(regime["high_alpha"]),
+			}
+			best_loss = float(loss)
+	return best_regime, float(best_loss)
+
+
 def tune_market_blend(
 	training_config: dict,
 	probs: np.ndarray,
 	implied_probs: np.ndarray,
 	y_true: np.ndarray,
-) -> tuple[str, float | list[float], float]:
+) -> tuple[str, float | list[float] | dict, float]:
 	"""Tune the market-implied blend for the active configuration."""
 
 	blend_mode = get_blend_mode(training_config)
 	if blend_mode == "classwise":
+		alpha_regime_grid = get_class_blend_alpha_regime_grid(training_config)
 		alpha_vector_grid = get_class_blend_alpha_vector_grid(training_config)
-		if alpha_vector_grid is not None:
+		if alpha_regime_grid is not None:
+			blend_alpha, blend_val_loss = tune_class_blend_alpha_regimes(
+				probs,
+				implied_probs,
+				y_true,
+				alpha_regime_grid,
+			)
+		elif alpha_vector_grid is not None:
 			blend_alpha, blend_val_loss = tune_class_blend_alpha_vectors(
 				probs,
 				implied_probs,

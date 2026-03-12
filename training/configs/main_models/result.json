@@ -20,12 +20,21 @@
 		0.75,
 		1.0
 	],
-	"class_blend_alpha_vector_grid": [
-		[
-			1.0,
-			0.76,
-			0.35
-		]
+	"class_blend_alpha_regime_grid": [
+		{
+			"feature": "entropy",
+			"threshold": 1.0425068220791298,
+			"low_alpha": [
+				1.0,
+				0.75,
+				0.325
+			],
+			"high_alpha": [
+				1.0,
+				0.8,
+				0.35
+			]
+		}
 	],
 	"elastic_net_params": {
 		"l1_ratio": 0.6,
