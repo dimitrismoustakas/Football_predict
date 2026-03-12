@@ -20,6 +20,13 @@
 		0.75,
 		1.0
 	],
+	"class_blend_alpha_vector_grid": [
+		[
+			1.0,
+			0.7,
+			0.35
+		]
+	],
 	"elastic_net_params": {
 		"l1_ratio": 0.6,
 		"C": 0.08,

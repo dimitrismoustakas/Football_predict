@@ -335,6 +335,21 @@ def get_class_blend_alpha_grid(training_config: dict) -> list[float]:
 	return [float(value) for value in values]
 
 
+def get_class_blend_alpha_vector_grid(training_config: dict) -> list[list[float]] | None:
+	"""Return optional explicit per-class alpha candidates for market blending."""
+
+	values = training_config.get("class_blend_alpha_vector_grid")
+	if values is None:
+		return None
+	vector_grid = []
+	for value in values:
+		parsed = parse_component_weight_value(value)
+		if not isinstance(parsed, list):
+			raise ValueError("Class blend alpha vector candidates must be explicit per-class lists")
+		vector_grid.append(parsed)
+	return vector_grid
+
+
 def get_elastic_weight_grid(training_config: dict) -> list[float | list[float]]:
 	"""Return the elastic/tree probability-mix grid for hybrid blends."""
 
@@ -487,6 +502,27 @@ def tune_class_blend_alpha(
 	return best_alpha, float(best_loss)
 
 
+def tune_class_blend_alpha_vectors(
+	probs: np.ndarray,
+	implied_probs: np.ndarray,
+	y_true: np.ndarray,
+	alpha_vector_grid: list[list[float]],
+) -> tuple[list[float], float]:
+	"""Select the best explicit per-outcome implied-blend vector on the selection season."""
+
+	best_alpha = None
+	best_loss = None
+	for alpha_vector in alpha_vector_grid:
+		if len(alpha_vector) != probs.shape[1]:
+			raise ValueError("Explicit class blend alpha candidates must match the number of outcomes")
+		alpha_vector = [float(value) for value in alpha_vector]
+		loss = log_loss(y_true, apply_implied_blend(probs, implied_probs, alpha_vector), labels=[0, 1, 2])
+		if best_loss is None or loss < best_loss:
+			best_alpha = alpha_vector
+			best_loss = float(loss)
+	return best_alpha, float(best_loss)
+
+
 def tune_market_blend(
 	training_config: dict,
 	probs: np.ndarray,
@@ -497,12 +533,21 @@ def tune_market_blend(
 
 	blend_mode = get_blend_mode(training_config)
 	if blend_mode == "classwise":
-		blend_alpha, blend_val_loss = tune_class_blend_alpha(
-			probs,
-			implied_probs,
-			y_true,
-			get_class_blend_alpha_grid(training_config),
-		)
+		alpha_vector_grid = get_class_blend_alpha_vector_grid(training_config)
+		if alpha_vector_grid is not None:
+			blend_alpha, blend_val_loss = tune_class_blend_alpha_vectors(
+				probs,
+				implied_probs,
+				y_true,
+				alpha_vector_grid,
+			)
+		else:
+			blend_alpha, blend_val_loss = tune_class_blend_alpha(
+				probs,
+				implied_probs,
+				y_true,
+				get_class_blend_alpha_grid(training_config),
+			)
 	else:
 		blend_alpha, blend_val_loss = tune_blend_alpha(
 			probs,
