@@ -23,8 +23,8 @@
 	"class_blend_alpha_vector_grid": [
 		[
 			1.0,
-			0.75,
-			0.4
+			0.8,
+			0.35
 		]
 	],
 	"elastic_net_params": {
@@ -82,8 +82,8 @@
 		"elastic_weight_grid": [
 			[
 				1.0,
-				0.9,
-				0.7
+				0.95,
+				0.65
 			]
 		]
 	},
