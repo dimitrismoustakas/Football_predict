@@ -487,6 +487,25 @@ def print_delta(delta: float | None, comparison_metric: str):
 	print(f"Delta_{comparison_metric}: {delta:.6f}")
 
 
+def format_blend_alpha_display(blend_alpha) -> str:
+	"""Format the selected market-blend parameterization for console output."""
+
+	if isinstance(blend_alpha, dict):
+		low_alpha = blend_alpha.get("low_alpha")
+		high_alpha = blend_alpha.get("high_alpha")
+		def _format_alpha(alpha):
+			if isinstance(alpha, list):
+				return "[" + ", ".join(f"{value:.2f}" for value in alpha) + "]"
+			return f"{float(alpha):.2f}"
+		return (
+			f"{blend_alpha.get('feature')}>={float(blend_alpha.get('threshold')):.4f}: "
+			f"low={_format_alpha(low_alpha)} high={_format_alpha(high_alpha)}"
+		)
+	if isinstance(blend_alpha, list):
+		return "[" + ", ".join(f"{value:.2f}" for value in blend_alpha) + "]"
+	return f"{blend_alpha:.2f}"
+
+
 def build_runtime_metadata(
 	training_config: dict,
 	feature_cols: list[str] | None = None,
@@ -759,10 +778,7 @@ def train_main_model(description: str = "") -> dict:
 		final_train_epochs = ""
 		best_val_loss = float(selection_summary["blend_val_log_loss"])
 		blend_alpha = selection_summary["blend_alpha"]
-		if isinstance(blend_alpha, list):
-			blend_alpha_display = "[" + ", ".join(f"{value:.2f}" for value in blend_alpha) + "]"
-		else:
-			blend_alpha_display = f"{blend_alpha:.2f}"
+		blend_alpha_display = format_blend_alpha_display(blend_alpha)
 		print(
 			f"Selection blend alpha: {blend_alpha_display} "
 			f"(val_{comparison_metric}={best_val_loss:.5f})"
