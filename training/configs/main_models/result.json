@@ -68,12 +68,12 @@
 		"draw_component_base_weight_grid": [
 			[
 				0.925,
-				0.95,
-				0.925
+				1.0,
+				0.55
 			]
 		],
 		"elastic_weight_grid": [
-			0.8
+			0.925
 		]
 	},
 	"hybrid_component_feature_cols": {
