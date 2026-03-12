@@ -350,7 +350,21 @@ def get_component_blend_mode(training_config: dict) -> str:
 	return str(params.get("component_blend_mode", DEFAULT_COMPONENT_BLEND_MODE))
 
 
-def get_draw_component_base_weight_grid(training_config: dict) -> list[float]:
+def parse_component_weight_value(
+	value: float | list[float] | tuple[float, ...] | np.ndarray,
+) -> float | list[float]:
+	"""Normalize a scalar or vector component-weight value from config."""
+
+	if isinstance(value, np.ndarray):
+		if value.ndim == 0:
+			return float(value)
+		return [float(item) for item in value.tolist()]
+	if isinstance(value, (list, tuple)):
+		return [float(item) for item in value]
+	return float(value)
+
+
+def get_draw_component_base_weight_grid(training_config: dict) -> list[float | list[float]]:
 	"""Return the base/draw blend grid for the auxiliary draw component."""
 
 	params = dict(training_config.get("hybrid_blend_params", {}))
@@ -358,7 +372,7 @@ def get_draw_component_base_weight_grid(training_config: dict) -> list[float]:
 		"draw_component_base_weight_grid",
 		DEFAULT_DRAW_COMPONENT_BASE_WEIGHT_GRID,
 	)
-	return [float(value) for value in values]
+	return [parse_component_weight_value(value) for value in values]
 
 
 def get_draw_component_blend_mode(training_config: dict) -> str:
@@ -409,12 +423,20 @@ def apply_implied_blend(
 def blend_component_probabilities(
 	elastic_probs: np.ndarray,
 	tree_probs: np.ndarray,
-	elastic_weight: float,
+	elastic_weight: float | list[float] | tuple[float, ...] | np.ndarray,
 	mode: str = DEFAULT_COMPONENT_BLEND_MODE,
 ) -> np.ndarray:
 	"""Blend elastic and tree probabilities into a single prediction."""
 
-	elastic_weight = float(elastic_weight)
+	elastic_weight = np.asarray(elastic_weight, dtype=np.float64)
+	if elastic_weight.ndim == 0:
+		elastic_weight = np.full((1, elastic_probs.shape[1]), float(elastic_weight))
+	elif elastic_weight.ndim == 1:
+		if elastic_weight.shape[0] != elastic_probs.shape[1]:
+			raise ValueError("Per-class component weight must match the number of outcomes")
+		elastic_weight = elastic_weight.reshape(1, -1)
+	else:
+		raise ValueError("Component weight must be a scalar or a length-K vector")
 	if mode == "convex":
 		return normalize_probabilities(
 			elastic_weight * elastic_probs + (1.0 - elastic_weight) * tree_probs
@@ -742,7 +764,7 @@ def fit_non_torch_selection_model(
 						"component_blend_mode": component_blend_mode,
 					}
 					if draw_probs is not None:
-						best_summary["draw_component_base_weight"] = float(draw_component_base_weight)
+						best_summary["draw_component_base_weight"] = parse_component_weight_value(draw_component_base_weight)
 						best_summary["draw_component_blend_mode"] = draw_component_blend_mode
 		models = {
 			"elastic": elastic_model,
