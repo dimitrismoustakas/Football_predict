@@ -84,6 +84,7 @@ def run_train_epoch(
 			gate_sat_weight=config.gate_sat_weight,
 			lambda_repulsion=config.lambda_repulsion,
 			lambda_corr=config.lambda_corr,
+			lambda_logit_delta=config.lambda_logit_delta,
 		)
 		loss.backward()
 		optimizer.step()
