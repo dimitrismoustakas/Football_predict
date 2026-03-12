@@ -15,6 +15,7 @@ def model_requires_cat_features(model: Any, cat_config: Any | None) -> bool:
 		or getattr(model, "learn_league_market_bias", False)
 		or getattr(model, "learn_league_market_scale", False)
 		or getattr(model, "learn_league_market_class_scale", False)
+		or getattr(model, "learn_league_market_logit_mixer", False)
 		or getattr(model, "learn_league_gate_bias", False)
 		or getattr(model, "learn_league_residual_bias", False)
 	)

@@ -285,7 +285,10 @@ class GatedResidualModel(nn.Module):
 		learn_market_class_scale: bool = False,
 		learn_league_market_bias: bool = False,
 		learn_league_market_scale: bool = False,
+		league_market_scale_enabled_leagues: Optional[List[int]] = None,
 		learn_league_market_class_scale: bool = False,
+		league_market_class_scale_enabled_leagues: Optional[List[int]] = None,
+		learn_league_market_logit_mixer: bool = False,
 		learn_league_gate_bias: bool = False,
 		learn_league_residual_bias: bool = False,
 		num_leagues: int = 0,
@@ -302,7 +305,10 @@ class GatedResidualModel(nn.Module):
 		self.learn_market_class_scale = learn_market_class_scale
 		self.learn_league_market_bias = learn_league_market_bias
 		self.learn_league_market_scale = learn_league_market_scale
+		self.league_market_scale_enabled_leagues = league_market_scale_enabled_leagues
 		self.learn_league_market_class_scale = learn_league_market_class_scale
+		self.league_market_class_scale_enabled_leagues = league_market_class_scale_enabled_leagues
+		self.learn_league_market_logit_mixer = learn_league_market_logit_mixer
 		self.learn_league_gate_bias = learn_league_gate_bias
 		self.learn_league_residual_bias = learn_league_residual_bias
 		self.market_feature_stats = market_feature_dim
@@ -314,6 +320,8 @@ class GatedResidualModel(nn.Module):
 			raise ValueError("num_leagues must be positive when learn_league_market_scale is enabled")
 		if self.learn_league_market_class_scale and self.num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_market_class_scale is enabled")
+		if self.learn_league_market_logit_mixer and self.num_leagues <= 0:
+			raise ValueError("num_leagues must be positive when learn_league_market_logit_mixer is enabled")
 		if self.learn_league_gate_bias and self.num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_gate_bias is enabled")
 		if self.learn_league_residual_bias and self.num_leagues <= 0:
@@ -373,11 +381,38 @@ class GatedResidualModel(nn.Module):
 			nn.init.zeros_(self.league_market_scale.weight)
 		else:
 			self.league_market_scale = None
+		if league_market_scale_enabled_leagues is not None:
+			enabled_mask = torch.zeros(num_leagues, 1, dtype=torch.float32)
+			for league_idx in league_market_scale_enabled_leagues:
+				if league_idx < 0 or league_idx >= num_leagues:
+					raise ValueError(
+						f"league_market_scale_enabled_leagues index {league_idx} outside [0, {num_leagues - 1}]"
+					)
+				enabled_mask[int(league_idx), 0] = 1.0
+			self.register_buffer("league_market_scale_enabled_mask", enabled_mask)
+		else:
+			self.league_market_scale_enabled_mask = None
 		if learn_league_market_class_scale:
 			self.league_market_class_scale = nn.Embedding(num_leagues, n_classes)
 			nn.init.zeros_(self.league_market_class_scale.weight)
 		else:
 			self.league_market_class_scale = None
+		if league_market_class_scale_enabled_leagues is not None:
+			class_enabled_mask = torch.zeros(num_leagues, 1, dtype=torch.float32)
+			for league_idx in league_market_class_scale_enabled_leagues:
+				if league_idx < 0 or league_idx >= num_leagues:
+					raise ValueError(
+						f"league_market_class_scale_enabled_leagues index {league_idx} outside [0, {num_leagues - 1}]"
+					)
+				class_enabled_mask[int(league_idx), 0] = 1.0
+			self.register_buffer("league_market_class_scale_enabled_mask", class_enabled_mask)
+		else:
+			self.league_market_class_scale_enabled_mask = None
+		if learn_league_market_logit_mixer:
+			self.league_market_logit_mixer = nn.Embedding(num_leagues, n_classes * n_classes)
+			nn.init.zeros_(self.league_market_logit_mixer.weight)
+		else:
+			self.league_market_logit_mixer = None
 		if learn_league_gate_bias:
 			self.league_gate_bias = nn.Embedding(num_leagues, 1 if shared_gate else n_classes)
 			nn.init.zeros_(self.league_gate_bias.weight)
@@ -403,7 +438,10 @@ class GatedResidualModel(nn.Module):
 		self.learn_market_class_scale = learn_market_class_scale
 		self.learn_league_market_bias = learn_league_market_bias
 		self.learn_league_market_scale = learn_league_market_scale
+		self.league_market_scale_enabled_leagues = league_market_scale_enabled_leagues
 		self.learn_league_market_class_scale = learn_league_market_class_scale
+		self.league_market_class_scale_enabled_leagues = league_market_class_scale_enabled_leagues
+		self.learn_league_market_logit_mixer = learn_league_market_logit_mixer
 		self.learn_league_gate_bias = learn_league_gate_bias
 		self.learn_league_residual_bias = learn_league_residual_bias
 		self.market_feature_stats = market_feature_dim
@@ -461,6 +499,9 @@ class GatedResidualModel(nn.Module):
 			if league_idx is None:
 				raise ValueError("cat_features required when learn_league_market_scale is enabled")
 			league_scale = torch.exp(self.league_market_scale(league_idx))
+			if self.league_market_scale_enabled_mask is not None:
+				enabled = self.league_market_scale_enabled_mask[league_idx]
+				league_scale = enabled * league_scale + (1.0 - enabled)
 			log_implied = log_implied * (self.market_logit_scale * league_scale)
 		else:
 			log_implied = log_implied * self.market_logit_scale
@@ -469,7 +510,17 @@ class GatedResidualModel(nn.Module):
 		if self.league_market_class_scale is not None:
 			if league_idx is None:
 				raise ValueError("cat_features required when learn_league_market_class_scale is enabled")
-			log_implied = log_implied * torch.exp(self.league_market_class_scale(league_idx))
+			class_scale = torch.exp(self.league_market_class_scale(league_idx))
+			if self.league_market_class_scale_enabled_mask is not None:
+				enabled = self.league_market_class_scale_enabled_mask[league_idx]
+				class_scale = enabled * class_scale + (1.0 - enabled)
+			log_implied = log_implied * class_scale
+		if self.league_market_logit_mixer is not None:
+			if league_idx is None:
+				raise ValueError("cat_features required when learn_league_market_logit_mixer is enabled")
+			mix = self.league_market_logit_mixer(league_idx).view(-1, self.n_classes, self.n_classes)
+			mix = mix - torch.diag_embed(torch.diagonal(mix, dim1=-2, dim2=-1))
+			log_implied = log_implied + torch.bmm(log_implied.unsqueeze(1), mix).squeeze(1)
 		implied_logits = log_implied + self.market_bias
 		if self.league_market_bias is not None:
 			if league_idx is None:
