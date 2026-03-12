@@ -257,6 +257,10 @@ def build_model_config_snapshot(training_config: dict, model_family: str) -> dic
 		}
 		if "draw_decomp_params" in training_config:
 			snapshot["draw_decomp_params"] = dict(training_config.get("draw_decomp_params", {}))
+		if "draw_binary_params" in training_config:
+			snapshot["draw_binary_params"] = dict(training_config.get("draw_binary_params", {}))
+		if "home_non_draw_binary_params" in training_config:
+			snapshot["home_non_draw_binary_params"] = dict(training_config.get("home_non_draw_binary_params", {}))
 		if "draw_decomp_input_recipe" in training_config:
 			snapshot["draw_decomp_input_recipe"] = dict(training_config.get("draw_decomp_input_recipe", {}))
 		if "draw_decomp_feature_cols" in training_config:
@@ -273,6 +277,10 @@ def build_model_config_snapshot(training_config: dict, model_family: str) -> dic
 		}
 		if "draw_decomp_params" in training_config:
 			snapshot["draw_decomp_params"] = dict(training_config.get("draw_decomp_params", {}))
+		if "draw_binary_params" in training_config:
+			snapshot["draw_binary_params"] = dict(training_config.get("draw_binary_params", {}))
+		if "home_non_draw_binary_params" in training_config:
+			snapshot["home_non_draw_binary_params"] = dict(training_config.get("home_non_draw_binary_params", {}))
 		if "draw_decomp_input_recipe" in training_config:
 			snapshot["draw_decomp_input_recipe"] = dict(training_config.get("draw_decomp_input_recipe", {}))
 		if "draw_decomp_feature_cols" in training_config:
