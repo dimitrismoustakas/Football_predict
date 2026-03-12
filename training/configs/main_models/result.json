@@ -23,7 +23,7 @@
 	"class_blend_alpha_vector_grid": [
 		[
 			1.0,
-			0.77,
+			0.76,
 			0.35
 		]
 	],
@@ -74,9 +74,9 @@
 		"draw_component_blend_mode": "logit",
 		"draw_component_base_weight_grid": [
 			[
-				0.89,
+				0.885,
 				1.0,
-				0.65
+				0.675
 			]
 		],
 		"elastic_weight_grid": [
