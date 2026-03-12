@@ -282,8 +282,10 @@ class GatedResidualModel(nn.Module):
 		linear_gate: bool = False,
 		market_logit_scale: float = 1.0,
 		learn_market_bias: bool = False,
+		learn_market_class_scale: bool = False,
 		learn_league_market_bias: bool = False,
 		learn_league_market_scale: bool = False,
+		learn_league_market_class_scale: bool = False,
 		learn_league_gate_bias: bool = False,
 		learn_league_residual_bias: bool = False,
 		num_leagues: int = 0,
@@ -297,8 +299,10 @@ class GatedResidualModel(nn.Module):
 		self.linear_gate = linear_gate
 		self.market_logit_scale = market_logit_scale
 		self.learn_market_bias = learn_market_bias
+		self.learn_market_class_scale = learn_market_class_scale
 		self.learn_league_market_bias = learn_league_market_bias
 		self.learn_league_market_scale = learn_league_market_scale
+		self.learn_league_market_class_scale = learn_league_market_class_scale
 		self.learn_league_gate_bias = learn_league_gate_bias
 		self.learn_league_residual_bias = learn_league_residual_bias
 		self.market_feature_stats = market_feature_dim
@@ -308,6 +312,8 @@ class GatedResidualModel(nn.Module):
 			raise ValueError("num_leagues must be positive when learn_league_market_bias is enabled")
 		if self.learn_league_market_scale and self.num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_market_scale is enabled")
+		if self.learn_league_market_class_scale and self.num_leagues <= 0:
+			raise ValueError("num_leagues must be positive when learn_league_market_class_scale is enabled")
 		if self.learn_league_gate_bias and self.num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_gate_bias is enabled")
 		if self.learn_league_residual_bias and self.num_leagues <= 0:
@@ -353,6 +359,10 @@ class GatedResidualModel(nn.Module):
 			self.market_bias = nn.Parameter(torch.zeros(n_classes))
 		else:
 			self.register_buffer("market_bias", torch.zeros(n_classes))
+		if learn_market_class_scale:
+			self.market_class_scale = nn.Parameter(torch.zeros(n_classes))
+		else:
+			self.market_class_scale = None
 		if learn_league_market_bias:
 			self.league_market_bias = nn.Embedding(num_leagues, n_classes)
 			nn.init.zeros_(self.league_market_bias.weight)
@@ -363,6 +373,11 @@ class GatedResidualModel(nn.Module):
 			nn.init.zeros_(self.league_market_scale.weight)
 		else:
 			self.league_market_scale = None
+		if learn_league_market_class_scale:
+			self.league_market_class_scale = nn.Embedding(num_leagues, n_classes)
+			nn.init.zeros_(self.league_market_class_scale.weight)
+		else:
+			self.league_market_class_scale = None
 		if learn_league_gate_bias:
 			self.league_gate_bias = nn.Embedding(num_leagues, 1 if shared_gate else n_classes)
 			nn.init.zeros_(self.league_gate_bias.weight)
@@ -385,8 +400,10 @@ class GatedResidualModel(nn.Module):
 		self.linear_gate = linear_gate
 		self.market_logit_scale = market_logit_scale
 		self.learn_market_bias = learn_market_bias
+		self.learn_market_class_scale = learn_market_class_scale
 		self.learn_league_market_bias = learn_league_market_bias
 		self.learn_league_market_scale = learn_league_market_scale
+		self.learn_league_market_class_scale = learn_league_market_class_scale
 		self.learn_league_gate_bias = learn_league_gate_bias
 		self.learn_league_residual_bias = learn_league_residual_bias
 		self.market_feature_stats = market_feature_dim
@@ -437,18 +454,27 @@ class GatedResidualModel(nn.Module):
 		cat_features: Optional[torch.Tensor] = None,
 	) -> torch.Tensor:
 		log_implied = _log_softmax_from_implied(implied_probs)
+		league_idx = None
+		if cat_features is not None:
+			league_idx = cat_features[:, 0].long()
 		if self.league_market_scale is not None:
-			if cat_features is None:
+			if league_idx is None:
 				raise ValueError("cat_features required when learn_league_market_scale is enabled")
-			league_scale = torch.exp(self.league_market_scale(cat_features[:, 0].long()))
+			league_scale = torch.exp(self.league_market_scale(league_idx))
 			log_implied = log_implied * (self.market_logit_scale * league_scale)
 		else:
 			log_implied = log_implied * self.market_logit_scale
+		if self.market_class_scale is not None:
+			log_implied = log_implied * torch.exp(self.market_class_scale)
+		if self.league_market_class_scale is not None:
+			if league_idx is None:
+				raise ValueError("cat_features required when learn_league_market_class_scale is enabled")
+			log_implied = log_implied * torch.exp(self.league_market_class_scale(league_idx))
 		implied_logits = log_implied + self.market_bias
 		if self.league_market_bias is not None:
-			if cat_features is None:
+			if league_idx is None:
 				raise ValueError("cat_features required when learn_league_market_bias is enabled")
-			implied_logits = implied_logits + self.league_market_bias(cat_features[:, 0].long())
+			implied_logits = implied_logits + self.league_market_bias(league_idx)
 		return implied_logits
 
 	def forward(
