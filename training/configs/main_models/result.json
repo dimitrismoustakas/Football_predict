@@ -38,11 +38,11 @@
 		"market_feature_enrichment": "quadratic_plus_margin"
 	},
 	"lightgbm_params": {
-		"learning_rate": 0.05,
-		"num_leaves": 63,
-		"min_child_samples": 20,
-		"reg_lambda": 0.3,
-		"n_estimators": 300,
+		"learning_rate": 0.0275,
+		"num_leaves": 95,
+		"min_child_samples": 25,
+		"reg_lambda": 0.5,
+		"n_estimators": 600,
 		"random_state": 42
 	},
 	"lightgbm_input_recipe": {
