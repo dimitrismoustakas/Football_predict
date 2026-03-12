@@ -47,7 +47,7 @@
 		"num_leaves": 31,
 		"min_child_samples": 30,
 		"reg_lambda": 0.5,
-		"n_estimators": 700,
+		"n_estimators": 900,
 		"random_state": 42
 	},
 	"home_non_draw_binary_params": {
