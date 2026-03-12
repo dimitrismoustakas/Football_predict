@@ -73,7 +73,11 @@
 			]
 		],
 		"elastic_weight_grid": [
-			0.925
+			[
+				1.0,
+				0.85,
+				0.8
+			]
 		]
 	},
 	"hybrid_component_feature_cols": {
