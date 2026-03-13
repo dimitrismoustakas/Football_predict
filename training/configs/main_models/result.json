@@ -20,6 +20,22 @@
 		0.75,
 		1.0
 	],
+	"class_blend_alpha_regime_grid": [
+		{
+			"feature": "entropy",
+			"threshold": 1.0478506717786318,
+			"low_alpha": [
+				1.0,
+				0.74,
+				0.325
+			],
+			"high_alpha": [
+				1.0,
+				0.82,
+				0.35
+			]
+		}
+	],
 	"elastic_net_params": {
 		"l1_ratio": 0.6,
 		"C": 0.08,
@@ -31,6 +47,26 @@
 		"market_feature_enrichment": "quadratic_plus_margin"
 	},
 	"lightgbm_params": {
+		"learning_rate": 0.0275,
+		"num_leaves": 95,
+		"min_child_samples": 25,
+		"reg_lambda": 0.5,
+		"n_estimators": 600,
+		"random_state": 42
+	},
+	"lightgbm_input_recipe": {
+		"market_features": "logit_probs_and_margin",
+		"market_feature_enrichment": "quadratic_plus_margin"
+	},
+	"draw_binary_params": {
+		"learning_rate": 0.015,
+		"num_leaves": 47,
+		"min_child_samples": 40,
+		"reg_lambda": 1.0,
+		"n_estimators": 1400,
+		"random_state": 42
+	},
+	"home_non_draw_binary_params": {
 		"learning_rate": 0.05,
 		"num_leaves": 63,
 		"min_child_samples": 20,
@@ -38,14 +74,56 @@
 		"n_estimators": 300,
 		"random_state": 42
 	},
-	"lightgbm_input_recipe": {
+	"score_component_params": {
+		"learning_rate": 0.025,
+		"num_leaves": 63,
+		"min_child_samples": 20,
+		"reg_lambda": 1.0,
+		"n_estimators": 700,
+		"max_goals": 10,
+		"random_state": 42
+	},
+	"draw_decomp_input_recipe": {
+		"market_features": "logit_probs_and_margin",
+		"market_feature_enrichment": "quadratic_plus_margin"
+	},
+	"score_component_input_recipe": {
 		"market_features": "logit_probs_and_margin",
 		"market_feature_enrichment": "quadratic_plus_margin"
 	},
 	"hybrid_blend_params": {
 		"component_blend_mode": "logit",
+		"draw_component_blend_mode": "logit",
+		"score_component_blend_mode": "logit",
+		"draw_component_base_weight_regime_grid": [
+			{
+				"feature": "entropy",
+				"threshold": 1.0478506717786318,
+				"low_weight": [
+					0.895,
+					1.0,
+					0.675
+				],
+				"high_weight": [
+					0.875,
+					1.0,
+					0.65
+				]
+			}
+		],
 		"elastic_weight_grid": [
-			0.8
+			[
+				1.0,
+				0.9,
+				0.65
+			]
+		],
+		"score_component_weight_grid": [
+			[
+				0.99,
+				0.74,
+				0.99
+			]
 		]
 	},
 	"hybrid_component_feature_cols": {

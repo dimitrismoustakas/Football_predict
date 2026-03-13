@@ -247,7 +247,7 @@ def build_model_config_snapshot(training_config: dict, model_family: str) -> dic
 	if model_family == "elastic_net_blend":
 		return dict(training_config.get("elastic_net_params", {}))
 	if model_family == "elastic_hgb_blend":
-		return {
+		snapshot = {
 			"elastic_net_params": dict(training_config.get("elastic_net_params", {})),
 			"elastic_net_input_recipe": dict(training_config.get("elastic_net_input_recipe", {})),
 			"hgb_params": dict(training_config.get("hgb_params", {})),
@@ -255,8 +255,19 @@ def build_model_config_snapshot(training_config: dict, model_family: str) -> dic
 			"hybrid_blend_params": dict(training_config.get("hybrid_blend_params", {})),
 			"hybrid_component_feature_cols": dict(training_config.get("hybrid_component_feature_cols", {})),
 		}
+		if "draw_decomp_params" in training_config:
+			snapshot["draw_decomp_params"] = dict(training_config.get("draw_decomp_params", {}))
+		if "draw_binary_params" in training_config:
+			snapshot["draw_binary_params"] = dict(training_config.get("draw_binary_params", {}))
+		if "home_non_draw_binary_params" in training_config:
+			snapshot["home_non_draw_binary_params"] = dict(training_config.get("home_non_draw_binary_params", {}))
+		if "draw_decomp_input_recipe" in training_config:
+			snapshot["draw_decomp_input_recipe"] = dict(training_config.get("draw_decomp_input_recipe", {}))
+		if "draw_decomp_feature_cols" in training_config:
+			snapshot["draw_decomp_feature_cols"] = list(training_config.get("draw_decomp_feature_cols", []))
+		return snapshot
 	if model_family == "elastic_lgbm_blend":
-		return {
+		snapshot = {
 			"elastic_net_params": dict(training_config.get("elastic_net_params", {})),
 			"elastic_net_input_recipe": dict(training_config.get("elastic_net_input_recipe", {})),
 			"lightgbm_params": dict(training_config.get("lightgbm_params", {})),
@@ -264,6 +275,17 @@ def build_model_config_snapshot(training_config: dict, model_family: str) -> dic
 			"hybrid_blend_params": dict(training_config.get("hybrid_blend_params", {})),
 			"hybrid_component_feature_cols": dict(training_config.get("hybrid_component_feature_cols", {})),
 		}
+		if "draw_decomp_params" in training_config:
+			snapshot["draw_decomp_params"] = dict(training_config.get("draw_decomp_params", {}))
+		if "draw_binary_params" in training_config:
+			snapshot["draw_binary_params"] = dict(training_config.get("draw_binary_params", {}))
+		if "home_non_draw_binary_params" in training_config:
+			snapshot["home_non_draw_binary_params"] = dict(training_config.get("home_non_draw_binary_params", {}))
+		if "draw_decomp_input_recipe" in training_config:
+			snapshot["draw_decomp_input_recipe"] = dict(training_config.get("draw_decomp_input_recipe", {}))
+		if "draw_decomp_feature_cols" in training_config:
+			snapshot["draw_decomp_feature_cols"] = list(training_config.get("draw_decomp_feature_cols", []))
+		return snapshot
 	raise ValueError(f"Unsupported model family: {model_family}")
 
 
@@ -463,6 +485,25 @@ def print_delta(delta: float | None, comparison_metric: str):
 		print("Delta: n/a (no prior keep reference)")
 		return
 	print(f"Delta_{comparison_metric}: {delta:.6f}")
+
+
+def format_blend_alpha_display(blend_alpha) -> str:
+	"""Format the selected market-blend parameterization for console output."""
+
+	if isinstance(blend_alpha, dict):
+		low_alpha = blend_alpha.get("low_alpha")
+		high_alpha = blend_alpha.get("high_alpha")
+		def _format_alpha(alpha):
+			if isinstance(alpha, list):
+				return "[" + ", ".join(f"{value:.2f}" for value in alpha) + "]"
+			return f"{float(alpha):.2f}"
+		return (
+			f"{blend_alpha.get('feature')}>={float(blend_alpha.get('threshold')):.4f}: "
+			f"low={_format_alpha(low_alpha)} high={_format_alpha(high_alpha)}"
+		)
+	if isinstance(blend_alpha, list):
+		return "[" + ", ".join(f"{value:.2f}" for value in blend_alpha) + "]"
+	return f"{blend_alpha:.2f}"
 
 
 def build_runtime_metadata(
@@ -737,10 +778,7 @@ def train_main_model(description: str = "") -> dict:
 		final_train_epochs = ""
 		best_val_loss = float(selection_summary["blend_val_log_loss"])
 		blend_alpha = selection_summary["blend_alpha"]
-		if isinstance(blend_alpha, list):
-			blend_alpha_display = "[" + ", ".join(f"{value:.2f}" for value in blend_alpha) + "]"
-		else:
-			blend_alpha_display = f"{blend_alpha:.2f}"
+		blend_alpha_display = format_blend_alpha_display(blend_alpha)
 		print(
 			f"Selection blend alpha: {blend_alpha_display} "
 			f"(val_{comparison_metric}={best_val_loss:.5f})"

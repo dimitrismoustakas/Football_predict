@@ -8,7 +8,7 @@ from typing import Any, Dict
 import numpy as np
 import torch
 import torch.nn.functional as F
-from lightgbm import LGBMClassifier
+from lightgbm import LGBMClassifier, LGBMRegressor
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
@@ -20,6 +20,11 @@ LESS_IS_BETTER_METRICS = {"log_loss", "rps", "brier"}
 DEFAULT_BLEND_ALPHA_GRID = [0.55, 0.65, 0.75, 0.85, 0.95, 1.0]
 DEFAULT_ELASTIC_WEIGHT_GRID = [0.8, 0.85, 0.9, 0.925, 0.95]
 DEFAULT_COMPONENT_BLEND_MODE = "convex"
+DEFAULT_DRAW_COMPONENT_BASE_WEIGHT_GRID = [0.975]
+DEFAULT_DRAW_COMPONENT_BLEND_MODE = "convex"
+DEFAULT_SCORE_COMPONENT_WEIGHT_GRID = [1.0]
+DEFAULT_SCORE_COMPONENT_BLEND_MODE = "logit"
+DEFAULT_SCORE_COMPONENT_MAX_GOALS = 10
 
 
 def resolve_model_family(training_config: dict | None) -> str:
@@ -63,6 +68,22 @@ def build_component_training_config(training_config: dict, model_family: str) ->
 	return component_config
 
 
+def has_draw_decomp_component(training_config: dict | None) -> bool:
+	"""Return whether an auxiliary draw-decomposition expert is configured."""
+
+	if training_config is None:
+		return False
+	return "draw_decomp_params" in training_config or "draw_decomp_input_recipe" in training_config
+
+
+def has_score_component(training_config: dict | None) -> bool:
+	"""Return whether an auxiliary scoreline expert is configured."""
+
+	if training_config is None:
+		return False
+	return "score_component_params" in training_config or "score_component_input_recipe" in training_config
+
+
 def safe_logit(probs: np.ndarray, eps: float = 1e-6) -> np.ndarray:
 	"""Convert probabilities to logits safely."""
 
@@ -75,6 +96,26 @@ def normalize_probabilities(probs: np.ndarray, eps: float = 1e-9) -> np.ndarray:
 
 	probs = np.clip(probs, eps, None)
 	return probs / probs.sum(axis=1, keepdims=True)
+
+
+def select_numeric_feature_block(
+	X_numeric: np.ndarray,
+	available_feature_cols: list[str] | None,
+	selected_feature_cols: list[str] | None,
+) -> np.ndarray:
+	"""Select an optional numeric feature subset from the active feature block."""
+
+	X_numeric = np.nan_to_num(X_numeric, nan=0.0)
+	if selected_feature_cols is None:
+		return X_numeric
+	if available_feature_cols is None:
+		raise ValueError("feature_cols are required to select a component-specific design block")
+	feature_index = {name: idx for idx, name in enumerate(available_feature_cols)}
+	try:
+		selected_indices = [feature_index[name] for name in selected_feature_cols]
+	except KeyError as exc:
+		raise ValueError(f"Selected feature column missing from metadata: {exc.args[0]}") from exc
+	return X_numeric[:, selected_indices]
 
 
 def build_market_feature_enrichment(
@@ -155,12 +196,35 @@ def build_input_recipe(model_family: str, training_config: dict | None = None) -
 			tree_component_family,
 			build_component_training_config(training_config or {}, tree_component_family),
 		)
+		component_recipes = {
+			"elastic": elastic_recipe,
+			"tree": tree_recipe,
+		}
+		if has_draw_decomp_component(training_config):
+			draw_recipe = {
+				"numeric_scaling": "raw",
+				"league_encoding": "one_hot",
+				"include_promoted_flags": True,
+				"market_features": "raw_probs_and_margin",
+			}
+			draw_recipe.update(dict((training_config or {}).get("draw_decomp_input_recipe", {})))
+			if (training_config or {}).get("draw_decomp_feature_cols") is not None:
+				draw_recipe["feature_cols"] = list((training_config or {})["draw_decomp_feature_cols"])
+			component_recipes["draw"] = draw_recipe
+		if has_score_component(training_config):
+			score_recipe = {
+				"numeric_scaling": "raw",
+				"league_encoding": "one_hot",
+				"include_promoted_flags": True,
+				"market_features": "raw_probs_and_margin",
+			}
+			score_recipe.update(dict((training_config or {}).get("score_component_input_recipe", {})))
+			if (training_config or {}).get("score_component_feature_cols") is not None:
+				score_recipe["feature_cols"] = list((training_config or {})["score_component_feature_cols"])
+			component_recipes["score"] = score_recipe
 		return {
 			"ensemble_type": "probability_blend",
-			"component_recipes": {
-				"elastic": elastic_recipe,
-				"tree": tree_recipe,
-			},
+			"component_recipes": component_recipes,
 		}
 	return {
 		"numeric_scaling": "external_standard_scaler",
@@ -293,12 +357,51 @@ def get_class_blend_alpha_grid(training_config: dict) -> list[float]:
 	return [float(value) for value in values]
 
 
-def get_elastic_weight_grid(training_config: dict) -> list[float]:
+def get_class_blend_alpha_vector_grid(training_config: dict) -> list[list[float]] | None:
+	"""Return optional explicit per-class alpha candidates for market blending."""
+
+	values = training_config.get("class_blend_alpha_vector_grid")
+	if values is None:
+		return None
+	vector_grid = []
+	for value in values:
+		parsed = parse_component_weight_value(value)
+		if not isinstance(parsed, list):
+			raise ValueError("Class blend alpha vector candidates must be explicit per-class lists")
+		vector_grid.append(parsed)
+	return vector_grid
+
+
+def get_class_blend_alpha_regime_grid(training_config: dict) -> list[dict] | None:
+	"""Return optional regime-aware classwise alpha candidates."""
+
+	values = training_config.get("class_blend_alpha_regime_grid")
+	if values is None:
+		return None
+	regime_grid = []
+	for value in values:
+		if not isinstance(value, dict):
+			raise ValueError("Regime-aware class blend candidates must be objects")
+		feature = str(value.get("feature", "")).strip()
+		if feature not in {"draw_implied", "entropy"}:
+			raise ValueError(f"Unsupported class blend regime feature: {feature}")
+		if "threshold" not in value:
+			raise ValueError("Regime-aware class blend candidates require a threshold")
+		regime_grid.append({
+			"feature": feature,
+			"threshold": float(value["threshold"]),
+			"low_alpha": parse_component_weight_value(value.get("low_alpha", 1.0)),
+			"high_alpha": parse_component_weight_value(value.get("high_alpha", 1.0)),
+		})
+	return regime_grid
+
+
+def get_elastic_weight_grid(training_config: dict) -> list[float | list[float]]:
 	"""Return the elastic/tree probability-mix grid for hybrid blends."""
 
 	params = dict(training_config.get("hybrid_blend_params", {}))
 	values = params.get("elastic_weight_grid", DEFAULT_ELASTIC_WEIGHT_GRID)
-	return [float(value) for value in values]
+	return [parse_component_weight_value(value) for value in values]
 
 
 def get_component_blend_mode(training_config: dict) -> str:
@@ -308,15 +411,116 @@ def get_component_blend_mode(training_config: dict) -> str:
 	return str(params.get("component_blend_mode", DEFAULT_COMPONENT_BLEND_MODE))
 
 
+def parse_component_weight_value(
+	value: float | list[float] | tuple[float, ...] | np.ndarray,
+) -> float | list[float]:
+	"""Normalize a scalar or vector component-weight value from config."""
+
+	if isinstance(value, np.ndarray):
+		if value.ndim == 0:
+			return float(value)
+		return [float(item) for item in value.tolist()]
+	if isinstance(value, (list, tuple)):
+		return [float(item) for item in value]
+	return float(value)
+
+
+def get_draw_component_base_weight_grid(training_config: dict) -> list[float | list[float]]:
+	"""Return the base/draw blend grid for the auxiliary draw component."""
+
+	params = dict(training_config.get("hybrid_blend_params", {}))
+	if "draw_component_base_weight_grid" not in params and "draw_component_base_weight_regime_grid" in params:
+		return []
+	values = params.get(
+		"draw_component_base_weight_grid",
+		DEFAULT_DRAW_COMPONENT_BASE_WEIGHT_GRID,
+	)
+	return [parse_component_weight_value(value) for value in values]
+
+
+def get_draw_component_base_weight_regime_grid(training_config: dict) -> list[dict]:
+	"""Return optional regime-aware base/draw blend candidates."""
+
+	params = dict(training_config.get("hybrid_blend_params", {}))
+	values = params.get("draw_component_base_weight_regime_grid", [])
+	regime_grid = []
+	for value in values:
+		if not isinstance(value, dict):
+			raise ValueError("Regime-aware component-weight candidates must be objects")
+		feature = str(value.get("feature", "")).strip()
+		if feature not in {"draw_implied", "entropy"}:
+			raise ValueError(f"Unsupported component-weight regime feature: {feature}")
+		if "threshold" not in value:
+			raise ValueError("Regime-aware component-weight candidates require a threshold")
+		regime_grid.append({
+			"feature": feature,
+			"threshold": float(value["threshold"]),
+			"low_weight": parse_component_weight_value(value.get("low_weight", 1.0)),
+			"high_weight": parse_component_weight_value(value.get("high_weight", 1.0)),
+		})
+	return regime_grid
+
+
+def get_draw_component_blend_mode(training_config: dict) -> str:
+	"""Return how the base ensemble and auxiliary draw expert are combined."""
+
+	params = dict(training_config.get("hybrid_blend_params", {}))
+	return str(params.get("draw_component_blend_mode", DEFAULT_DRAW_COMPONENT_BLEND_MODE))
+
+
+def get_score_component_weight_grid(training_config: dict) -> list[float | list[float]]:
+	"""Return the overlay blend grid for the auxiliary scoreline expert."""
+
+	params = dict(training_config.get("hybrid_blend_params", {}))
+	values = params.get(
+		"score_component_weight_grid",
+		DEFAULT_SCORE_COMPONENT_WEIGHT_GRID,
+	)
+	return [parse_component_weight_value(value) for value in values]
+
+
+def get_score_component_blend_mode(training_config: dict) -> str:
+	"""Return how the primary model and score expert are combined."""
+
+	params = dict(training_config.get("hybrid_blend_params", {}))
+	return str(params.get("score_component_blend_mode", DEFAULT_SCORE_COMPONENT_BLEND_MODE))
+
+
+def get_score_component_params(training_config: dict) -> dict:
+	"""Return Poisson score-expert parameters."""
+
+	params = dict(training_config.get("score_component_params", {}))
+	params.setdefault("max_goals", DEFAULT_SCORE_COMPONENT_MAX_GOALS)
+	return params
+
+
+def get_draw_binary_params(training_config: dict) -> dict:
+	"""Return the parameter block for the draw-vs-non-draw auxiliary head."""
+
+	if "draw_binary_params" in training_config:
+		return dict(training_config.get("draw_binary_params", {}))
+	return dict(training_config.get("draw_decomp_params", {}))
+
+
+def get_home_non_draw_binary_params(training_config: dict) -> dict:
+	"""Return the parameter block for the home-vs-away-given-non-draw head."""
+
+	if "home_non_draw_binary_params" in training_config:
+		return dict(training_config.get("home_non_draw_binary_params", {}))
+	return dict(training_config.get("draw_decomp_params", {}))
+
+
 def apply_implied_blend(
 	probs: np.ndarray,
 	implied_probs: np.ndarray,
-	blend_alpha: float | list[float] | tuple[float, ...] | np.ndarray | None,
+	blend_alpha: float | list[float] | tuple[float, ...] | np.ndarray | dict | None,
 ) -> np.ndarray:
 	"""Blend model probabilities back toward market implied probabilities."""
 
 	if blend_alpha is None:
 		return normalize_probabilities(probs)
+	if isinstance(blend_alpha, dict):
+		return apply_implied_blend_by_regime(probs, implied_probs, blend_alpha)
 	alpha = np.asarray(blend_alpha, dtype=np.float64)
 	if alpha.ndim == 0:
 		alpha = np.full((1, probs.shape[1]), float(alpha))
@@ -330,15 +534,54 @@ def apply_implied_blend(
 	return normalize_probabilities(blended)
 
 
+def compute_market_regime_signal(implied_probs: np.ndarray, feature: str) -> np.ndarray:
+	"""Compute the regime signal used for subgroup-aware market blending."""
+
+	if feature == "draw_implied":
+		return implied_probs[:, 1]
+	if feature == "entropy":
+		clipped = np.clip(implied_probs, 1e-12, 1.0)
+		return -(clipped * np.log(clipped)).sum(axis=1)
+	raise ValueError(f"Unsupported class blend regime feature: {feature}")
+
+
+def apply_implied_blend_by_regime(
+	probs: np.ndarray,
+	implied_probs: np.ndarray,
+	blend_alpha_regime: dict,
+) -> np.ndarray:
+	"""Blend toward market implied probabilities with separate alpha vectors by regime."""
+
+	feature = str(blend_alpha_regime.get("feature", "")).strip()
+	threshold = float(blend_alpha_regime["threshold"])
+	low_alpha = blend_alpha_regime.get("low_alpha")
+	high_alpha = blend_alpha_regime.get("high_alpha")
+	mask = compute_market_regime_signal(implied_probs, feature) >= threshold
+	blended = np.empty_like(probs)
+	if np.any(~mask):
+		blended[~mask] = apply_implied_blend(probs[~mask], implied_probs[~mask], low_alpha)
+	if np.any(mask):
+		blended[mask] = apply_implied_blend(probs[mask], implied_probs[mask], high_alpha)
+	return normalize_probabilities(blended)
+
+
 def blend_component_probabilities(
 	elastic_probs: np.ndarray,
 	tree_probs: np.ndarray,
-	elastic_weight: float,
+	elastic_weight: float | list[float] | tuple[float, ...] | np.ndarray,
 	mode: str = DEFAULT_COMPONENT_BLEND_MODE,
 ) -> np.ndarray:
 	"""Blend elastic and tree probabilities into a single prediction."""
 
-	elastic_weight = float(elastic_weight)
+	elastic_weight = np.asarray(elastic_weight, dtype=np.float64)
+	if elastic_weight.ndim == 0:
+		elastic_weight = np.full((1, elastic_probs.shape[1]), float(elastic_weight))
+	elif elastic_weight.ndim == 1:
+		if elastic_weight.shape[0] != elastic_probs.shape[1]:
+			raise ValueError("Per-class component weight must match the number of outcomes")
+		elastic_weight = elastic_weight.reshape(1, -1)
+	else:
+		raise ValueError("Component weight must be a scalar or a length-K vector")
 	if mode == "convex":
 		return normalize_probabilities(
 			elastic_weight * elastic_probs + (1.0 - elastic_weight) * tree_probs
@@ -350,6 +593,38 @@ def blend_component_probabilities(
 		)
 		return normalize_probabilities(mixed)
 	raise ValueError(f"Unsupported hybrid component blend mode: {mode}")
+
+
+def blend_component_probabilities_by_regime(
+	component_a_probs: np.ndarray,
+	component_b_probs: np.ndarray,
+	implied_probs: np.ndarray,
+	weight_regime: dict,
+	mode: str = DEFAULT_COMPONENT_BLEND_MODE,
+) -> np.ndarray:
+	"""Blend two components with regime-specific weights driven by bookmaker features."""
+
+	feature = str(weight_regime.get("feature", "")).strip()
+	threshold = float(weight_regime["threshold"])
+	low_weight = weight_regime.get("low_weight", 1.0)
+	high_weight = weight_regime.get("high_weight", 1.0)
+	mask = compute_market_regime_signal(implied_probs, feature) >= threshold
+	blended = np.empty_like(component_a_probs)
+	if np.any(~mask):
+		blended[~mask] = blend_component_probabilities(
+			component_a_probs[~mask],
+			component_b_probs[~mask],
+			low_weight,
+			mode=mode,
+		)
+	if np.any(mask):
+		blended[mask] = blend_component_probabilities(
+			component_a_probs[mask],
+			component_b_probs[mask],
+			high_weight,
+			mode=mode,
+		)
+	return normalize_probabilities(blended)
 
 
 def tune_blend_alpha(
@@ -389,22 +664,84 @@ def tune_class_blend_alpha(
 	return best_alpha, float(best_loss)
 
 
+def tune_class_blend_alpha_vectors(
+	probs: np.ndarray,
+	implied_probs: np.ndarray,
+	y_true: np.ndarray,
+	alpha_vector_grid: list[list[float]],
+) -> tuple[list[float], float]:
+	"""Select the best explicit per-outcome implied-blend vector on the selection season."""
+
+	best_alpha = None
+	best_loss = None
+	for alpha_vector in alpha_vector_grid:
+		if len(alpha_vector) != probs.shape[1]:
+			raise ValueError("Explicit class blend alpha candidates must match the number of outcomes")
+		alpha_vector = [float(value) for value in alpha_vector]
+		loss = log_loss(y_true, apply_implied_blend(probs, implied_probs, alpha_vector), labels=[0, 1, 2])
+		if best_loss is None or loss < best_loss:
+			best_alpha = alpha_vector
+			best_loss = float(loss)
+	return best_alpha, float(best_loss)
+
+
+def tune_class_blend_alpha_regimes(
+	probs: np.ndarray,
+	implied_probs: np.ndarray,
+	y_true: np.ndarray,
+	regime_grid: list[dict],
+) -> tuple[dict, float]:
+	"""Select the best regime-aware classwise alpha candidate on the selection season."""
+
+	best_regime = None
+	best_loss = None
+	for regime in regime_grid:
+		blended = apply_implied_blend_by_regime(probs, implied_probs, regime)
+		loss = log_loss(y_true, blended, labels=[0, 1, 2])
+		if best_loss is None or loss < best_loss:
+			best_regime = {
+				"feature": str(regime["feature"]),
+				"threshold": float(regime["threshold"]),
+				"low_alpha": parse_component_weight_value(regime["low_alpha"]),
+				"high_alpha": parse_component_weight_value(regime["high_alpha"]),
+			}
+			best_loss = float(loss)
+	return best_regime, float(best_loss)
+
+
 def tune_market_blend(
 	training_config: dict,
 	probs: np.ndarray,
 	implied_probs: np.ndarray,
 	y_true: np.ndarray,
-) -> tuple[str, float | list[float], float]:
+) -> tuple[str, float | list[float] | dict, float]:
 	"""Tune the market-implied blend for the active configuration."""
 
 	blend_mode = get_blend_mode(training_config)
 	if blend_mode == "classwise":
-		blend_alpha, blend_val_loss = tune_class_blend_alpha(
-			probs,
-			implied_probs,
-			y_true,
-			get_class_blend_alpha_grid(training_config),
-		)
+		alpha_regime_grid = get_class_blend_alpha_regime_grid(training_config)
+		alpha_vector_grid = get_class_blend_alpha_vector_grid(training_config)
+		if alpha_regime_grid is not None:
+			blend_alpha, blend_val_loss = tune_class_blend_alpha_regimes(
+				probs,
+				implied_probs,
+				y_true,
+				alpha_regime_grid,
+			)
+		elif alpha_vector_grid is not None:
+			blend_alpha, blend_val_loss = tune_class_blend_alpha_vectors(
+				probs,
+				implied_probs,
+				y_true,
+				alpha_vector_grid,
+			)
+		else:
+			blend_alpha, blend_val_loss = tune_class_blend_alpha(
+				probs,
+				implied_probs,
+				y_true,
+				get_class_blend_alpha_grid(training_config),
+			)
 	else:
 		blend_alpha, blend_val_loss = tune_blend_alpha(
 			probs,
@@ -461,6 +798,38 @@ def build_non_torch_model(training_config: dict):
 	raise ValueError(f"Unsupported non-torch model family: {model_family}")
 
 
+def build_binary_lightgbm_model(params: dict) -> LGBMClassifier:
+	"""Build a binary LightGBM classifier for auxiliary decomposition tasks."""
+
+	return LGBMClassifier(
+		objective="binary",
+		n_estimators=int(params.get("n_estimators", 300)),
+		learning_rate=float(params.get("learning_rate", 0.05)),
+		num_leaves=int(params.get("num_leaves", 31)),
+		min_child_samples=int(params.get("min_child_samples", 20)),
+		reg_lambda=float(params.get("reg_lambda", 0.0)),
+		random_state=int(params.get("random_state", 42)),
+		n_jobs=int(params.get("n_jobs", -1)),
+		verbosity=int(params.get("verbosity", -1)),
+	)
+
+
+def build_score_lightgbm_model(params: dict) -> LGBMRegressor:
+	"""Build a Poisson LightGBM regressor for scoreline components."""
+
+	return LGBMRegressor(
+		objective="poisson",
+		n_estimators=int(params.get("n_estimators", 400)),
+		learning_rate=float(params.get("learning_rate", 0.04)),
+		num_leaves=int(params.get("num_leaves", 31)),
+		min_child_samples=int(params.get("min_child_samples", 20)),
+		reg_lambda=float(params.get("reg_lambda", 0.0)),
+		random_state=int(params.get("random_state", 42)),
+		n_jobs=int(params.get("n_jobs", -1)),
+		verbosity=int(params.get("verbosity", -1)),
+	)
+
+
 def predict_non_torch_model_proba(
 	model: Any,
 	design: np.ndarray,
@@ -474,6 +843,183 @@ def predict_non_torch_model_proba(
 			category=UserWarning,
 		)
 		return normalize_probabilities(model.predict_proba(design))
+
+
+def fit_binary_model(
+	design: np.ndarray,
+	y_binary: np.ndarray,
+	params: dict,
+) -> Any:
+	"""Fit a binary auxiliary model, with a constant fallback for degenerate splits."""
+
+	unique_labels = np.unique(y_binary)
+	if unique_labels.size == 1:
+		return {
+			"constant_positive_prob": float(unique_labels[0]),
+		}
+	model = build_binary_lightgbm_model(params)
+	model.fit(design, y_binary)
+	return model
+
+
+def predict_binary_positive_proba(
+	model: Any,
+	design: np.ndarray,
+	positive_label: int = 1,
+) -> np.ndarray:
+	"""Predict the positive-class probability for a fitted binary auxiliary model."""
+
+	if isinstance(model, dict) and "constant_positive_prob" in model:
+		return np.full(design.shape[0], float(model["constant_positive_prob"]), dtype=np.float64)
+	probs = predict_non_torch_model_proba(model, design)
+	classes = np.asarray(getattr(model, "classes_", np.arange(probs.shape[1])))
+	match_index = np.flatnonzero(classes == positive_label)
+	if match_index.size == 0:
+		raise ValueError(f"Positive label {positive_label} missing from binary model classes: {classes.tolist()}")
+	return np.clip(probs[:, int(match_index[0])].astype(np.float64), 1e-9, 1.0 - 1e-9)
+
+
+def poisson_means_to_outcome_probs(
+	home_mean: np.ndarray,
+	away_mean: np.ndarray,
+	max_goals: int = DEFAULT_SCORE_COMPONENT_MAX_GOALS,
+) -> np.ndarray:
+	"""Convert independent Poisson goal means into 1X2 outcome probabilities."""
+
+	home_mean = np.clip(np.asarray(home_mean, dtype=np.float64), 1e-6, 8.0)
+	away_mean = np.clip(np.asarray(away_mean, dtype=np.float64), 1e-6, 8.0)
+
+	def build_pmf(mean: np.ndarray) -> np.ndarray:
+		pmf = np.empty((mean.shape[0], max_goals + 1), dtype=np.float64)
+		pmf[:, 0] = np.exp(-mean)
+		for goal_count in range(1, max_goals + 1):
+			pmf[:, goal_count] = pmf[:, goal_count - 1] * mean / float(goal_count)
+		tail = np.clip(1.0 - pmf.sum(axis=1), 0.0, 1.0)
+		pmf[:, -1] += tail
+		return pmf
+
+	home_pmf = build_pmf(home_mean)
+	away_pmf = build_pmf(away_mean)
+	home_win = np.zeros(home_mean.shape[0], dtype=np.float64)
+	draw = np.zeros_like(home_win)
+	away_win = np.zeros_like(home_win)
+	for goal_count in range(max_goals + 1):
+		home_win += home_pmf[:, goal_count] * away_pmf[:, :goal_count].sum(axis=1)
+		draw += home_pmf[:, goal_count] * away_pmf[:, goal_count]
+		away_win += home_pmf[:, goal_count] * away_pmf[:, goal_count + 1:].sum(axis=1)
+	return normalize_probabilities(np.stack([home_win, draw, away_win], axis=1))
+
+
+def build_draw_decomp_component(training_config: dict, train_data: Dict[str, np.ndarray]) -> dict:
+	"""Fit the auxiliary draw-vs-non-draw and home-vs-away heads."""
+
+	input_recipe = (build_input_recipe(resolve_model_family(training_config), training_config).get("component_recipes") or {}).get("draw")
+	if input_recipe is None:
+		raise ValueError("Draw-decomposition component requested without an input recipe")
+	design = build_design_from_data(train_data, input_recipe)
+	draw_target = (train_data["y"] == 1).astype(int)
+	non_draw_mask = train_data["y"] != 1
+	home_given_non_draw_target = (train_data["y"][non_draw_mask] == 0).astype(int)
+	return {
+		"draw_binary": fit_binary_model(
+			design,
+			draw_target,
+			get_draw_binary_params(training_config),
+		),
+		"home_non_draw_binary": fit_binary_model(
+			design[non_draw_mask],
+			home_given_non_draw_target,
+			get_home_non_draw_binary_params(training_config),
+		),
+	}
+
+
+def build_score_component(training_config: dict, train_data: Dict[str, np.ndarray]) -> dict:
+	"""Fit the auxiliary scoreline expert with independent Poisson goal heads."""
+
+	input_recipe = (build_input_recipe(resolve_model_family(training_config), training_config).get("component_recipes") or {}).get("score")
+	if input_recipe is None:
+		raise ValueError("Score component requested without an input recipe")
+	params = get_score_component_params(training_config)
+	design = build_design_from_data(train_data, input_recipe)
+	return {
+		"home_goals": build_score_lightgbm_model(params).fit(design, train_data["home_goals"].astype(np.float64)),
+		"away_goals": build_score_lightgbm_model(params).fit(design, train_data["away_goals"].astype(np.float64)),
+		"max_goals": int(params.get("max_goals", DEFAULT_SCORE_COMPONENT_MAX_GOALS)),
+	}
+
+
+def predict_draw_decomp_component_proba(
+	model: dict,
+	X_numeric: np.ndarray,
+	cat_features: np.ndarray | None,
+	implied_probs: np.ndarray,
+	raw_margin: np.ndarray,
+	input_recipe: dict,
+	available_feature_cols: list[str] | None,
+) -> np.ndarray:
+	"""Predict 1X2 probabilities from the auxiliary draw-decomposition expert."""
+
+	design = build_design_matrix(
+		select_numeric_feature_block(
+			X_numeric,
+			available_feature_cols,
+			input_recipe.get("feature_cols"),
+		),
+		cat_features,
+		implied_probs,
+		raw_margin,
+		input_recipe,
+	)
+	draw_prob = predict_binary_positive_proba(model["draw_binary"], design, positive_label=1)
+	home_non_draw_prob = predict_binary_positive_proba(
+		model["home_non_draw_binary"],
+		design,
+		positive_label=1,
+	)
+	probs = np.stack([
+		(1.0 - draw_prob) * home_non_draw_prob,
+		draw_prob,
+		(1.0 - draw_prob) * (1.0 - home_non_draw_prob),
+	], axis=1)
+	return normalize_probabilities(probs)
+
+
+def predict_score_component_proba(
+	model: dict,
+	X_numeric: np.ndarray,
+	cat_features: np.ndarray | None,
+	implied_probs: np.ndarray,
+	raw_margin: np.ndarray,
+	input_recipe: dict,
+	available_feature_cols: list[str] | None,
+) -> np.ndarray:
+	"""Predict 1X2 probabilities from the auxiliary scoreline expert."""
+
+	design = build_design_matrix(
+		select_numeric_feature_block(
+			X_numeric,
+			available_feature_cols,
+			input_recipe.get("feature_cols"),
+		),
+		cat_features,
+		implied_probs,
+		raw_margin,
+		input_recipe,
+	)
+	with warnings.catch_warnings():
+		warnings.filterwarnings(
+			"ignore",
+			message="X does not have valid feature names, but LGBMRegressor was fitted with feature names",
+			category=UserWarning,
+		)
+		home_mean = np.clip(model["home_goals"].predict(design).astype(np.float64), 1e-6, 8.0)
+		away_mean = np.clip(model["away_goals"].predict(design).astype(np.float64), 1e-6, 8.0)
+	return poisson_means_to_outcome_probs(
+		home_mean,
+		away_mean,
+		max_goals=int(model.get("max_goals", DEFAULT_SCORE_COMPONENT_MAX_GOALS)),
+	)
 
 
 def fit_non_torch_selection_model(
@@ -507,32 +1053,156 @@ def fit_non_torch_selection_model(
 		elastic_probs = predict_non_torch_model_proba(elastic_model, X_val_elastic)
 		tree_probs = predict_non_torch_model_proba(tree_model, X_val_tree)
 		component_blend_mode = get_component_blend_mode(training_config)
+		draw_component = None
+		draw_probs = None
+		draw_component_blend_mode = get_draw_component_blend_mode(training_config)
+		draw_component_base_weight_grid = [1.0]
+		draw_component_base_weight_regime_grid = []
+		score_component = None
+		score_probs = None
+		score_component_blend_mode = get_score_component_blend_mode(training_config)
+		score_component_weight_grid = []
+		if has_draw_decomp_component(training_config):
+			draw_component = build_draw_decomp_component(training_config, train_data)
+			draw_recipe = (build_input_recipe(model_family, training_config).get("component_recipes") or {}).get("draw")
+			draw_probs = predict_draw_decomp_component_proba(
+				draw_component,
+				val_data["X"],
+				val_data.get("cat_features"),
+				val_data["implied"],
+				val_data["raw_margin"],
+				draw_recipe,
+				val_data.get("feature_cols"),
+			)
+			draw_component_base_weight_grid = get_draw_component_base_weight_grid(training_config)
+			draw_component_base_weight_regime_grid = get_draw_component_base_weight_regime_grid(training_config)
+		if has_score_component(training_config):
+			score_component = build_score_component(training_config, train_data)
+			score_recipe = (build_input_recipe(model_family, training_config).get("component_recipes") or {}).get("score")
+			score_probs = predict_score_component_proba(
+				score_component,
+				val_data["X"],
+				val_data.get("cat_features"),
+				val_data["implied"],
+				val_data["raw_margin"],
+				score_recipe,
+				val_data.get("feature_cols"),
+			)
+			score_component_weight_grid = get_score_component_weight_grid(training_config)
 		best_summary = None
 		for elastic_weight in get_elastic_weight_grid(training_config):
-			blended_probs = blend_component_probabilities(
+			base_probs = blend_component_probabilities(
 				elastic_probs,
 				tree_probs,
 				elastic_weight,
 				mode=component_blend_mode,
 			)
-			blend_mode, blend_alpha, blend_val_loss = tune_market_blend(
-				training_config,
-				blended_probs,
-				val_data["implied"],
-				val_data["y"],
+			for draw_component_base_weight in draw_component_base_weight_grid:
+				blended_probs = base_probs
+				if draw_probs is not None:
+					blended_probs = blend_component_probabilities(
+						base_probs,
+						draw_probs,
+						draw_component_base_weight,
+						mode=draw_component_blend_mode,
+					)
+				blend_mode, blend_alpha, blend_val_loss = tune_market_blend(
+					training_config,
+					blended_probs,
+					val_data["implied"],
+					val_data["y"],
+				)
+				if best_summary is None or blend_val_loss < best_summary["blend_val_log_loss"]:
+					best_summary = {
+						"blend_mode": blend_mode,
+						"blend_alpha": blend_alpha,
+						"blend_val_log_loss": float(blend_val_loss),
+						"elastic_weight": parse_component_weight_value(elastic_weight),
+						"component_blend_mode": component_blend_mode,
+					}
+					if draw_probs is not None:
+						best_summary["draw_component_base_weight"] = parse_component_weight_value(draw_component_base_weight)
+						best_summary["draw_component_blend_mode"] = draw_component_blend_mode
+			for draw_component_base_weight_regime in draw_component_base_weight_regime_grid:
+				blended_probs = blend_component_probabilities_by_regime(
+					base_probs,
+					draw_probs,
+					val_data["implied"],
+					draw_component_base_weight_regime,
+					mode=draw_component_blend_mode,
+				)
+				blend_mode, blend_alpha, blend_val_loss = tune_market_blend(
+					training_config,
+					blended_probs,
+					val_data["implied"],
+					val_data["y"],
+				)
+				if best_summary is None or blend_val_loss < best_summary["blend_val_log_loss"]:
+					best_summary = {
+						"blend_mode": blend_mode,
+						"blend_alpha": blend_alpha,
+						"blend_val_log_loss": float(blend_val_loss),
+						"elastic_weight": parse_component_weight_value(elastic_weight),
+						"component_blend_mode": component_blend_mode,
+						"draw_component_base_weight_regime": {
+							"feature": str(draw_component_base_weight_regime["feature"]),
+							"threshold": float(draw_component_base_weight_regime["threshold"]),
+							"low_weight": parse_component_weight_value(draw_component_base_weight_regime["low_weight"]),
+							"high_weight": parse_component_weight_value(draw_component_base_weight_regime["high_weight"]),
+						},
+						"draw_component_blend_mode": draw_component_blend_mode,
+					}
+		if score_probs is not None and best_summary is not None:
+			best_probs = blend_component_probabilities(
+				elastic_probs,
+				tree_probs,
+				best_summary["elastic_weight"],
+				mode=best_summary.get("component_blend_mode", DEFAULT_COMPONENT_BLEND_MODE),
 			)
-			if best_summary is None or blend_val_loss < best_summary["blend_val_log_loss"]:
-				best_summary = {
-					"blend_mode": blend_mode,
-					"blend_alpha": blend_alpha,
-					"blend_val_log_loss": float(blend_val_loss),
-					"elastic_weight": float(elastic_weight),
-					"component_blend_mode": component_blend_mode,
-				}
-		return {
+			if draw_probs is not None and best_summary.get("draw_component_base_weight") is not None:
+				best_probs = blend_component_probabilities(
+					best_probs,
+					draw_probs,
+					best_summary["draw_component_base_weight"],
+					mode=best_summary.get("draw_component_blend_mode", DEFAULT_DRAW_COMPONENT_BLEND_MODE),
+				)
+			elif draw_probs is not None and best_summary.get("draw_component_base_weight_regime") is not None:
+				best_probs = blend_component_probabilities_by_regime(
+					best_probs,
+					draw_probs,
+					val_data["implied"],
+					best_summary["draw_component_base_weight_regime"],
+					mode=best_summary.get("draw_component_blend_mode", DEFAULT_DRAW_COMPONENT_BLEND_MODE),
+				)
+			best_probs = apply_implied_blend(
+				best_probs,
+				val_data["implied"],
+				best_summary["blend_alpha"],
+			)
+			for score_component_weight in score_component_weight_grid:
+				score_blended_probs = blend_component_probabilities(
+					best_probs,
+					score_probs,
+					score_component_weight,
+					mode=score_component_blend_mode,
+				)
+				score_val_loss = log_loss(val_data["y"], score_blended_probs, labels=[0, 1, 2])
+				if score_val_loss < best_summary["blend_val_log_loss"]:
+					best_summary = {
+						**best_summary,
+						"blend_val_log_loss": float(score_val_loss),
+						"score_component_weight": parse_component_weight_value(score_component_weight),
+						"score_component_blend_mode": score_component_blend_mode,
+					}
+		models = {
 			"elastic": elastic_model,
 			"tree": tree_model,
-		}, best_summary
+		}
+		if draw_component is not None:
+			models["draw_component"] = draw_component
+		if score_component is not None:
+			models["score_component"] = score_component
+		return models, best_summary
 
 	input_recipe = build_input_recipe(model_family, training_config)
 	model = build_non_torch_model(training_config)
@@ -567,10 +1237,15 @@ def fit_non_torch_final_model(training_config: dict, train_data: Dict[str, np.nd
 		)
 		elastic_config = build_component_training_config(training_config, "elastic_net_blend")
 		tree_config = build_component_training_config(training_config, tree_component_family)
-		return {
+		models = {
 			"elastic": fit_non_torch_final_model(elastic_config, train_data),
 			"tree": fit_non_torch_final_model(tree_config, train_data),
 		}
+		if has_draw_decomp_component(training_config):
+			models["draw_component"] = build_draw_decomp_component(training_config, train_data)
+		if has_score_component(training_config):
+			models["score_component"] = build_score_component(training_config, train_data)
+		return models
 
 	input_recipe = build_input_recipe(model_family, training_config)
 	model = build_non_torch_model(training_config)
@@ -619,17 +1294,16 @@ def predict_result_proba(
 		if elastic_recipe is None or tree_recipe is None:
 			raise ValueError("Hybrid blend metadata is missing component recipes")
 		available_feature_cols = metadata.get("feature_cols")
-		if available_feature_cols is None:
-			raise ValueError("Hybrid blend metadata is missing feature_cols")
-		feature_index = {name: idx for idx, name in enumerate(available_feature_cols)}
-		elastic_selected_cols = elastic_recipe.get("feature_cols")
-		tree_selected_cols = tree_recipe.get("feature_cols")
-		elastic_X_numeric = np.nan_to_num(X_numeric, nan=0.0)
-		tree_X_numeric = np.nan_to_num(X_numeric, nan=0.0)
-		if elastic_selected_cols is not None:
-			elastic_X_numeric = elastic_X_numeric[:, [feature_index[name] for name in elastic_selected_cols]]
-		if tree_selected_cols is not None:
-			tree_X_numeric = tree_X_numeric[:, [feature_index[name] for name in tree_selected_cols]]
+		elastic_X_numeric = select_numeric_feature_block(
+			X_numeric,
+			available_feature_cols,
+			elastic_recipe.get("feature_cols"),
+		)
+		tree_X_numeric = select_numeric_feature_block(
+			X_numeric,
+			available_feature_cols,
+			tree_recipe.get("feature_cols"),
+		)
 		elastic_design = build_design_matrix(
 			elastic_X_numeric,
 			cat_features,
@@ -657,6 +1331,77 @@ def predict_result_proba(
 			elastic_weight,
 			mode=component_blend_mode,
 		)
+		draw_recipe = component_recipes.get("draw")
+		draw_component = model.get("draw_component") if isinstance(model, dict) else None
+		draw_component_base_weight = metadata.get("selection_summary", {}).get("draw_component_base_weight")
+		draw_component_base_weight_regime = metadata.get("selection_summary", {}).get("draw_component_base_weight_regime")
+		if draw_recipe is not None and draw_component is not None and draw_component_base_weight is not None:
+			draw_probs = predict_draw_decomp_component_proba(
+				draw_component,
+				X_numeric,
+				cat_features,
+				implied_probs,
+				raw_margin,
+				draw_recipe,
+				available_feature_cols,
+			)
+			draw_component_blend_mode = metadata.get("selection_summary", {}).get(
+				"draw_component_blend_mode",
+				DEFAULT_DRAW_COMPONENT_BLEND_MODE,
+			)
+			probs = blend_component_probabilities(
+				probs,
+				draw_probs,
+				draw_component_base_weight,
+				mode=draw_component_blend_mode,
+			)
+		elif draw_recipe is not None and draw_component is not None and draw_component_base_weight_regime is not None:
+			draw_probs = predict_draw_decomp_component_proba(
+				draw_component,
+				X_numeric,
+				cat_features,
+				implied_probs,
+				raw_margin,
+				draw_recipe,
+				available_feature_cols,
+			)
+			draw_component_blend_mode = metadata.get("selection_summary", {}).get(
+				"draw_component_blend_mode",
+				DEFAULT_DRAW_COMPONENT_BLEND_MODE,
+			)
+			probs = blend_component_probabilities_by_regime(
+				probs,
+				draw_probs,
+				implied_probs,
+				draw_component_base_weight_regime,
+				mode=draw_component_blend_mode,
+			)
+		blend_alpha = metadata.get("selection_summary", {}).get("blend_alpha")
+		probs = apply_implied_blend(probs, implied_probs, blend_alpha)
+		score_recipe = component_recipes.get("score")
+		score_component = model.get("score_component") if isinstance(model, dict) else None
+		score_component_weight = metadata.get("selection_summary", {}).get("score_component_weight")
+		if score_recipe is not None and score_component is not None and score_component_weight is not None:
+			score_probs = predict_score_component_proba(
+				score_component,
+				X_numeric,
+				cat_features,
+				implied_probs,
+				raw_margin,
+				score_recipe,
+				available_feature_cols,
+			)
+			score_component_blend_mode = metadata.get("selection_summary", {}).get(
+				"score_component_blend_mode",
+				DEFAULT_SCORE_COMPONENT_BLEND_MODE,
+			)
+			probs = blend_component_probabilities(
+				probs,
+				score_probs,
+				score_component_weight,
+				mode=score_component_blend_mode,
+			)
+		return normalize_probabilities(probs)
 	else:
 		design = build_design_matrix(np.nan_to_num(X_numeric, nan=0.0), cat_features, implied_probs, raw_margin, input_recipe)
 		probs = predict_non_torch_model_proba(model, design)
