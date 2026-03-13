@@ -608,6 +608,7 @@ class TrainConfig:
 	lambda_corr: float = 0.0
 	lambda_logit_delta: float = 0.0
 	market_target_mix: float = 0.0
+	market_target_entropy_scale: float = 0.0
 	gce_mix_weight: float = 0.0
 	gce_q: float = 0.7
 
@@ -673,6 +674,7 @@ def gated_loss(
 	lambda_corr: float = 0.0,
 	lambda_logit_delta: float = 0.0,
 	market_target_mix: float = 0.0,
+	market_target_entropy_scale: float = 0.0,
 	gce_mix_weight: float = 0.0,
 	gce_q: float = 0.7,
 	eps: float = 1e-6,
@@ -681,14 +683,23 @@ def gated_loss(
 
 	pred_logits = model(x, cat_features, implied_probs, raw_margin)
 	pred_probs = F.softmax(pred_logits, dim=-1)
+	log_probs = F.log_softmax(pred_logits, dim=-1)
 	implied_log = _log_softmax_from_implied(implied_probs)
 	target = target.view(-1).long()
 	if market_target_mix > 0:
 		soft_target = F.one_hot(target, num_classes=model.n_classes).float()
-		soft_target = (1.0 - market_target_mix) * soft_target + market_target_mix * implied_probs
-		loss = -(soft_target * F.log_softmax(pred_logits, dim=-1)).sum(dim=-1).mean()
+		mix = pred_logits.new_full((soft_target.shape[0], 1), market_target_mix)
+		if abs(market_target_entropy_scale) > eps:
+			implied_normalized = implied_probs / implied_probs.sum(dim=-1, keepdim=True)
+			implied_clamped = implied_normalized.clamp_min(eps)
+			implied_entropy = -(implied_clamped * torch.log(implied_clamped)).sum(dim=-1, keepdim=True)
+			normalized_entropy = implied_entropy / math.log(model.n_classes)
+			centered_entropy = 2.0 * (normalized_entropy - 0.5)
+			mix = (mix * (1.0 + market_target_entropy_scale * centered_entropy)).clamp(0.0, 1.0)
+		soft_target = (1.0 - mix) * soft_target + mix * implied_probs
+		loss = -(soft_target * log_probs).sum(dim=-1).mean()
 	else:
-		loss = F.cross_entropy(pred_logits, target)
+		loss = F.nll_loss(log_probs, target)
 
 	if gce_mix_weight > 0:
 		true_class_probs = pred_probs.gather(1, target.unsqueeze(1)).squeeze(1).clamp_min(eps)
