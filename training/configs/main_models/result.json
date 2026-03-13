@@ -36,5 +36,7 @@
 	"lambda_repulsion": 2.3,
 	"lambda_corr": 0.0,
 	"lambda_logit_delta": 0.01,
-	"market_target_mix": 0.001
+	"market_target_mix": 0.001,
+	"gce_mix_weight": 0.04,
+	"gce_q": 0.9
 }
