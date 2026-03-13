@@ -6,6 +6,7 @@ from training.result_modeling import (
 	apply_implied_blend,
 	blend_component_probabilities,
 	blend_component_probabilities_by_regime,
+	poisson_means_to_outcome_probs,
 	tune_market_blend,
 )
 
@@ -108,6 +109,26 @@ class ResultModelingTests(unittest.TestCase):
 		])
 
 		np.testing.assert_allclose(blended, expected, atol=1e-9)
+
+	def test_poisson_means_to_outcome_probs_is_symmetric_for_equal_rates(self):
+		probs = poisson_means_to_outcome_probs(
+			np.array([1.4]),
+			np.array([1.4]),
+			max_goals=12,
+		)
+
+		self.assertAlmostEqual(float(probs[0, 0]), float(probs[0, 2]), places=9)
+		self.assertAlmostEqual(float(probs.sum()), 1.0, places=9)
+
+	def test_poisson_means_to_outcome_probs_moves_toward_higher_home_rate(self):
+		probs = poisson_means_to_outcome_probs(
+			np.array([2.1]),
+			np.array([0.8]),
+			max_goals=12,
+		)
+
+		self.assertGreater(float(probs[0, 0]), float(probs[0, 2]))
+		self.assertGreater(float(probs[0, 0]), float(probs[0, 1]))
 
 
 if __name__ == "__main__":

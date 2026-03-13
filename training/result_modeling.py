@@ -8,7 +8,7 @@ from typing import Any, Dict
 import numpy as np
 import torch
 import torch.nn.functional as F
-from lightgbm import LGBMClassifier
+from lightgbm import LGBMClassifier, LGBMRegressor
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
@@ -22,6 +22,9 @@ DEFAULT_ELASTIC_WEIGHT_GRID = [0.8, 0.85, 0.9, 0.925, 0.95]
 DEFAULT_COMPONENT_BLEND_MODE = "convex"
 DEFAULT_DRAW_COMPONENT_BASE_WEIGHT_GRID = [0.975]
 DEFAULT_DRAW_COMPONENT_BLEND_MODE = "convex"
+DEFAULT_SCORE_COMPONENT_WEIGHT_GRID = [1.0]
+DEFAULT_SCORE_COMPONENT_BLEND_MODE = "logit"
+DEFAULT_SCORE_COMPONENT_MAX_GOALS = 10
 
 
 def resolve_model_family(training_config: dict | None) -> str:
@@ -71,6 +74,14 @@ def has_draw_decomp_component(training_config: dict | None) -> bool:
 	if training_config is None:
 		return False
 	return "draw_decomp_params" in training_config or "draw_decomp_input_recipe" in training_config
+
+
+def has_score_component(training_config: dict | None) -> bool:
+	"""Return whether an auxiliary scoreline expert is configured."""
+
+	if training_config is None:
+		return False
+	return "score_component_params" in training_config or "score_component_input_recipe" in training_config
 
 
 def safe_logit(probs: np.ndarray, eps: float = 1e-6) -> np.ndarray:
@@ -200,6 +211,17 @@ def build_input_recipe(model_family: str, training_config: dict | None = None) -
 			if (training_config or {}).get("draw_decomp_feature_cols") is not None:
 				draw_recipe["feature_cols"] = list((training_config or {})["draw_decomp_feature_cols"])
 			component_recipes["draw"] = draw_recipe
+		if has_score_component(training_config):
+			score_recipe = {
+				"numeric_scaling": "raw",
+				"league_encoding": "one_hot",
+				"include_promoted_flags": True,
+				"market_features": "raw_probs_and_margin",
+			}
+			score_recipe.update(dict((training_config or {}).get("score_component_input_recipe", {})))
+			if (training_config or {}).get("score_component_feature_cols") is not None:
+				score_recipe["feature_cols"] = list((training_config or {})["score_component_feature_cols"])
+			component_recipes["score"] = score_recipe
 		return {
 			"ensemble_type": "probability_blend",
 			"component_recipes": component_recipes,
@@ -444,6 +466,32 @@ def get_draw_component_blend_mode(training_config: dict) -> str:
 
 	params = dict(training_config.get("hybrid_blend_params", {}))
 	return str(params.get("draw_component_blend_mode", DEFAULT_DRAW_COMPONENT_BLEND_MODE))
+
+
+def get_score_component_weight_grid(training_config: dict) -> list[float | list[float]]:
+	"""Return the overlay blend grid for the auxiliary scoreline expert."""
+
+	params = dict(training_config.get("hybrid_blend_params", {}))
+	values = params.get(
+		"score_component_weight_grid",
+		DEFAULT_SCORE_COMPONENT_WEIGHT_GRID,
+	)
+	return [parse_component_weight_value(value) for value in values]
+
+
+def get_score_component_blend_mode(training_config: dict) -> str:
+	"""Return how the primary model and score expert are combined."""
+
+	params = dict(training_config.get("hybrid_blend_params", {}))
+	return str(params.get("score_component_blend_mode", DEFAULT_SCORE_COMPONENT_BLEND_MODE))
+
+
+def get_score_component_params(training_config: dict) -> dict:
+	"""Return Poisson score-expert parameters."""
+
+	params = dict(training_config.get("score_component_params", {}))
+	params.setdefault("max_goals", DEFAULT_SCORE_COMPONENT_MAX_GOALS)
+	return params
 
 
 def get_draw_binary_params(training_config: dict) -> dict:
@@ -766,6 +814,22 @@ def build_binary_lightgbm_model(params: dict) -> LGBMClassifier:
 	)
 
 
+def build_score_lightgbm_model(params: dict) -> LGBMRegressor:
+	"""Build a Poisson LightGBM regressor for scoreline components."""
+
+	return LGBMRegressor(
+		objective="poisson",
+		n_estimators=int(params.get("n_estimators", 400)),
+		learning_rate=float(params.get("learning_rate", 0.04)),
+		num_leaves=int(params.get("num_leaves", 31)),
+		min_child_samples=int(params.get("min_child_samples", 20)),
+		reg_lambda=float(params.get("reg_lambda", 0.0)),
+		random_state=int(params.get("random_state", 42)),
+		n_jobs=int(params.get("n_jobs", -1)),
+		verbosity=int(params.get("verbosity", -1)),
+	)
+
+
 def predict_non_torch_model_proba(
 	model: Any,
 	design: np.ndarray,
@@ -815,6 +879,37 @@ def predict_binary_positive_proba(
 	return np.clip(probs[:, int(match_index[0])].astype(np.float64), 1e-9, 1.0 - 1e-9)
 
 
+def poisson_means_to_outcome_probs(
+	home_mean: np.ndarray,
+	away_mean: np.ndarray,
+	max_goals: int = DEFAULT_SCORE_COMPONENT_MAX_GOALS,
+) -> np.ndarray:
+	"""Convert independent Poisson goal means into 1X2 outcome probabilities."""
+
+	home_mean = np.clip(np.asarray(home_mean, dtype=np.float64), 1e-6, 8.0)
+	away_mean = np.clip(np.asarray(away_mean, dtype=np.float64), 1e-6, 8.0)
+
+	def build_pmf(mean: np.ndarray) -> np.ndarray:
+		pmf = np.empty((mean.shape[0], max_goals + 1), dtype=np.float64)
+		pmf[:, 0] = np.exp(-mean)
+		for goal_count in range(1, max_goals + 1):
+			pmf[:, goal_count] = pmf[:, goal_count - 1] * mean / float(goal_count)
+		tail = np.clip(1.0 - pmf.sum(axis=1), 0.0, 1.0)
+		pmf[:, -1] += tail
+		return pmf
+
+	home_pmf = build_pmf(home_mean)
+	away_pmf = build_pmf(away_mean)
+	home_win = np.zeros(home_mean.shape[0], dtype=np.float64)
+	draw = np.zeros_like(home_win)
+	away_win = np.zeros_like(home_win)
+	for goal_count in range(max_goals + 1):
+		home_win += home_pmf[:, goal_count] * away_pmf[:, :goal_count].sum(axis=1)
+		draw += home_pmf[:, goal_count] * away_pmf[:, goal_count]
+		away_win += home_pmf[:, goal_count] * away_pmf[:, goal_count + 1:].sum(axis=1)
+	return normalize_probabilities(np.stack([home_win, draw, away_win], axis=1))
+
+
 def build_draw_decomp_component(training_config: dict, train_data: Dict[str, np.ndarray]) -> dict:
 	"""Fit the auxiliary draw-vs-non-draw and home-vs-away heads."""
 
@@ -836,6 +931,21 @@ def build_draw_decomp_component(training_config: dict, train_data: Dict[str, np.
 			home_given_non_draw_target,
 			get_home_non_draw_binary_params(training_config),
 		),
+	}
+
+
+def build_score_component(training_config: dict, train_data: Dict[str, np.ndarray]) -> dict:
+	"""Fit the auxiliary scoreline expert with independent Poisson goal heads."""
+
+	input_recipe = (build_input_recipe(resolve_model_family(training_config), training_config).get("component_recipes") or {}).get("score")
+	if input_recipe is None:
+		raise ValueError("Score component requested without an input recipe")
+	params = get_score_component_params(training_config)
+	design = build_design_from_data(train_data, input_recipe)
+	return {
+		"home_goals": build_score_lightgbm_model(params).fit(design, train_data["home_goals"].astype(np.float64)),
+		"away_goals": build_score_lightgbm_model(params).fit(design, train_data["away_goals"].astype(np.float64)),
+		"max_goals": int(params.get("max_goals", DEFAULT_SCORE_COMPONENT_MAX_GOALS)),
 	}
 
 
@@ -875,6 +985,43 @@ def predict_draw_decomp_component_proba(
 	return normalize_probabilities(probs)
 
 
+def predict_score_component_proba(
+	model: dict,
+	X_numeric: np.ndarray,
+	cat_features: np.ndarray | None,
+	implied_probs: np.ndarray,
+	raw_margin: np.ndarray,
+	input_recipe: dict,
+	available_feature_cols: list[str] | None,
+) -> np.ndarray:
+	"""Predict 1X2 probabilities from the auxiliary scoreline expert."""
+
+	design = build_design_matrix(
+		select_numeric_feature_block(
+			X_numeric,
+			available_feature_cols,
+			input_recipe.get("feature_cols"),
+		),
+		cat_features,
+		implied_probs,
+		raw_margin,
+		input_recipe,
+	)
+	with warnings.catch_warnings():
+		warnings.filterwarnings(
+			"ignore",
+			message="X does not have valid feature names, but LGBMRegressor was fitted with feature names",
+			category=UserWarning,
+		)
+		home_mean = np.clip(model["home_goals"].predict(design).astype(np.float64), 1e-6, 8.0)
+		away_mean = np.clip(model["away_goals"].predict(design).astype(np.float64), 1e-6, 8.0)
+	return poisson_means_to_outcome_probs(
+		home_mean,
+		away_mean,
+		max_goals=int(model.get("max_goals", DEFAULT_SCORE_COMPONENT_MAX_GOALS)),
+	)
+
+
 def fit_non_torch_selection_model(
 	training_config: dict,
 	train_data: Dict[str, np.ndarray],
@@ -911,6 +1058,10 @@ def fit_non_torch_selection_model(
 		draw_component_blend_mode = get_draw_component_blend_mode(training_config)
 		draw_component_base_weight_grid = [1.0]
 		draw_component_base_weight_regime_grid = []
+		score_component = None
+		score_probs = None
+		score_component_blend_mode = get_score_component_blend_mode(training_config)
+		score_component_weight_grid = []
 		if has_draw_decomp_component(training_config):
 			draw_component = build_draw_decomp_component(training_config, train_data)
 			draw_recipe = (build_input_recipe(model_family, training_config).get("component_recipes") or {}).get("draw")
@@ -925,6 +1076,19 @@ def fit_non_torch_selection_model(
 			)
 			draw_component_base_weight_grid = get_draw_component_base_weight_grid(training_config)
 			draw_component_base_weight_regime_grid = get_draw_component_base_weight_regime_grid(training_config)
+		if has_score_component(training_config):
+			score_component = build_score_component(training_config, train_data)
+			score_recipe = (build_input_recipe(model_family, training_config).get("component_recipes") or {}).get("score")
+			score_probs = predict_score_component_proba(
+				score_component,
+				val_data["X"],
+				val_data.get("cat_features"),
+				val_data["implied"],
+				val_data["raw_margin"],
+				score_recipe,
+				val_data.get("feature_cols"),
+			)
+			score_component_weight_grid = get_score_component_weight_grid(training_config)
 		best_summary = None
 		for elastic_weight in get_elastic_weight_grid(training_config):
 			base_probs = blend_component_probabilities(
@@ -988,12 +1152,56 @@ def fit_non_torch_selection_model(
 						},
 						"draw_component_blend_mode": draw_component_blend_mode,
 					}
+		if score_probs is not None and best_summary is not None:
+			best_probs = blend_component_probabilities(
+				elastic_probs,
+				tree_probs,
+				best_summary["elastic_weight"],
+				mode=best_summary.get("component_blend_mode", DEFAULT_COMPONENT_BLEND_MODE),
+			)
+			if draw_probs is not None and best_summary.get("draw_component_base_weight") is not None:
+				best_probs = blend_component_probabilities(
+					best_probs,
+					draw_probs,
+					best_summary["draw_component_base_weight"],
+					mode=best_summary.get("draw_component_blend_mode", DEFAULT_DRAW_COMPONENT_BLEND_MODE),
+				)
+			elif draw_probs is not None and best_summary.get("draw_component_base_weight_regime") is not None:
+				best_probs = blend_component_probabilities_by_regime(
+					best_probs,
+					draw_probs,
+					val_data["implied"],
+					best_summary["draw_component_base_weight_regime"],
+					mode=best_summary.get("draw_component_blend_mode", DEFAULT_DRAW_COMPONENT_BLEND_MODE),
+				)
+			best_probs = apply_implied_blend(
+				best_probs,
+				val_data["implied"],
+				best_summary["blend_alpha"],
+			)
+			for score_component_weight in score_component_weight_grid:
+				score_blended_probs = blend_component_probabilities(
+					best_probs,
+					score_probs,
+					score_component_weight,
+					mode=score_component_blend_mode,
+				)
+				score_val_loss = log_loss(val_data["y"], score_blended_probs, labels=[0, 1, 2])
+				if score_val_loss < best_summary["blend_val_log_loss"]:
+					best_summary = {
+						**best_summary,
+						"blend_val_log_loss": float(score_val_loss),
+						"score_component_weight": parse_component_weight_value(score_component_weight),
+						"score_component_blend_mode": score_component_blend_mode,
+					}
 		models = {
 			"elastic": elastic_model,
 			"tree": tree_model,
 		}
 		if draw_component is not None:
 			models["draw_component"] = draw_component
+		if score_component is not None:
+			models["score_component"] = score_component
 		return models, best_summary
 
 	input_recipe = build_input_recipe(model_family, training_config)
@@ -1035,6 +1243,8 @@ def fit_non_torch_final_model(training_config: dict, train_data: Dict[str, np.nd
 		}
 		if has_draw_decomp_component(training_config):
 			models["draw_component"] = build_draw_decomp_component(training_config, train_data)
+		if has_score_component(training_config):
+			models["score_component"] = build_score_component(training_config, train_data)
 		return models
 
 	input_recipe = build_input_recipe(model_family, training_config)
@@ -1166,6 +1376,32 @@ def predict_result_proba(
 				draw_component_base_weight_regime,
 				mode=draw_component_blend_mode,
 			)
+		blend_alpha = metadata.get("selection_summary", {}).get("blend_alpha")
+		probs = apply_implied_blend(probs, implied_probs, blend_alpha)
+		score_recipe = component_recipes.get("score")
+		score_component = model.get("score_component") if isinstance(model, dict) else None
+		score_component_weight = metadata.get("selection_summary", {}).get("score_component_weight")
+		if score_recipe is not None and score_component is not None and score_component_weight is not None:
+			score_probs = predict_score_component_proba(
+				score_component,
+				X_numeric,
+				cat_features,
+				implied_probs,
+				raw_margin,
+				score_recipe,
+				available_feature_cols,
+			)
+			score_component_blend_mode = metadata.get("selection_summary", {}).get(
+				"score_component_blend_mode",
+				DEFAULT_SCORE_COMPONENT_BLEND_MODE,
+			)
+			probs = blend_component_probabilities(
+				probs,
+				score_probs,
+				score_component_weight,
+				mode=score_component_blend_mode,
+			)
+		return normalize_probabilities(probs)
 	else:
 		design = build_design_matrix(np.nan_to_num(X_numeric, nan=0.0), cat_features, implied_probs, raw_margin, input_recipe)
 		probs = predict_non_torch_model_proba(model, design)
