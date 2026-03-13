@@ -81,12 +81,21 @@
 	"hybrid_blend_params": {
 		"component_blend_mode": "logit",
 		"draw_component_blend_mode": "logit",
-		"draw_component_base_weight_grid": [
-			[
-				0.885,
-				1.0,
-				0.675
-			]
+		"draw_component_base_weight_regime_grid": [
+			{
+				"feature": "entropy",
+				"threshold": 1.0478506717786318,
+				"low_weight": [
+					0.895,
+					1.0,
+					0.675
+				],
+				"high_weight": [
+					0.875,
+					1.0,
+					0.65
+				]
+			}
 		],
 		"elastic_weight_grid": [
 			[

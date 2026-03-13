@@ -407,11 +407,36 @@ def get_draw_component_base_weight_grid(training_config: dict) -> list[float | l
 	"""Return the base/draw blend grid for the auxiliary draw component."""
 
 	params = dict(training_config.get("hybrid_blend_params", {}))
+	if "draw_component_base_weight_grid" not in params and "draw_component_base_weight_regime_grid" in params:
+		return []
 	values = params.get(
 		"draw_component_base_weight_grid",
 		DEFAULT_DRAW_COMPONENT_BASE_WEIGHT_GRID,
 	)
 	return [parse_component_weight_value(value) for value in values]
+
+
+def get_draw_component_base_weight_regime_grid(training_config: dict) -> list[dict]:
+	"""Return optional regime-aware base/draw blend candidates."""
+
+	params = dict(training_config.get("hybrid_blend_params", {}))
+	values = params.get("draw_component_base_weight_regime_grid", [])
+	regime_grid = []
+	for value in values:
+		if not isinstance(value, dict):
+			raise ValueError("Regime-aware component-weight candidates must be objects")
+		feature = str(value.get("feature", "")).strip()
+		if feature not in {"draw_implied", "entropy"}:
+			raise ValueError(f"Unsupported component-weight regime feature: {feature}")
+		if "threshold" not in value:
+			raise ValueError("Regime-aware component-weight candidates require a threshold")
+		regime_grid.append({
+			"feature": feature,
+			"threshold": float(value["threshold"]),
+			"low_weight": parse_component_weight_value(value.get("low_weight", 1.0)),
+			"high_weight": parse_component_weight_value(value.get("high_weight", 1.0)),
+		})
+	return regime_grid
 
 
 def get_draw_component_blend_mode(training_config: dict) -> str:
@@ -520,6 +545,38 @@ def blend_component_probabilities(
 		)
 		return normalize_probabilities(mixed)
 	raise ValueError(f"Unsupported hybrid component blend mode: {mode}")
+
+
+def blend_component_probabilities_by_regime(
+	component_a_probs: np.ndarray,
+	component_b_probs: np.ndarray,
+	implied_probs: np.ndarray,
+	weight_regime: dict,
+	mode: str = DEFAULT_COMPONENT_BLEND_MODE,
+) -> np.ndarray:
+	"""Blend two components with regime-specific weights driven by bookmaker features."""
+
+	feature = str(weight_regime.get("feature", "")).strip()
+	threshold = float(weight_regime["threshold"])
+	low_weight = weight_regime.get("low_weight", 1.0)
+	high_weight = weight_regime.get("high_weight", 1.0)
+	mask = compute_market_regime_signal(implied_probs, feature) >= threshold
+	blended = np.empty_like(component_a_probs)
+	if np.any(~mask):
+		blended[~mask] = blend_component_probabilities(
+			component_a_probs[~mask],
+			component_b_probs[~mask],
+			low_weight,
+			mode=mode,
+		)
+	if np.any(mask):
+		blended[mask] = blend_component_probabilities(
+			component_a_probs[mask],
+			component_b_probs[mask],
+			high_weight,
+			mode=mode,
+		)
+	return normalize_probabilities(blended)
 
 
 def tune_blend_alpha(
@@ -853,6 +910,7 @@ def fit_non_torch_selection_model(
 		draw_probs = None
 		draw_component_blend_mode = get_draw_component_blend_mode(training_config)
 		draw_component_base_weight_grid = [1.0]
+		draw_component_base_weight_regime_grid = []
 		if has_draw_decomp_component(training_config):
 			draw_component = build_draw_decomp_component(training_config, train_data)
 			draw_recipe = (build_input_recipe(model_family, training_config).get("component_recipes") or {}).get("draw")
@@ -866,6 +924,7 @@ def fit_non_torch_selection_model(
 				val_data.get("feature_cols"),
 			)
 			draw_component_base_weight_grid = get_draw_component_base_weight_grid(training_config)
+			draw_component_base_weight_regime_grid = get_draw_component_base_weight_regime_grid(training_config)
 		best_summary = None
 		for elastic_weight in get_elastic_weight_grid(training_config):
 			base_probs = blend_component_probabilities(
@@ -900,6 +959,35 @@ def fit_non_torch_selection_model(
 					if draw_probs is not None:
 						best_summary["draw_component_base_weight"] = parse_component_weight_value(draw_component_base_weight)
 						best_summary["draw_component_blend_mode"] = draw_component_blend_mode
+			for draw_component_base_weight_regime in draw_component_base_weight_regime_grid:
+				blended_probs = blend_component_probabilities_by_regime(
+					base_probs,
+					draw_probs,
+					val_data["implied"],
+					draw_component_base_weight_regime,
+					mode=draw_component_blend_mode,
+				)
+				blend_mode, blend_alpha, blend_val_loss = tune_market_blend(
+					training_config,
+					blended_probs,
+					val_data["implied"],
+					val_data["y"],
+				)
+				if best_summary is None or blend_val_loss < best_summary["blend_val_log_loss"]:
+					best_summary = {
+						"blend_mode": blend_mode,
+						"blend_alpha": blend_alpha,
+						"blend_val_log_loss": float(blend_val_loss),
+						"elastic_weight": parse_component_weight_value(elastic_weight),
+						"component_blend_mode": component_blend_mode,
+						"draw_component_base_weight_regime": {
+							"feature": str(draw_component_base_weight_regime["feature"]),
+							"threshold": float(draw_component_base_weight_regime["threshold"]),
+							"low_weight": parse_component_weight_value(draw_component_base_weight_regime["low_weight"]),
+							"high_weight": parse_component_weight_value(draw_component_base_weight_regime["high_weight"]),
+						},
+						"draw_component_blend_mode": draw_component_blend_mode,
+					}
 		models = {
 			"elastic": elastic_model,
 			"tree": tree_model,
@@ -1036,6 +1124,7 @@ def predict_result_proba(
 		draw_recipe = component_recipes.get("draw")
 		draw_component = model.get("draw_component") if isinstance(model, dict) else None
 		draw_component_base_weight = metadata.get("selection_summary", {}).get("draw_component_base_weight")
+		draw_component_base_weight_regime = metadata.get("selection_summary", {}).get("draw_component_base_weight_regime")
 		if draw_recipe is not None and draw_component is not None and draw_component_base_weight is not None:
 			draw_probs = predict_draw_decomp_component_proba(
 				draw_component,
@@ -1054,6 +1143,27 @@ def predict_result_proba(
 				probs,
 				draw_probs,
 				draw_component_base_weight,
+				mode=draw_component_blend_mode,
+			)
+		elif draw_recipe is not None and draw_component is not None and draw_component_base_weight_regime is not None:
+			draw_probs = predict_draw_decomp_component_proba(
+				draw_component,
+				X_numeric,
+				cat_features,
+				implied_probs,
+				raw_margin,
+				draw_recipe,
+				available_feature_cols,
+			)
+			draw_component_blend_mode = metadata.get("selection_summary", {}).get(
+				"draw_component_blend_mode",
+				DEFAULT_DRAW_COMPONENT_BLEND_MODE,
+			)
+			probs = blend_component_probabilities_by_regime(
+				probs,
+				draw_probs,
+				implied_probs,
+				draw_component_base_weight_regime,
 				mode=draw_component_blend_mode,
 			)
 	else:

@@ -2,7 +2,12 @@ import unittest
 
 import numpy as np
 
-from training.result_modeling import apply_implied_blend, tune_market_blend
+from training.result_modeling import (
+	apply_implied_blend,
+	blend_component_probabilities,
+	blend_component_probabilities_by_regime,
+	tune_market_blend,
+)
 
 
 class ResultModelingTests(unittest.TestCase):
@@ -69,6 +74,40 @@ class ResultModelingTests(unittest.TestCase):
 		self.assertEqual(blend_alpha["low_alpha"], 1.0)
 		self.assertEqual(blend_alpha["high_alpha"], 0.0)
 		self.assertLess(blend_loss, 0.5)
+
+	def test_blend_component_probabilities_supports_regime_weights(self):
+		component_a = np.array([
+			[0.70, 0.20, 0.10],
+			[0.20, 0.30, 0.50],
+		])
+		component_b = np.array([
+			[0.20, 0.60, 0.20],
+			[0.40, 0.20, 0.40],
+		])
+		implied = np.array([
+			[0.30, 0.45, 0.25],
+			[0.50, 0.20, 0.30],
+		])
+		regime_weight = {
+			"feature": "draw_implied",
+			"threshold": 0.30,
+			"low_weight": [1.0, 0.9, 0.65],
+			"high_weight": [1.0, 0.8, 0.35],
+		}
+
+		blended = blend_component_probabilities_by_regime(
+			component_a,
+			component_b,
+			implied,
+			regime_weight,
+			mode="logit",
+		)
+		expected = np.vstack([
+			blend_component_probabilities(component_a[[0]], component_b[[0]], regime_weight["high_weight"], mode="logit"),
+			blend_component_probabilities(component_a[[1]], component_b[[1]], regime_weight["low_weight"], mode="logit"),
+		])
+
+		np.testing.assert_allclose(blended, expected, atol=1e-9)
 
 
 if __name__ == "__main__":
