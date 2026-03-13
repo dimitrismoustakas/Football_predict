@@ -609,6 +609,9 @@ class TrainConfig:
 	lambda_logit_delta: float = 0.0
 	market_target_mix: float = 0.0
 	market_target_entropy_scale: float = 0.0
+	market_target_entropy_mode: str = "linear"
+	entropy_curriculum_mode: str = "none"
+	entropy_curriculum_strength: float = 0.0
 	gce_mix_weight: float = 0.0
 	gce_q: float = 0.7
 
@@ -619,6 +622,15 @@ def _log_softmax_from_implied(implied_probs: torch.Tensor, eps: float = 1e-6) ->
 	implied_probs = torch.clamp(implied_probs, eps, 1.0 - eps)
 	implied_probs = implied_probs / implied_probs.sum(dim=-1, keepdim=True)
 	return torch.log(implied_probs)
+
+
+def _normalized_market_entropy(implied_probs: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+	"""Normalized market entropy in [0, 1]."""
+
+	implied_probs = torch.clamp(implied_probs, eps, 1.0)
+	implied_probs = implied_probs / implied_probs.sum(dim=-1, keepdim=True)
+	entropy = -torch.sum(implied_probs * torch.log(implied_probs), dim=-1)
+	return entropy / math.log(implied_probs.shape[-1])
 
 
 def _batch_corr(x: torch.Tensor, y: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -675,6 +687,8 @@ def gated_loss(
 	lambda_logit_delta: float = 0.0,
 	market_target_mix: float = 0.0,
 	market_target_entropy_scale: float = 0.0,
+	market_target_entropy_mode: str = "linear",
+	sample_weights: Optional[torch.Tensor] = None,
 	gce_mix_weight: float = 0.0,
 	gce_q: float = 0.7,
 	eps: float = 1e-6,
@@ -690,24 +704,34 @@ def gated_loss(
 		soft_target = F.one_hot(target, num_classes=model.n_classes).float()
 		mix = pred_logits.new_full((soft_target.shape[0], 1), market_target_mix)
 		if abs(market_target_entropy_scale) > eps:
-			implied_normalized = implied_probs / implied_probs.sum(dim=-1, keepdim=True)
-			implied_clamped = implied_normalized.clamp_min(eps)
-			implied_entropy = -(implied_clamped * torch.log(implied_clamped)).sum(dim=-1, keepdim=True)
-			normalized_entropy = implied_entropy / math.log(model.n_classes)
-			centered_entropy = 2.0 * (normalized_entropy - 0.5)
+			normalized_entropy = _normalized_market_entropy(implied_probs, eps=eps).unsqueeze(-1)
+			if market_target_entropy_mode == "linear":
+				centered_entropy = 2.0 * (normalized_entropy - 0.5)
+			elif market_target_entropy_mode == "edge":
+				edge_signal = 2.0 * torch.abs(normalized_entropy - 0.5)
+				centered_entropy = 2.0 * (edge_signal - 0.5)
+			else:
+				raise ValueError(f"Unsupported market_target_entropy_mode: {market_target_entropy_mode}")
 			mix = (mix * (1.0 + market_target_entropy_scale * centered_entropy)).clamp(0.0, 1.0)
 		soft_target = (1.0 - mix) * soft_target + mix * implied_probs
-		loss = -(soft_target * log_probs).sum(dim=-1).mean()
+		base_loss = -(soft_target * log_probs).sum(dim=-1)
 	else:
-		loss = F.nll_loss(log_probs, target)
+		base_loss = F.nll_loss(log_probs, target, reduction="none")
 
 	if gce_mix_weight > 0:
 		true_class_probs = pred_probs.gather(1, target.unsqueeze(1)).squeeze(1).clamp_min(eps)
 		if abs(gce_q) <= eps:
-			gce_loss = -torch.log(true_class_probs).mean()
+			gce_loss = -torch.log(true_class_probs)
 		else:
-			gce_loss = ((1.0 - true_class_probs.pow(gce_q)) / gce_q).mean()
-		loss = (1.0 - gce_mix_weight) * loss + gce_mix_weight * gce_loss
+			gce_loss = (1.0 - true_class_probs.pow(gce_q)) / gce_q
+		base_loss = (1.0 - gce_mix_weight) * base_loss + gce_mix_weight * gce_loss
+
+	if sample_weights is not None:
+		sample_weights = sample_weights.view(-1).clamp_min(eps)
+		sample_weights = sample_weights / sample_weights.mean().clamp_min(eps)
+		loss = (base_loss * sample_weights).mean()
+	else:
+		loss = base_loss.mean()
 
 	if lambda_repulsion > 0:
 		implied_normalized = implied_probs / implied_probs.sum(dim=-1, keepdim=True)

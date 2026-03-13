@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from training.inference import model_requires_cat_features
-from training.models.neural_net import GatedResidualModel, TrainConfig, gated_loss
+from training.models.neural_net import GatedResidualModel, TrainConfig, _normalized_market_entropy, gated_loss
 
 
 def build_model(config: TrainConfig, device: torch.device) -> GatedResidualModel:
@@ -51,6 +51,38 @@ def create_scheduler(optimizer: torch.optim.Optimizer, config: TrainConfig) -> t
 
 
 
+def _entropy_curriculum_weights(
+	implied_probs: torch.Tensor,
+	batch_idx: int,
+	total_batches: int,
+	config: TrainConfig,
+	eps: float = 1e-6,
+) -> torch.Tensor | None:
+	mode = getattr(config, "entropy_curriculum_mode", "none")
+	strength = float(getattr(config, "entropy_curriculum_strength", 0.0))
+	if mode == "none" or abs(strength) <= eps:
+		return None
+
+	normalized_entropy = _normalized_market_entropy(implied_probs, eps=eps)
+	edge_signal = 2.0 * torch.abs(normalized_entropy - 0.5)
+	center_signal = 1.0 - edge_signal
+	progress = batch_idx / max(1, total_batches - 1)
+
+	if mode == "edge_to_center":
+		focus = (1.0 - progress) * edge_signal + progress * center_signal
+	elif mode == "center_to_edge":
+		focus = (1.0 - progress) * center_signal + progress * edge_signal
+	elif mode == "edge_only":
+		focus = edge_signal
+	elif mode == "center_only":
+		focus = center_signal
+	else:
+		raise ValueError(f"Unsupported entropy_curriculum_mode: {mode}")
+
+	weights = torch.exp(strength * (focus - focus.mean()))
+	return weights / weights.mean().clamp_min(eps)
+
+
 def run_train_epoch(
 	model: GatedResidualModel,
 	train_loader: DataLoader,
@@ -64,13 +96,15 @@ def run_train_epoch(
 	needs_cat = model_requires_cat_features(model, cat_config)
 	model.train()
 	total_loss = 0.0
-	for batch_x, batch_cat, batch_implied, batch_y, batch_raw_margin in train_loader:
+	total_batches = max(1, len(train_loader))
+	for batch_idx, (batch_x, batch_cat, batch_implied, batch_y, batch_raw_margin) in enumerate(train_loader):
 		batch_x = batch_x.to(device)
 		batch_cat = batch_cat.to(device)
 		batch_implied = batch_implied.to(device)
 		batch_y = batch_y.to(device)
 		batch_raw_margin = batch_raw_margin.to(device)
 		cat_in = batch_cat if needs_cat else None
+		sample_weights = _entropy_curriculum_weights(batch_implied, batch_idx, total_batches, config)
 
 		optimizer.zero_grad(set_to_none=True)
 		loss = gated_loss(
@@ -87,6 +121,8 @@ def run_train_epoch(
 			lambda_logit_delta=config.lambda_logit_delta,
 			market_target_mix=config.market_target_mix,
 			market_target_entropy_scale=config.market_target_entropy_scale,
+			market_target_entropy_mode=config.market_target_entropy_mode,
+			sample_weights=sample_weights,
 			gce_mix_weight=config.gce_mix_weight,
 			gce_q=config.gce_q,
 		)
