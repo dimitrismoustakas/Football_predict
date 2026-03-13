@@ -3,13 +3,9 @@ name: continuous-experiment-runner
 description: Run experiment ideas continuously with no user feedback loop until blocked, exhausted, or explicitly stopped.
 ---
 
-# Continuous experiment runner
-
-Use this skill when asked to run repo experiments continuously without waiting for user feedback between iterations.
-
 ## Mission
 
-Run an autonomous experiment loop that keeps going until the user stop you:
+You are the Lead ML Researcher for this project. Your job is to run autonomous experiments loop that keeps going until the user stops you:
 
 1. choose a promising next direction unless the user already constrained the search space
 2. make whatever supporting analysis, ablations, or sweeps help you decide
@@ -34,71 +30,22 @@ Read these first:
 ## Hard rules
 
 - Preserve the canonical workflow unless the user explicitly asks to change it.
-- Prefer editing existing canonical files over adding permanent experiment scaffolding.
 - Keep the repo surface lean.
 - Do not write markdown reports unless the user explicitly asks for one.
 - Do not commit generated model bundles under `artifacts/models/`.
 - Do not rewrite prior rows in `artifacts/experiment_metrics/result_main_runs.tsv`.
 - Name experiment branches `experiment/<name>`.
-- Use CV `log_loss` as the decision metric.
-- Treat the fixed test season as watch-only monitoring output.
+- Use CV `log_loss` as the decision metric as long as the test set `log_loss` is not getting worse. If CV `log_loss` is staying the same but test set `log_loss` is improving, that is still a win. But you should always try to improve CV `log_loss` as your primary objective.
 - Compare against the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv`.
 - Cheap local prescreens are allowed when they help rank nearby ideas, but they do not replace the canonical trainer and must not append to the TSV ledger.
 - When ranking nearby candidates, prefer a stricter local support scorer: use the epoch-selection split only to choose `best_epoch`, then evaluate that fixed epoch count across the objective folds without appending a ledger row.
 - Do not trust the epoch-selection season by itself for close calls; in this repo it is noisy enough to produce false positives.
 - If a prescreened direction looks good, confirm the exact candidate with the canonical trainer before treating it as a real improvement.
 - If a branch improves canonically and nearby variants still look promising, keep iterating on that same branch until the local neighborhood looks exhausted.
-- If a branch regresses clearly, abandon or delete it and move on instead of carrying dead ideas forward.
 - Do not pause for user confirmation between iterations.
-- Running out of local ideas is not enough reason to stop; if the current search space is exhausted, actively look for papers, blog posts, repo references, or other credible external sources of new experiment ideas and try to translate them into branch-local candidates.
+- Running out of local ideas is not enough reason to stop; if the current search space is exhausted, actively look for papers, repo references, or other credible external sources of new experiment ideas and try to translate them into candidates.
 
 Everything relevant to improving the canonical path is fair game.
-This includes, when justified:
-
-- model architecture
-- optimizer
-- hyperparameters
-- training loop details
-- batch size and model size
-- feature engineering
-- feature selection
-- preprocessing choices
-
-The list is not exhaustive; if you have a credible idea that does not fit into one of those buckets, it is still worth trying.
-
-## Choosing the next idea
-
-If the user gives a direction, stay within it until that neighborhood is exhausted.
-
-If not, choose the next step yourself from the code and current results.
-Good choices include:
-
-- simplifying code while plausibly preserving or improving the main metric
-- removing a component that may be unnecessary
-- running a sweep or ablation to decide which component to keep
-- trying a reasonable model or optimizer adjustment
-- trying a reasonable training-loop or batch-size adjustment
-- trying a reasonable feature-engineering or feature-selection adjustment
-- tightening the canonical path where the current setup looks overbuilt
-- recalibrating how the model uses bookmaker information
-- iterating on a promising direction that is not yet better, when nearby adjustments are still plausible
-- importing a credible idea from recent papers or other technical references when repo-local ideas are thinning out
-
-Prefer ideas that are plausible and clean.
-If two directions look similar, prefer the one that simplifies the canonical path.
-If one direction is already showing incremental gains, keep working that neighborhood before jumping to a new family.
-If the nearby neighborhood is exhausted, switch into idea-generation mode by reading papers and related technical material until you find another credible candidate.
-
-## Continuous run policy
-
-After each experiment cycle, choose one of these paths yourself:
-
-1. continue on the same branch if the line still looks live
-2. abandon the branch and start a fresh branch from the current best branch (usually `main` if the best work is already merged there) for a new direction if the line clearly regressed
-3. if repo-local ideas are weak, do literature search and paper review
-
-Default behavior is to keep going.
-Do not stop just because one canonical run completed.
 
 ## Canonical experiment path
 
@@ -150,9 +97,9 @@ The TSV at `artifacts/experiment_metrics/result_main_runs.tsv` uses tab-separate
 | `cv_metrics_json` | Full CV metrics dict as JSON |
 | `test_metrics_json` | Full test metrics dict as JSON |
 
-**Every** canonical run gets logged - including discards. The trainer writes the row with an **empty `status`** field. After reviewing the training output and delta, **you must update the status** in the TSV yourself:
-- `keep` - worth keeping as the new reference point
-- `discard` - did not improve or not worth keeping
-- `crash` - OOM or other failure (use `0.000000` for cv_log_loss)
+**Every** canonical run gets logged — including discards. The trainer writes the row with an **empty `status`** field. After reviewing the training output and delta, **you must update the status** in the TSV yourself:
+- `keep` — worth keeping as the new reference point
+- `discard` — did not improve or not worth keeping
+- `crash` — OOM or other failure (use `0.000000` for cv_log_loss)
 
 To update the status, edit the last line of the TSV and fill in the `status` column. Do not leave it empty.
