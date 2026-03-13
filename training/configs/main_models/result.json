@@ -91,6 +91,40 @@
 		"market_features": "logit_probs_and_margin",
 		"market_feature_enrichment": "quadratic_plus_margin"
 	},
+	"score_component_feature_cols": [
+		"elo_diff_r5__h",
+		"elo_diff_r5__a",
+		"away_team_xg_r15",
+		"ovr__xgd__sum__r10__h",
+		"ovr__xgd__r10__a",
+		"away__xgd__sum__r10__a",
+		"opponent_elo_std_r5__h",
+		"ovr__xgd__sum__r10__a",
+		"away_team_total_goals_r15",
+		"ovr__gd__r10__a",
+		"away__xgd__r10__a",
+		"games_last_15_days__a",
+		"opponent_elo_std_r5__a",
+		"games_last_15_days__h",
+		"ovr__draw__sum__r3__h",
+		"home_team_total_assists_r15",
+		"ovr__gd__r10__h",
+		"away__draw__sum__r3__a",
+		"away__deep_for__r10__a",
+		"ovr__draw__r3__h",
+		"home_team_xg_r15",
+		"ovr__draw__r5__a",
+		"away_team_xa_r15",
+		"ovr__deep_for__r10__a",
+		"away_team_total_key_passes_r15",
+		"ovr__deep_for__r10__h",
+		"ovr__draw__r10__a",
+		"home_team_xa_r15",
+		"ovr__xg_for__r10__h",
+		"away_unique_players_r15",
+		"ovr__npxg_for__r10__a",
+		"away_team_total_assists_r15"
+	],
 	"hybrid_blend_params": {
 		"component_blend_mode": "logit",
 		"draw_component_blend_mode": "logit",
@@ -121,7 +155,7 @@
 		"score_component_weight_grid": [
 			[
 				0.99,
-				0.74,
+				0.55,
 				0.99
 			]
 		]
