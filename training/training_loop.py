@@ -86,6 +86,8 @@ def run_train_epoch(
 			lambda_corr=config.lambda_corr,
 			lambda_logit_delta=config.lambda_logit_delta,
 			market_target_mix=config.market_target_mix,
+			gce_mix_weight=config.gce_mix_weight,
+			gce_q=config.gce_q,
 		)
 		loss.backward()
 		optimizer.step()
