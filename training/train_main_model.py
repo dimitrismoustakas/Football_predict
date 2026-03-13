@@ -221,6 +221,9 @@ def build_train_config(
 		lambda_logit_delta=training_config.get("lambda_logit_delta", 0.0),
 		market_target_mix=training_config.get("market_target_mix", 0.0),
 		market_target_entropy_scale=training_config.get("market_target_entropy_scale", 0.0),
+		market_target_entropy_mode=training_config.get("market_target_entropy_mode", "linear"),
+		entropy_curriculum_mode=training_config.get("entropy_curriculum_mode", "none"),
+		entropy_curriculum_strength=training_config.get("entropy_curriculum_strength", 0.0),
 		gce_mix_weight=training_config.get("gce_mix_weight", 0.0),
 		gce_q=training_config.get("gce_q", 0.7),
 	)
