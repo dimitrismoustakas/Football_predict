@@ -607,6 +607,7 @@ class TrainConfig:
 	lambda_repulsion: float = 0.0
 	lambda_corr: float = 0.0
 	lambda_logit_delta: float = 0.0
+	market_target_mix: float = 0.0
 
 
 def _log_softmax_from_implied(implied_probs: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -669,6 +670,7 @@ def gated_loss(
 	lambda_repulsion: float = 0.0,
 	lambda_corr: float = 0.0,
 	lambda_logit_delta: float = 0.0,
+	market_target_mix: float = 0.0,
 	eps: float = 1e-6,
 ) -> torch.Tensor:
 	"""Loss for the multiclass gated residual model."""
@@ -677,7 +679,12 @@ def gated_loss(
 	pred_probs = F.softmax(pred_logits, dim=-1)
 	implied_log = _log_softmax_from_implied(implied_probs)
 	target = target.view(-1).long()
-	loss = F.cross_entropy(pred_logits, target)
+	if market_target_mix > 0:
+		soft_target = F.one_hot(target, num_classes=model.n_classes).float()
+		soft_target = (1.0 - market_target_mix) * soft_target + market_target_mix * implied_probs
+		loss = -(soft_target * F.log_softmax(pred_logits, dim=-1)).sum(dim=-1).mean()
+	else:
+		loss = F.cross_entropy(pred_logits, target)
 
 	if lambda_repulsion > 0:
 		implied_normalized = implied_probs / implied_probs.sum(dim=-1, keepdim=True)
