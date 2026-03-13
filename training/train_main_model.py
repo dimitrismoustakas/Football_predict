@@ -219,6 +219,7 @@ def build_train_config(
 		lambda_repulsion=training_config.get("lambda_repulsion", 0.0),
 		lambda_corr=training_config.get("lambda_corr", 0.0),
 		lambda_logit_delta=training_config.get("lambda_logit_delta", 0.0),
+		market_target_mix=training_config.get("market_target_mix", 0.0),
 	)
 
 
