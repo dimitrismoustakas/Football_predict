@@ -268,6 +268,8 @@ def prepare_data(
 	return {
 		"X": X,
 		"y": part.select("result_label").to_pandas().values.flatten().astype(int),
+		"home_goals": part.select("home_goals").to_pandas().values.flatten().astype(np.float64),
+		"away_goals": part.select("away_goals").to_pandas().values.flatten().astype(np.float64),
 		"feature_cols": list(feature_cols),
 		"implied": implied,
 		"cat_features": cat_features,

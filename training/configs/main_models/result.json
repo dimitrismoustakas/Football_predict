@@ -74,13 +74,27 @@
 		"n_estimators": 300,
 		"random_state": 42
 	},
+	"score_component_params": {
+		"learning_rate": 0.025,
+		"num_leaves": 63,
+		"min_child_samples": 20,
+		"reg_lambda": 1.0,
+		"n_estimators": 700,
+		"max_goals": 10,
+		"random_state": 42
+	},
 	"draw_decomp_input_recipe": {
+		"market_features": "logit_probs_and_margin",
+		"market_feature_enrichment": "quadratic_plus_margin"
+	},
+	"score_component_input_recipe": {
 		"market_features": "logit_probs_and_margin",
 		"market_feature_enrichment": "quadratic_plus_margin"
 	},
 	"hybrid_blend_params": {
 		"component_blend_mode": "logit",
 		"draw_component_blend_mode": "logit",
+		"score_component_blend_mode": "logit",
 		"draw_component_base_weight_regime_grid": [
 			{
 				"feature": "entropy",
@@ -102,6 +116,13 @@
 				1.0,
 				0.9,
 				0.65
+			]
+		],
+		"score_component_weight_grid": [
+			[
+				0.99,
+				0.74,
+				0.99
 			]
 		]
 	},
