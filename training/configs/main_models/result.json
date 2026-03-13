@@ -28,7 +28,7 @@
 	"learn_league_market_logit_mixer": true,
 	"learn_league_gate_bias": false,
 	"learn_league_residual_bias": false,
-	"market_logit_scale": 1.08725,
+	"market_logit_scale": 1.08775,
 	"gate_hidden_dim": 16,
 	"gate_target_budget": 0.145,
 	"gate_mean_weight": 0.145,
@@ -36,7 +36,7 @@
 	"lambda_repulsion": 2.3,
 	"lambda_corr": 0.0,
 	"lambda_logit_delta": 0.01,
-	"market_target_mix": 0.00125,
+	"market_target_mix": 0.0015,
 	"gce_mix_weight": 0.04,
 	"gce_q": 0.9
 }
