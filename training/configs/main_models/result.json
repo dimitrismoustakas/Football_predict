@@ -23,15 +23,15 @@
 	"class_blend_alpha_regime_grid": [
 		{
 			"feature": "entropy",
-			"threshold": 1.0425068220791298,
+			"threshold": 1.0478506717786318,
 			"low_alpha": [
 				1.0,
-				0.75,
+				0.74,
 				0.325
 			],
 			"high_alpha": [
 				1.0,
-				0.8,
+				0.82,
 				0.35
 			]
 		}
