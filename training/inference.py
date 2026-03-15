@@ -50,7 +50,11 @@ def predict_probabilities(
 ) -> np.ndarray:
 	"""Scale raw features, run the model, and return class probabilities."""
 
-	X_scaled = np.nan_to_num(scaler.transform(X_raw), nan=0.0)
+	if not np.isfinite(X_raw).all():
+		raise ValueError("Inference received non-finite model feature values; filter incomplete rows before scoring")
+	X_scaled = scaler.transform(X_raw)
+	if not np.isfinite(X_scaled).all():
+		raise ValueError("Inference produced non-finite scaled features; check feature preparation and scaler inputs")
 	X_tensor = torch.tensor(X_scaled, dtype=torch.float32).to(device)
 	cat_tensor = None
 	if cat_features is not None:

@@ -222,13 +222,20 @@ def _prepare_base(
 		][:8]
 		print(f"Dropped {missing_required_count} rows due to missing required features in {season_list}: {top_missing}")
 
-	feature_frame = part.select([pl.col(col).cast(pl.Float64).alias(col) for col in feature_cols])
-	feature_missing_cells = int(feature_frame.select([pl.col(col).is_null().sum().alias(col) for col in feature_cols]).sum_horizontal().item())
-	feature_missing_rows = feature_frame.filter(pl.any_horizontal([pl.col(col).is_null() for col in feature_cols])).height
-	if feature_missing_rows:
+	feature_null_counts = part.select([pl.col(col).is_null().sum().alias(col) for col in feature_cols]).to_dicts()[0]
+	part_without_missing_features = part.drop_nulls(subset=feature_cols)
+	missing_feature_count = len(part) - len(part_without_missing_features)
+	if missing_feature_count:
+		top_missing_features = [
+			(col, count)
+			for col, count in sorted(feature_null_counts.items(), key=lambda item: (-item[1], item[0]))
+			if count > 0
+		][:8]
 		print(
-			f"Keeping {feature_missing_rows} rows with missing feature values in {season_list} ({feature_missing_cells} missing cells total)"
+			f"Dropped {missing_feature_count} rows due to missing model feature values in {season_list}: {top_missing_features}"
 		)
+	part = part_without_missing_features
+	feature_frame = part.select([pl.col(col).cast(pl.Float64).alias(col) for col in feature_cols])
 
 	X = feature_frame.to_pandas().to_numpy(dtype=np.float64)
 	if fit_scaler:
@@ -236,7 +243,8 @@ def _prepare_base(
 		X = scaler.fit_transform(X)
 	elif scaler is not None:
 		X = scaler.transform(X)
-	X = np.nan_to_num(X, nan=0.0)
+	if not np.isfinite(X).all():
+		raise ValueError(f"Non-finite scaled features remain after filtering for seasons {season_list}")
 	cat_features = extract_categorical_features(part)
 	return part, X, cat_features, scaler
 

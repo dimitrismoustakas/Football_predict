@@ -1,7 +1,9 @@
 import json
+import io
 import tempfile
 import unittest
 from pathlib import Path
+from contextlib import redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -221,6 +223,25 @@ class ProductionOutputTests(unittest.TestCase):
 
 		self.assertFalse(scored.empty)
 		self.assertIn("Result_Value_Side", scored.columns)
+
+	def test_scoring_drops_rows_with_missing_model_features_and_reports_it(self):
+		merged = _build_merged_frame()
+		merged.loc[1, FEATURE_COLS[0]] = np.nan
+		bundle = SimpleNamespace(
+			model=FakeModel(),
+			scaler=IdentityScaler(),
+			feature_cols=FEATURE_COLS,
+			cat_config=None,
+		)
+
+		stdout = io.StringIO()
+		with redirect_stdout(stdout):
+			scored = score_result_predictions(merged, bundle, fixed_budget=100.0)
+
+		self.assertEqual(len(scored), 2)
+		self.assertNotIn(1, scored["_row_id"].tolist())
+		self.assertIn("Dropped 1 matched games due to missing model features", stdout.getvalue())
+		self.assertIn(FEATURE_COLS[0], stdout.getvalue())
 
 
 if __name__ == "__main__":
