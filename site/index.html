@@ -76,11 +76,11 @@
 			const baseValue = Number.isFinite(parsed)
 				? parsed
 				: (Number.isFinite(fallback) ? fallback : MIN_KELLY_FRACTION);
-			const clamped = Math.min(MAX_KELLY_FRACTION, Math.max(MIN_KELLY_FRACTION, baseValue));
-			if (input.value !== clamped.toFixed(2)) {
-				input.value = clamped.toFixed(2);
-			}
-			return clamped;
+			return Math.min(MAX_KELLY_FRACTION, Math.max(MIN_KELLY_FRACTION, baseValue));
+		}
+
+		function normalizeKellyFractionInput(input) {
+			input.value = clampKellyFraction(input).toFixed(2);
 		}
 
 		function computeRow(row, stakeFraction) {
@@ -191,9 +191,14 @@
 
 		document.getElementById('total-budget').addEventListener('input', updateTable);
 		document.getElementById('kelly-fraction').addEventListener('input', updateTable);
+		document.getElementById('kelly-fraction').addEventListener('blur', () => {
+			normalizeKellyFractionInput(document.getElementById('kelly-fraction'));
+			updateTable();
+		});
 		document.querySelectorAll('.odds-input').forEach((input) => {
 			input.addEventListener('input', updateTable);
 		});
+		normalizeKellyFractionInput(document.getElementById('kelly-fraction'));
 		updateTable();
 	</script>
 </body>

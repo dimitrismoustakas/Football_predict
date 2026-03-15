@@ -148,6 +148,8 @@ class ProductionOutputTests(unittest.TestCase):
 		self.assertIn("Enter your current bankroll and Kelly fraction below to adjust the risk level", report_html)
 		self.assertIn("const MIN_KELLY_FRACTION = 0.1;", report_html)
 		self.assertIn("const MAX_KELLY_FRACTION = 1.0;", report_html)
+		self.assertIn("function normalizeKellyFractionInput(input)", report_html)
+		self.assertIn("addEventListener('blur'", report_html)
 		self.assertNotIn("Minimum stake per bet", report_html)
 		self.assertIn("change your bankroll and Kelly fraction", build_email_html(output_df, None, "2026-03-10"))
 
