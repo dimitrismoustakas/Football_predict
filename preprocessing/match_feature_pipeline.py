@@ -90,11 +90,11 @@ def select_base_matches(lf: pl.LazyFrame) -> pl.LazyFrame:
 
 def add_schedule_features(
 	long_feats: pl.LazyFrame,
-	european_schedule_path: Path,
+	european_schedule_path: Path | None,
 ) -> pl.LazyFrame:
 	"""Add fixture congestion features, or null placeholders if schedule data is unavailable."""
 
-	if european_schedule_path.exists():
+	if european_schedule_path is not None and european_schedule_path.exists():
 		print("Merging European schedule for fixture congestion features...")
 		combined_long = merge_european_schedule(long_feats, european_schedule_path)
 		print("Computing schedule features...")
@@ -117,7 +117,7 @@ def add_schedule_features(
 
 def build_match_features_from_lf(
 	lf: pl.LazyFrame,
-	european_schedule_path: Path,
+	european_schedule_path: Path | None,
 ) -> pl.LazyFrame:
 	"""Build shared long-format and match-level engineered features from a normalized match frame."""
 

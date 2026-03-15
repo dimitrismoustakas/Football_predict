@@ -96,9 +96,10 @@ def generate_html_report(
 	today_str = datetime.now().strftime("%Y-%m-%d")
 	predictions_html = _format_interactive_table(predictions_df)
 	default_budget = float(fixed_budget) if fixed_budget is not None else 10.0
+	default_kelly_fraction = float(kelly_fraction) if kelly_fraction is not None else 0.5
 	note = (
 		"Edit the Home, Draw, and Away odds to recalculate the best bet, expected value, and suggested stake. "
-		"Enter your current bankroll below to see the bankroll allocation."
+		"Enter your current bankroll and Kelly fraction below to adjust the risk level."
 	)
 	html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -124,6 +125,8 @@ def generate_html_report(
 		.table-wrap {{ overflow-x: auto; }}
 		.odds-input {{ width: 72px; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; }}
 		.budget-input {{ width: 96px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; margin: 0 8px; }}
+		.controls {{ display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 12px 0 20px; }}
+		.control-label {{ color: #475569; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }}
 		.note {{ color: #475569; max-width: 900px; }}
 	</style>
 </head>
@@ -133,7 +136,10 @@ def generate_html_report(
 			<h1>Football Predictions</h1>
 			<p class="subtitle">Match Result report for {today_str}</p>
 			<p class="note">{note}</p>
-			<p class="note">Current bankroll: <input id="total-budget" class="budget-input" type="number" min="0" step="0.01" value="{default_budget:.2f}"> euros</p>
+			<div class="controls">
+				<label class="control-label">Current bankroll: <input id="total-budget" class="budget-input" type="number" min="0" step="0.01" value="{default_budget:.2f}"> euros</label>
+				<label class="control-label">Kelly fraction: <input id="kelly-fraction" class="budget-input" type="number" min="0" step="0.01" value="{default_kelly_fraction:.2f}"></label>
+			</div>
 			<div class="summary-grid">
 				<div class="summary-tile">
 					<div class="summary-label">Suggested Bets</div>
@@ -152,7 +158,6 @@ def generate_html_report(
 		</div>
 	</div>
 	<script>
-		const STAKE_FRACTION = {float(kelly_fraction) if kelly_fraction is not None else 0.5};
 		const MIN_BET_AMOUNT = {float(min_bet_amount)};
 		const LABELS = ["Home", "Draw", "Away"];
 
@@ -161,7 +166,12 @@ def generate_html_report(
 			return Number.isFinite(value) && value > 1.0 ? value : null;
 		}}
 
-		function computeRow(row) {{
+		function parseNonNegativeNumber(input, fallback) {{
+			const value = Number.parseFloat(input.value);
+			return Number.isFinite(value) && value >= 0 ? value : fallback;
+		}}
+
+		function computeRow(row, stakeFraction) {{
 			const probs = [
 				Number.parseFloat(row.dataset.probHome),
 				Number.parseFloat(row.dataset.probDraw),
@@ -196,7 +206,7 @@ def generate_html_report(
 				positive: true,
 				bestIdx,
 				bestEv,
-				weight: fullFraction * Math.max(0, STAKE_FRACTION),
+				weight: fullFraction * Math.max(0, stakeFraction),
 			}};
 		}}
 
@@ -226,9 +236,11 @@ def generate_html_report(
 
 		function updateTable() {{
 			const rows = Array.from(document.querySelectorAll('.predictions-table tbody tr'));
-			const results = rows.map((row) => computeRow(row));
 			const totalBudgetInput = document.getElementById('total-budget');
+			const kellyFractionInput = document.getElementById('kelly-fraction');
 			const totalBudget = Number.parseFloat(totalBudgetInput.value);
+			const stakeFraction = parseNonNegativeNumber(kellyFractionInput, 0);
+			const results = rows.map((row) => computeRow(row, stakeFraction));
 			const resolvedBudget = Number.isFinite(totalBudget) && totalBudget >= 0 ? totalBudget : 0;
 			const plan = computeStakePlan(results, resolvedBudget);
 			let activeCount = 0;
@@ -266,6 +278,7 @@ def generate_html_report(
 		}}
 
 		document.getElementById('total-budget').addEventListener('input', updateTable);
+		document.getElementById('kelly-fraction').addEventListener('input', updateTable);
 		document.querySelectorAll('.odds-input').forEach((input) => {{
 			input.addEventListener('input', updateTable);
 		}});

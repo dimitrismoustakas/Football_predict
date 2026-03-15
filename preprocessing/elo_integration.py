@@ -6,11 +6,11 @@ from utils.paths import MAPPINGS_DIR
 ELO_HISTORY_PATH = Path("data/eloscores/elo_history.parquet")
 MAPPING_PATH = MAPPINGS_DIR / "clubelo_to_canonical.json"
 
-def load_elo_data():
-    if not ELO_HISTORY_PATH.exists():
-        raise FileNotFoundError(f"Elo history not found at {ELO_HISTORY_PATH}")
+def load_elo_data(elo_history_path: Path = ELO_HISTORY_PATH):
+    if not elo_history_path.exists():
+        raise FileNotFoundError(f"Elo history not found at {elo_history_path}")
     
-    lf = pl.scan_parquet(str(ELO_HISTORY_PATH))
+    lf = pl.scan_parquet(str(elo_history_path))
     
     # Load mapping
     if not MAPPING_PATH.exists():
@@ -45,13 +45,13 @@ def load_elo_data():
     
     return lf
 
-def merge_elo_features(matches_df: pl.DataFrame) -> pl.DataFrame:
+def merge_elo_features(matches_df: pl.DataFrame, elo_history_path: Path = ELO_HISTORY_PATH) -> pl.DataFrame:
     """
     Enriches matches_df with Elo features.
     matches_df must have 'home_team', 'away_team', 'date'.
     """
     try:
-        elo_lf = load_elo_data()
+        elo_lf = load_elo_data(elo_history_path=elo_history_path)
         elo_df = elo_lf.collect()
     except FileNotFoundError as e:
         print(f"Skipping Elo integration: {e}")

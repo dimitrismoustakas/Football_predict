@@ -19,12 +19,12 @@ def _first_valid_odds_expr(mh: pl.DataFrame, cols: list[str], alias: str) -> pl.
         for c in valid_cols
     ]).alias(alias)
 
-def load_match_history_and_map():
-    if not MATCH_HISTORY_PATH.exists() or not FOOTBALLDATA_MAPPING_PATH.exists():
+def load_match_history_and_map(match_history_path: Path = MATCH_HISTORY_PATH):
+    if not match_history_path.exists() or not FOOTBALLDATA_MAPPING_PATH.exists():
         print("Warning: Match history or mapping not found. Skipping join.")
         return None
 
-    mh = pl.read_parquet(MATCH_HISTORY_PATH)
+    mh = pl.read_parquet(match_history_path)
     with open(FOOTBALLDATA_MAPPING_PATH, "r") as f:
         mapping = json.load(f)
     
@@ -70,18 +70,32 @@ def load_match_history_and_map():
     return mh
 
 def join_odds(lf: pl.LazyFrame, mh: pl.DataFrame) -> pl.LazyFrame:
-    # Drop existing shots columns from Understat to prefer MatchHistory
-    cols_to_drop = ["home_shots", "away_shots", "home_sot", "away_sot"]
-    lf_cols = lf.collect_schema().names()
-    lf = lf.drop([c for c in cols_to_drop if c in lf_cols])
-    
     # Cast join keys to Utf8
     lf = lf.with_columns([
         pl.col("season").cast(pl.Utf8),
         pl.col("home_team").cast(pl.Utf8),
         pl.col("away_team").cast(pl.Utf8)
     ])
-    
-    mh_lazy = mh.lazy()
+
+    lf_cols = lf.collect_schema().names()
+    prefer_match_history_cols = [
+        col for col in ["home_shots", "away_shots", "home_sot", "away_sot", "odds_h", "odds_d", "odds_a"]
+        if col in mh.columns
+    ]
+    mh_lazy = mh.lazy().rename({col: f"{col}_mh" for col in prefer_match_history_cols})
     lf = lf.join(mh_lazy, on=["season", "home_team", "away_team"], how="left")
-    return lf
+
+    if not prefer_match_history_cols:
+        return lf
+
+    fill_exprs = []
+    helper_cols = []
+    for col in prefer_match_history_cols:
+        helper_col = f"{col}_mh"
+        helper_cols.append(helper_col)
+        if col in lf_cols:
+            fill_exprs.append(pl.coalesce([pl.col(helper_col), pl.col(col)]).alias(col))
+        else:
+            fill_exprs.append(pl.col(helper_col).alias(col))
+
+    return lf.with_columns(fill_exprs).drop(helper_cols)

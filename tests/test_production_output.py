@@ -137,13 +137,15 @@ class ProductionOutputTests(unittest.TestCase):
 		self.assertIn("Stake % Now", report_html)
 		self.assertIn("Amount Now", report_html)
 		self.assertIn('id="total-budget"', report_html)
+		self.assertIn('id="kelly-fraction"', report_html)
 		self.assertIn('value="100.00"', report_html)
 		self.assertIn("Current bankroll", report_html)
+		self.assertIn("Kelly fraction", report_html)
 		self.assertIn('id="summary-total-amount"', report_html)
 		self.assertIn('type="number"', report_html)
-		self.assertIn("Enter your current bankroll below to see the bankroll allocation", report_html)
+		self.assertIn("Enter your current bankroll and Kelly fraction below to adjust the risk level", report_html)
 		self.assertNotIn("Minimum stake per bet", report_html)
-		self.assertNotIn("Kelly", report_html)
+		self.assertIn("change your bankroll and Kelly fraction", build_email_html(output_df, None, "2026-03-10"))
 
 	def test_scoring_keeps_positive_ev_rows_even_if_minimum_bet_prunes_stake(self):
 		merged = _build_merged_frame().iloc[:2].copy()

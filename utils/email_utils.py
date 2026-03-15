@@ -79,7 +79,7 @@ def build_email_html(
 		{value_section}
 		<hr>
 		<h4>HTML Attachment</h4>
-		<p>The attached <strong>upcoming_predictions.html</strong> file lets you edit odds, enter your current bankroll, and recalculate the suggested stakes.</p>
+		<p>The attached <strong>upcoming_predictions.html</strong> file lets you edit odds, change your bankroll and Kelly fraction, and recalculate the suggested stakes.</p>
 	</body>
 	</html>
 	"""

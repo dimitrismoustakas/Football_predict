@@ -10,23 +10,31 @@ import json
 # Add project root to path
 sys.path.append(os.getcwd())
 
+from data_collection.collect_full_schedule import (
+    ensure_league_config,
+    european_leagues_for_season,
+    fetch_league_schedule,
+)
+
 from preprocessing.feature_engineering import rename_and_cast
 from preprocessing.match_feature_pipeline import (
 	add_match_categorical_features,
 	apply_team_name_mapping,
 	build_match_features_from_lf,
 	join_player_features_asof,
-	load_player_features,
 )
 from preprocessing.odds_integration import load_match_history_and_map, join_odds
 from preprocessing.elo_integration import merge_elo_features
+from preprocessing.player_feature_engineering import build_player_team_features, load_all_player_data
 from prod_run.elo_scrap import build_prod_elo
 from utils.paths import MAPPINGS_DIR
 
 LEAGUES = ["ENG-Premier League", "ESP-La Liga", "GER-Bundesliga", "ITA-Serie A", "FRA-Ligue 1"]
 OUTPUT_DIR = Path("data/prod")
 OUTPUT_PARQUET = OUTPUT_DIR / "features_season.parquet"
-EUROPEAN_SCHEDULE_PATH = Path("data/full_schedule/european_all.csv")
+PROD_EUROPEAN_SCHEDULE_PATH = OUTPUT_DIR / "european_schedule_current.csv"
+PROD_MATCH_HISTORY_PATH = OUTPUT_DIR / "match_history_current.parquet"
+PROD_ELO_COUNTRIES = {"ENG", "ESP", "GER", "ITA", "FRA"}
 
 
 def get_current_season_key():
@@ -118,6 +126,165 @@ def get_current_season_str():
     else:
         return f"{now.year - 1}/{now.year}"
 
+
+def get_current_fbref_season_str():
+    now = datetime.now()
+    if now.month > 6:
+        start_year = now.year
+    else:
+        start_year = now.year - 1
+    return f"{start_year}-{start_year + 1}"
+
+
+def get_current_match_history_season_str():
+    now = datetime.now()
+    if now.month > 6:
+        start_year = now.year
+    else:
+        start_year = now.year - 1
+    return f"{str(start_year)[-2:]}-{str(start_year + 1)[-2:]}"
+
+
+def refresh_production_european_schedule() -> Path:
+    season = get_current_fbref_season_str()
+    print(f"Refreshing European schedule for {season}...")
+    ensure_league_config()
+    european_df = fetch_league_schedule(european_leagues_for_season(season), season)
+    if european_df.empty:
+        raise RuntimeError(f"No European schedule rows fetched for {season}")
+    PROD_EUROPEAN_SCHEDULE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    european_df.to_csv(PROD_EUROPEAN_SCHEDULE_PATH, index=False)
+    print(f"Wrote fresh European schedule to {PROD_EUROPEAN_SCHEDULE_PATH}")
+    return PROD_EUROPEAN_SCHEDULE_PATH
+
+
+def refresh_production_match_history() -> Path:
+    season = get_current_match_history_season_str()
+    print(f"Refreshing MatchHistory for season {season}...")
+    mh = sd.MatchHistory(leagues=LEAGUES, seasons=[season])
+    df = mh.read_games()
+    if df.empty:
+        raise RuntimeError(f"No MatchHistory rows fetched for {season}")
+    df = df.reset_index()
+    PROD_MATCH_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(PROD_MATCH_HISTORY_PATH)
+    print(f"Wrote fresh MatchHistory to {PROD_MATCH_HISTORY_PATH}")
+    return PROD_MATCH_HISTORY_PATH
+
+
+def _normalize_player_stats_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    normalized = frame.reset_index(drop=True).copy()
+    normalized.columns = [c.lower() for c in normalized.columns]
+    if "game" in normalized.columns:
+        normalized = normalized.rename(columns={"game": "match_id"})
+    return normalized
+
+
+def fetch_current_player_data() -> pl.DataFrame:
+    season_str = get_current_season_str()
+    print(f"Fetching current player data for season {season_str}...")
+    player_frames = []
+    failed_leagues = []
+
+    for league in LEAGUES:
+        print(f"  Processing player data for {league}...")
+        try:
+            reader = sd.Understat(leagues=league, seasons=season_str)
+            player_stats = reader.read_player_match_stats()
+            if player_stats.empty:
+                failed_leagues.append(f"{league} (empty player data)")
+                continue
+            player_frames.append(_normalize_player_stats_frame(player_stats))
+        except Exception as e:
+            failed_leagues.append(f"{league} ({e})")
+
+    if failed_leagues:
+        raise RuntimeError(f"Failed to fetch current-season player data for: {', '.join(failed_leagues)}")
+
+    combined = pd.concat(player_frames, ignore_index=True)
+    return pl.from_pandas(combined)
+
+
+def load_production_player_features() -> pl.DataFrame:
+    current_season_key = get_current_season_key()
+    fresh_player_data = fetch_current_player_data()
+    try:
+        local_player_data = load_all_player_data()
+    except FileNotFoundError as e:
+        raise RuntimeError("Local historical player data is required for production features") from e
+
+    print("Merging fresh current-season player data into production player features...")
+    fresh_player_data = fresh_player_data.with_columns(pl.col("season").cast(pl.Utf8))
+    local_player_data = local_player_data.with_columns(pl.col("season").cast(pl.Utf8))
+    local_player_data = local_player_data.filter(
+        ~(
+            pl.col("league").is_in(LEAGUES)
+            & (pl.col("season") == current_season_key)
+        )
+    )
+    combined_player_data = pl.concat([local_player_data, fresh_player_data], how="diagonal_relaxed")
+
+    return build_player_team_features(combined_player_data)
+
+
+def refresh_production_elo_inputs() -> tuple[Path, pl.DataFrame]:
+    print("Refreshing production Elo inputs...")
+    elo_paths = build_prod_elo(target_countries=PROD_ELO_COUNTRIES, write_histories=True)
+    if "elo_history" not in elo_paths:
+        raise RuntimeError("Production Elo refresh did not return an elo_history artifact")
+    elo_history_path = Path(elo_paths["elo_history"])
+    elo_current = pl.read_parquet(elo_paths["elo_asof"])
+    return elo_history_path, elo_current
+
+
+def map_current_elo(elo_current: pl.DataFrame) -> pl.DataFrame:
+    with open(MAPPINGS_DIR / "clubelo_to_canonical.json", "r") as f:
+        mapping = json.load(f)
+
+    mapping_df = pl.DataFrame([{"team_clubelo": k, "team_canonical": v} for k, v in mapping.items()])
+    return elo_current.join(
+        mapping_df,
+        left_on="team_clubelo",
+        right_on="team_clubelo",
+        how="inner"
+    ).select([pl.col("team_canonical"), pl.col("elo")])
+
+
+def fill_missing_future_elo(
+    matches_df: pl.DataFrame,
+    elo_mapped: pl.DataFrame,
+    reference_time: datetime | None = None,
+) -> pl.DataFrame:
+    if elo_mapped.is_empty():
+        return matches_df
+
+    fill_reference = pd.Timestamp(reference_time or datetime.utcnow()).tz_localize(None).to_pydatetime()
+    future_mask = pl.col("date") >= pl.lit(fill_reference)
+    filled = matches_df.join(
+        elo_mapped.rename({"team_canonical": "home_team", "elo": "home_elo_curr"}),
+        on="home_team",
+        how="left"
+    ).join(
+        elo_mapped.rename({"team_canonical": "away_team", "elo": "away_elo_curr"}),
+        on="away_team",
+        how="left"
+    ).with_columns([
+        pl.when(future_mask)
+        .then(pl.coalesce([pl.col("home_elo"), pl.col("home_elo_curr")]))
+        .otherwise(pl.col("home_elo"))
+        .alias("home_elo"),
+        pl.when(future_mask)
+        .then(pl.coalesce([pl.col("away_elo"), pl.col("away_elo_curr")]))
+        .otherwise(pl.col("away_elo"))
+        .alias("away_elo"),
+    ]).drop(["home_elo_curr", "away_elo_curr"])
+
+    return filled.with_columns([
+        (pl.col("home_elo") - pl.col("away_elo")).alias("elo_diff"),
+        (pl.col("home_elo") + pl.col("away_elo")).alias("elo_sum"),
+        ((pl.col("home_elo") + pl.col("away_elo")) / 2).alias("elo_mean")
+    ])
+
 def fetch_current_data(upcoming_fixtures: pd.DataFrame | None = None):
     season_str = get_current_season_str()
     print(f"Fetching data for season {season_str}...")
@@ -206,64 +373,30 @@ def main(upcoming_fixtures: pd.DataFrame | None = None):
     lf = apply_team_name_mapping(lf, UNDERSTAT_MAPPING_PATH, "production data")
 
     # 2. Join Odds (Match History)
-    mh = load_match_history_and_map()
-    if mh is not None:
-        print("Joining Match History data (Odds)...")
-        lf = join_odds(lf, mh)
+    match_history_path = refresh_production_match_history()
+    mh = load_match_history_and_map(match_history_path=match_history_path)
+    if mh is None:
+        raise RuntimeError("Fresh MatchHistory data and canonical mappings are required for production features.")
+    print("Joining Match History data (Odds)...")
+    lf = join_odds(lf, mh)
 
     # --- Elo Integration ---
     print("Merging Elo ratings...")
+    elo_history_path, elo_current = refresh_production_elo_inputs()
     df_temp = lf.collect()
-    df_temp = merge_elo_features(df_temp)
+    df_temp = merge_elo_features(df_temp, elo_history_path=elo_history_path)
     
-    # Fill missing Elo with current Elo (for upcoming games)
+    # Fill missing Elo for future fixtures only, using current ratings.
     missing_mask = df_temp["home_elo"].is_null() | df_temp["away_elo"].is_null()
     if missing_mask.any():
-        print("Fetching current Elo for missing values...")
-        try:
-            elo_paths = build_prod_elo(write_histories=False)
-            elo_asof_path = elo_paths["elo_asof"]
-            elo_current = pl.read_parquet(elo_asof_path)
-            
-            with open(MAPPINGS_DIR / "clubelo_to_canonical.json", "r") as f:
-                mapping = json.load(f)
-            
-            mapping_df = pl.DataFrame([{"team_clubelo": k, "team_canonical": v} for k, v in mapping.items()])
-            
-            elo_mapped = elo_current.join(
-                mapping_df,
-                left_on="team_clubelo",
-                right_on="team_clubelo",
-                how="inner"
-            ).select([pl.col("team_canonical"), pl.col("elo")])
-            
-            # Join and fill
-            df_temp = df_temp.join(
-                elo_mapped.rename({"team_canonical": "home_team", "elo": "home_elo_curr"}),
-                on="home_team",
-                how="left"
-            ).join(
-                elo_mapped.rename({"team_canonical": "away_team", "elo": "away_elo_curr"}),
-                on="away_team",
-                how="left"
-            ).with_columns([
-                pl.col("home_elo").fill_null(pl.col("home_elo_curr")),
-                pl.col("away_elo").fill_null(pl.col("away_elo_curr"))
-            ]).drop(["home_elo_curr", "away_elo_curr"])
-            
-            # Recompute features
-            df_temp = df_temp.with_columns([
-                (pl.col("home_elo") - pl.col("away_elo")).alias("elo_diff"),
-                (pl.col("home_elo") + pl.col("away_elo")).alias("elo_sum"),
-                ((pl.col("home_elo") + pl.col("away_elo")) / 2).alias("elo_mean")
-            ])
-        except Exception as e:
-            print(f"Error filling current Elo: {e}")
+        print("Filling missing future Elo values with current ratings...")
+        df_temp = fill_missing_future_elo(df_temp, map_current_elo(elo_current))
 
     lf = df_temp.lazy()
 
-    final_df = build_match_features_from_lf(lf, EUROPEAN_SCHEDULE_PATH).collect()
-    final_df = join_player_features_asof(final_df, load_player_features())
+    european_schedule_path = refresh_production_european_schedule()
+    final_df = build_match_features_from_lf(lf, european_schedule_path).collect()
+    final_df = join_player_features_asof(final_df, load_production_player_features())
     final_df = add_match_categorical_features(final_df)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
