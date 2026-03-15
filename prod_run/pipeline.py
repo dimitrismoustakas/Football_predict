@@ -191,6 +191,35 @@ def score_result_predictions(
 		required_cols.extend(["league_idx", "home_promoted", "away_promoted"])
 
 	ready = working.dropna(subset=required_cols).copy()
+	dropped_required_count = len(working) - len(ready)
+	if dropped_required_count:
+		print(
+			f"Dropped {dropped_required_count} matched games before scoring due to missing odds or league-side metadata"
+		)
+	feature_null_mask = ready[feature_cols].isna().any(axis=1)
+	if feature_null_mask.any():
+		dropped_feature_rows = ready.loc[feature_null_mask, ["league", "home_team", "away_team"] + feature_cols].copy()
+		top_missing_features = (
+			dropped_feature_rows[feature_cols]
+			.isna()
+			.sum()
+			.sort_values(ascending=False)
+		)
+		top_missing_features = [
+			(col, int(count))
+			for col, count in top_missing_features.items()
+			if int(count) > 0
+		][:8]
+		fixture_preview = ", ".join(
+			f"{row.home_team} vs {row.away_team} ({row.league})"
+			for row in dropped_feature_rows[["league", "home_team", "away_team"]].head(5).itertuples(index=False)
+		)
+		print(
+			f"Dropped {int(feature_null_mask.sum())} matched games due to missing model features. "
+			f"Top missing columns: {top_missing_features}. "
+			f"Examples: {fixture_preview}"
+		)
+		ready = ready.loc[~feature_null_mask].copy()
 	if ready.empty:
 		return pd.DataFrame()
 
@@ -339,7 +368,7 @@ def main():
 		min_bet_amount=min_bet_amount,
 	)
 	if result_predictions.empty:
-		raise RuntimeError("No games had all required features for scoring")
+		raise RuntimeError("No games had complete model features for scoring after dropping incomplete rows")
 	output_df, value_output = build_prediction_outputs(merged, result_predictions)
 	recommended_output = value_output[value_output["Result_Budget_Amount"] > 0.0].copy()
 
