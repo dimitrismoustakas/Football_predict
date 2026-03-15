@@ -17,6 +17,10 @@ def _format_decimal(value: float) -> str:
 	return f"{value:.2f}"
 
 
+def _clamp(value: float, lower: float, upper: float) -> float:
+	return max(lower, min(upper, value))
+
+
 def _format_interactive_table(df: pd.DataFrame) -> str:
 	if df.empty:
 		return "<p>No matches found for this report.</p>"
@@ -93,10 +97,28 @@ def generate_html_report(
 ) -> None:
 	"""Write a styled HTML summary of match-result predictions."""
 
+	html = render_html_report(
+		predictions_df=predictions_df,
+		fixed_budget=fixed_budget,
+		kelly_fraction=kelly_fraction,
+		min_bet_amount=min_bet_amount,
+	)
+	output_path.parent.mkdir(parents=True, exist_ok=True)
+	output_path.write_text(html, encoding="utf-8")
+
+
+def render_html_report(
+	predictions_df: pd.DataFrame,
+	fixed_budget: float | None = None,
+	kelly_fraction: float | None = None,
+	min_bet_amount: float = 0.1,
+) -> str:
+	"""Render the standalone HTML report as a string."""
+
 	today_str = datetime.now().strftime("%Y-%m-%d")
 	predictions_html = _format_interactive_table(predictions_df)
 	default_budget = float(fixed_budget) if fixed_budget is not None else 10.0
-	default_kelly_fraction = float(kelly_fraction) if kelly_fraction is not None else 0.5
+	default_kelly_fraction = _clamp(float(kelly_fraction) if kelly_fraction is not None else 0.5, 0.1, 1.0)
 	note = (
 		"Edit the Home, Draw, and Away odds to recalculate the best bet, expected value, and suggested stake. "
 		"Enter your current bankroll and Kelly fraction below to adjust the risk level."
@@ -138,7 +160,7 @@ def generate_html_report(
 			<p class="note">{note}</p>
 			<div class="controls">
 				<label class="control-label">Current bankroll: <input id="total-budget" class="budget-input" type="number" min="0" step="0.01" value="{default_budget:.2f}"> euros</label>
-				<label class="control-label">Kelly fraction: <input id="kelly-fraction" class="budget-input" type="number" min="0" step="0.01" value="{default_kelly_fraction:.2f}"></label>
+				<label class="control-label">Kelly fraction: <input id="kelly-fraction" class="budget-input" type="number" min="0.1" max="1" step="0.01" value="{default_kelly_fraction:.2f}"></label>
 			</div>
 			<div class="summary-grid">
 				<div class="summary-tile">
@@ -159,6 +181,8 @@ def generate_html_report(
 	</div>
 	<script>
 		const MIN_BET_AMOUNT = {float(min_bet_amount)};
+		const MIN_KELLY_FRACTION = 0.1;
+		const MAX_KELLY_FRACTION = 1.0;
 		const LABELS = ["Home", "Draw", "Away"];
 
 		function parseOdds(input) {{
@@ -169,6 +193,19 @@ def generate_html_report(
 		function parseNonNegativeNumber(input, fallback) {{
 			const value = Number.parseFloat(input.value);
 			return Number.isFinite(value) && value >= 0 ? value : fallback;
+		}}
+
+		function clampKellyFraction(input) {{
+			const parsed = Number.parseFloat(input.value);
+			const fallback = Number.parseFloat(input.defaultValue);
+			const baseValue = Number.isFinite(parsed)
+				? parsed
+				: (Number.isFinite(fallback) ? fallback : MIN_KELLY_FRACTION);
+			return Math.min(MAX_KELLY_FRACTION, Math.max(MIN_KELLY_FRACTION, baseValue));
+		}}
+
+		function normalizeKellyFractionInput(input) {{
+			input.value = clampKellyFraction(input).toFixed(2);
 		}}
 
 		function computeRow(row, stakeFraction) {{
@@ -239,7 +276,7 @@ def generate_html_report(
 			const totalBudgetInput = document.getElementById('total-budget');
 			const kellyFractionInput = document.getElementById('kelly-fraction');
 			const totalBudget = Number.parseFloat(totalBudgetInput.value);
-			const stakeFraction = parseNonNegativeNumber(kellyFractionInput, 0);
+			const stakeFraction = clampKellyFraction(kellyFractionInput);
 			const results = rows.map((row) => computeRow(row, stakeFraction));
 			const resolvedBudget = Number.isFinite(totalBudget) && totalBudget >= 0 ? totalBudget : 0;
 			const plan = computeStakePlan(results, resolvedBudget);
@@ -279,12 +316,16 @@ def generate_html_report(
 
 		document.getElementById('total-budget').addEventListener('input', updateTable);
 		document.getElementById('kelly-fraction').addEventListener('input', updateTable);
+		document.getElementById('kelly-fraction').addEventListener('blur', () => {{
+			normalizeKellyFractionInput(document.getElementById('kelly-fraction'));
+			updateTable();
+		}});
 		document.querySelectorAll('.odds-input').forEach((input) => {{
 			input.addEventListener('input', updateTable);
 		}});
+		normalizeKellyFractionInput(document.getElementById('kelly-fraction'));
 		updateTable();
 	</script>
 </body>
 </html>"""
-	output_path.parent.mkdir(parents=True, exist_ok=True)
-	output_path.write_text(html, encoding="utf-8")
+	return html

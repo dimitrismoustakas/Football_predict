@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 import json
 import subprocess
 import sys
+import time
 import warnings
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -167,33 +168,50 @@ def get_historical_seasons(start_year: int = 2014) -> list[str]:
 	return seasons
 
 
-def fetch_league_schedule(leagues: list[str], season: str) -> pd.DataFrame:
+def fetch_league_schedule(leagues: list[str], season: str, strict: bool = False, max_attempts: int = 2) -> pd.DataFrame:
 	"""
 	Fetch schedule for the specified leagues and season.
 	
 	Args:
 		leagues: List of league IDs (e.g., ["EUR-Champions League", "ENG-Premier League"])
 		season: Season string (e.g., "2024-2025")
+		strict: Raise if any requested league fails after retries
+		max_attempts: Number of attempts per league before failing
 	
 	Returns:
 		DataFrame with all matches
 	"""
 	all_matches = []
+	failed_leagues = []
 	
 	for league in leagues:
 		print(f"Fetching {league} ({season})...")
-		try:
-			cleanup_webdrivers()
-			fbref = sd.FBref(leagues=league, seasons=season)
-			df = fbref.read_schedule()
-			df = df.reset_index()
-			all_matches.append(df)
-			print(f"  Found {len(df)} matches")
-		except Exception as e:
-			print(f"  Error: {e}")
-		finally:
-			cleanup_webdrivers()
+		last_error = None
+		for attempt in range(1, max_attempts + 1):
+			try:
+				cleanup_webdrivers()
+				fbref = sd.FBref(leagues=league, seasons=season)
+				df = fbref.read_schedule()
+				df = df.reset_index()
+				all_matches.append(df)
+				print(f"  Found {len(df)} matches")
+				last_error = None
+				break
+			except Exception as e:
+				last_error = e
+				print(f"  Attempt {attempt}/{max_attempts} failed: {e}")
+				if attempt < max_attempts:
+					time.sleep(2)
+			finally:
+				cleanup_webdrivers()
+		if last_error is not None:
+			failed_leagues.append(f"{league} ({last_error})")
 	
+	if failed_leagues and strict:
+		raise RuntimeError(
+			f"Failed to fetch schedule for season {season}: {', '.join(failed_leagues)}"
+		)
+
 	if not all_matches:
 		return pd.DataFrame()
 	

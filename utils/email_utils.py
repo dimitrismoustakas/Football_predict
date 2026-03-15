@@ -9,6 +9,7 @@ from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
 from pathlib import Path
 
 import pandas as pd
@@ -42,6 +43,7 @@ def build_email_html(
 	predictions_df: pd.DataFrame,
 	bets_df: pd.DataFrame | None,
 	report_date: str,
+	report_url: str | None = None,
 ) -> str:
 	"""Render the HTML email body for prediction reports."""
 
@@ -60,6 +62,20 @@ def build_email_html(
 		<p>No positive expected value result bets found for this period.</p>
 		"""
 
+	if report_url:
+		escaped_report_url = escape(report_url, quote=True)
+		report_access_section = f"""
+		<p>Open the interactive report here:</p>
+		<p><a href=\"{escaped_report_url}\">{escaped_report_url}</a></p>
+		<p>The hosted page lets you edit odds, change your bankroll and Kelly fraction, and recalculate suggested stakes in the browser.</p>
+		"""
+	else:
+		report_access_section = """
+		<p>To get bankroll allocation, download the attached HTML file and open it in a browser.</p>
+		<h4>HTML Attachment</h4>
+		<p>The attached <strong>upcoming_predictions.html</strong> file lets you edit odds, change your bankroll and Kelly fraction, and recalculate the suggested stakes.</p>
+		"""
+
 	return f"""
 	<html>
 	<head>
@@ -75,11 +91,9 @@ def build_email_html(
 		<h2>Football Predictions - {report_date}</h2>
 		<h3>Match Result - Top 5 European Leagues</h3>
 		<p>Scanned <strong>{match_count}</strong> matches and identified <strong>{value_count}</strong> games with positive expected value.</p>
-		<p>To get bankroll allocation, download the attached HTML file and open it in a browser.</p>
+		{report_access_section}
 		{value_section}
 		<hr>
-		<h4>HTML Attachment</h4>
-		<p>The attached <strong>upcoming_predictions.html</strong> file lets you edit odds, change your bankroll and Kelly fraction, and recalculate the suggested stakes.</p>
 	</body>
 	</html>
 	"""
@@ -90,6 +104,8 @@ def send_email(
 	predictions_df: pd.DataFrame,
 	bets_df: pd.DataFrame | None,
 	recipients: list[str],
+	report_url: str | None = None,
+	attach_html: bool = True,
 ):
 	"""Send the result prediction report and HTML attachment."""
 
@@ -109,6 +125,7 @@ def send_email(
 		predictions_df=predictions_df,
 		bets_df=bets_df,
 		report_date=today_str,
+		report_url=report_url,
 	)
 
 	msg = MIMEMultipart("alternative")
@@ -117,12 +134,13 @@ def send_email(
 	msg["To"] = ", ".join(recipients)
 	msg.attach(MIMEText(html_body, "html"))
 
-	with open(html_path, "rb") as file:
-		part = MIMEBase("application", "octet-stream")
-		part.set_payload(file.read())
-		encoders.encode_base64(part)
-		part.add_header("Content-Disposition", f"attachment; filename={html_path.name}")
-		msg.attach(part)
+	if attach_html:
+		with open(html_path, "rb") as file:
+			part = MIMEBase("application", "octet-stream")
+			part.set_payload(file.read())
+			encoders.encode_base64(part)
+			part.add_header("Content-Disposition", f"attachment; filename={html_path.name}")
+			msg.attach(part)
 
 	try:
 		with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:

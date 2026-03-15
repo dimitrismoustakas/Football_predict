@@ -31,6 +31,7 @@ PREDICTIONS_DIR = DATA_DIR / "predictions"
 PROD_FEATURES_PATH = PROD_DIR / "features_season.parquet"
 OUTPUT_CSV_PATH = PREDICTIONS_DIR / "upcoming_predictions.csv"
 OUTPUT_HTML_PATH = PREDICTIONS_DIR / "upcoming_predictions.html"
+STATIC_REPORT_PATH = Path("site") / "index.html"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RESULT_LABELS = np.array(["Home", "Draw", "Away"])
 DEFAULT_MIN_BET_AMOUNT = 0.1
@@ -48,6 +49,13 @@ def _env_float(name: str, default: float) -> float:
 	if value is None:
 		return default
 	return float(value)
+
+
+def _env_path(name: str, default: Path) -> Path:
+	value = os.environ.get(name)
+	if value is None or not value.strip():
+		return default
+	return Path(value)
 
 
 def load_model():
@@ -173,11 +181,9 @@ def score_result_predictions(
 	odds_away_col = resolve_merged_col(merged, "odds_away")
 	working = merged.copy()
 	missing_feature_cols = [col for col in feature_cols if col not in working.columns]
-	for col in missing_feature_cols:
-		working[col] = np.nan
 	if missing_feature_cols:
-		print(
-			f"Warning: filling {len(missing_feature_cols)} missing feature columns with neutral defaults: "
+		raise RuntimeError(
+			"Production features are missing model-required columns: "
 			f"{missing_feature_cols[:8]}{'...' if len(missing_feature_cols) > 8 else ''}"
 		)
 	required_cols = [odds_home_col, odds_draw_col, odds_away_col]
@@ -273,10 +279,13 @@ def build_prediction_outputs(merged: pd.DataFrame, result_predictions: pd.DataFr
 def main():
 	odds_api_key = os.environ.get("ODDS_API_KEY")
 	send_email_enabled = _env_flag("SEND_EMAIL", True)
+	publish_static_report = _env_flag("PUBLISH_STATIC_REPORT", True)
 	prediction_window_days = int(os.environ.get("PREDICTION_WINDOW_DAYS", "6"))
 	fixed_budget = _env_float("FIXED_BUDGET", 100.0)
 	kelly_fraction = _env_float("KELLY_FRACTION", DEFAULT_KELLY_FRACTION)
 	min_bet_amount = _env_float("MIN_BET_AMOUNT", DEFAULT_MIN_BET_AMOUNT)
+	static_report_path = _env_path("STATIC_REPORT_PATH", STATIC_REPORT_PATH)
+	report_public_url = os.environ.get("REPORT_PUBLIC_URL", "").strip() or None
 
 	print("=" * 60)
 	print("FOOTBALL PRODUCTION PIPELINE")
@@ -345,6 +354,18 @@ def main():
 		kelly_fraction=kelly_fraction,
 		min_bet_amount=min_bet_amount,
 	)
+	print(f"Saved local interactive report to {OUTPUT_HTML_PATH}")
+	if publish_static_report:
+		generate_html_report(
+			output_df,
+			static_report_path,
+			fixed_budget=fixed_budget,
+			kelly_fraction=kelly_fraction,
+			min_bet_amount=min_bet_amount,
+		)
+		print(f"Published static report to {static_report_path}")
+	elif report_public_url:
+		print("Warning: REPORT_PUBLIC_URL is set but PUBLISH_STATIC_REPORT is disabled")
 
 	print("\n" + "=" * 60)
 	print("PREDICTIONS SUMMARY")
@@ -391,6 +412,8 @@ def main():
 			output_df,
 			value_output if not value_output.empty else None,
 			recipients,
+			report_url=report_public_url,
+			attach_html=report_public_url is None,
 		)
 	else:
 		print("SEND_EMAIL is disabled. Skipping email.")

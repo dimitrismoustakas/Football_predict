@@ -215,6 +215,11 @@ def build_prod_elo(
         parts: List[pd.DataFrame] = []
         for team in asof_df["team_clubelo"].unique().tolist():
             hist = ce.read_team_history(team, max_age=1)
+            if "from" not in hist.columns:
+                hist = hist.reset_index()
+                index_name = hist.columns[0]
+                if index_name != "from":
+                    hist = hist.rename(columns={index_name: "from"})
             # keep minimal schema
             keep = [c for c in ["from", "to", "elo"] if c in hist.columns]
             if not keep:

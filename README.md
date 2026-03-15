@@ -62,6 +62,8 @@ The output includes:
 - model pick
 - positive-EV result side diagnostics
 - bankroll stake fields for recommended positive-EV picks (`Result_Value_Prob`, `Result_Value_Implied`, `Result_Edge`, `Result_EV`, `Result_Budget_Share`, `Result_Budget_Amount`)
+- an interactive HTML report at `data/predictions/upcoming_predictions.html`
+- an optional hosted copy at `site/index.html` for static-site deployment
 
 Offline smoke-test command:
 - `.venv\Scripts\python.exe prod_run\smoke_test.py`
@@ -70,6 +72,17 @@ Bankroll Kelly knobs for production:
 - `FIXED_BUDGET` default `100`
 - `KELLY_FRACTION` default `0.5`
 - `MIN_BET_AMOUNT` default `0.1`
+
+Static report hosting knobs:
+- `PUBLISH_STATIC_REPORT` default `true`
+- `STATIC_REPORT_PATH` default `site/index.html`
+- `REPORT_PUBLIC_URL` optional public URL used in the email body; when set, the email sends the link instead of attaching the HTML file
+
+Fastest hosted flow:
+1. Run `uv run python prod_run/pipeline.py`.
+2. Commit the updated `site/index.html`.
+3. Push the branch and deploy `site/` with a static host such as GitHub Pages or Cloudflare Pages.
+4. Set `REPORT_PUBLIC_URL` so recipients get a URL instead of an attachment.
 
 ## Repo hygiene
 

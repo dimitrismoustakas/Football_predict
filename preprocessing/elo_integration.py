@@ -11,6 +11,12 @@ def load_elo_data(elo_history_path: Path = ELO_HISTORY_PATH):
         raise FileNotFoundError(f"Elo history not found at {elo_history_path}")
     
     lf = pl.scan_parquet(str(elo_history_path))
+    schema = lf.collect_schema()
+    elo_team_col = "team" if "team" in schema else "team_clubelo" if "team_clubelo" in schema else None
+    if elo_team_col is None:
+        raise RuntimeError(
+            f"Elo history at {elo_history_path} must contain either 'team' or 'team_clubelo' columns"
+        )
     
     # Load mapping
     if not MAPPING_PATH.exists():
@@ -25,10 +31,10 @@ def load_elo_data(elo_history_path: Path = ELO_HISTORY_PATH):
     mapping_df = pl.DataFrame(mapping_list)
     
     # Join mapping to elo data
-    # elo_history has 'team' column which is ClubElo name
+    # elo_history may expose the ClubElo identifier as either 'team' or 'team_clubelo'
     lf = lf.join(
         mapping_df.lazy(),
-        left_on="team",
+        left_on=elo_team_col,
         right_on="team_clubelo",
         how="inner"
     )
