@@ -608,6 +608,8 @@ class TrainConfig:
 	lambda_corr: float = 0.0
 	lambda_logit_delta: float = 0.0
 	market_target_mix: float = 0.0
+	market_target_draw_weight: float = 1.0
+	market_target_away_weight: float = 1.0
 	market_target_entropy_scale: float = 0.0
 	market_target_entropy_mode: str = "linear"
 	entropy_curriculum_mode: str = "none"
@@ -686,6 +688,8 @@ def gated_loss(
 	lambda_corr: float = 0.0,
 	lambda_logit_delta: float = 0.0,
 	market_target_mix: float = 0.0,
+	market_target_draw_weight: float = 1.0,
+	market_target_away_weight: float = 1.0,
 	market_target_entropy_scale: float = 0.0,
 	market_target_entropy_mode: str = "linear",
 	sample_weights: Optional[torch.Tensor] = None,
@@ -703,6 +707,13 @@ def gated_loss(
 	if market_target_mix > 0:
 		soft_target = F.one_hot(target, num_classes=model.n_classes).float()
 		mix = pred_logits.new_full((soft_target.shape[0], 1), market_target_mix)
+		if abs(market_target_draw_weight - 1.0) > eps or abs(market_target_away_weight - 1.0) > eps:
+			class_weight = torch.ones_like(mix)
+			draw_mask = (target == 1).float().unsqueeze(-1)
+			away_mask = (target == 2).float().unsqueeze(-1)
+			class_weight = class_weight + draw_mask * (market_target_draw_weight - 1.0)
+			class_weight = class_weight + away_mask * (market_target_away_weight - 1.0)
+			mix = mix * class_weight
 		if abs(market_target_entropy_scale) > eps:
 			normalized_entropy = _normalized_market_entropy(implied_probs, eps=eps).unsqueeze(-1)
 			if market_target_entropy_mode == "linear":
