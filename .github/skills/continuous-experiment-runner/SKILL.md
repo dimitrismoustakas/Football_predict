@@ -30,7 +30,6 @@ Read these first:
 ## Hard rules
 
 - Preserve the canonical workflow unless the user explicitly asks to change it.
-- Keep the repo surface lean.
 - Do not write markdown reports unless the user explicitly asks for one.
 - Do not commit generated model bundles under `artifacts/models/`.
 - Do not rewrite prior rows in `artifacts/experiment_metrics/result_main_runs.tsv`.
