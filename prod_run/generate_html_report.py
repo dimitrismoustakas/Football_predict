@@ -17,6 +17,10 @@ def _format_decimal(value: float) -> str:
 	return f"{value:.2f}"
 
 
+def _clamp(value: float, lower: float, upper: float) -> float:
+	return max(lower, min(upper, value))
+
+
 def _format_interactive_table(df: pd.DataFrame) -> str:
 	if df.empty:
 		return "<p>No matches found for this report.</p>"
@@ -114,7 +118,7 @@ def render_html_report(
 	today_str = datetime.now().strftime("%Y-%m-%d")
 	predictions_html = _format_interactive_table(predictions_df)
 	default_budget = float(fixed_budget) if fixed_budget is not None else 10.0
-	default_kelly_fraction = float(kelly_fraction) if kelly_fraction is not None else 0.5
+	default_kelly_fraction = _clamp(float(kelly_fraction) if kelly_fraction is not None else 0.5, 0.1, 1.0)
 	note = (
 		"Edit the Home, Draw, and Away odds to recalculate the best bet, expected value, and suggested stake. "
 		"Enter your current bankroll and Kelly fraction below to adjust the risk level."
@@ -156,7 +160,7 @@ def render_html_report(
 			<p class="note">{note}</p>
 			<div class="controls">
 				<label class="control-label">Current bankroll: <input id="total-budget" class="budget-input" type="number" min="0" step="0.01" value="{default_budget:.2f}"> euros</label>
-				<label class="control-label">Kelly fraction: <input id="kelly-fraction" class="budget-input" type="number" min="0" step="0.01" value="{default_kelly_fraction:.2f}"></label>
+				<label class="control-label">Kelly fraction: <input id="kelly-fraction" class="budget-input" type="number" min="0.1" max="1" step="0.01" value="{default_kelly_fraction:.2f}"></label>
 			</div>
 			<div class="summary-grid">
 				<div class="summary-tile">
@@ -177,6 +181,8 @@ def render_html_report(
 	</div>
 	<script>
 		const MIN_BET_AMOUNT = {float(min_bet_amount)};
+		const MIN_KELLY_FRACTION = 0.1;
+		const MAX_KELLY_FRACTION = 1.0;
 		const LABELS = ["Home", "Draw", "Away"];
 
 		function parseOdds(input) {{
@@ -187,6 +193,19 @@ def render_html_report(
 		function parseNonNegativeNumber(input, fallback) {{
 			const value = Number.parseFloat(input.value);
 			return Number.isFinite(value) && value >= 0 ? value : fallback;
+		}}
+
+		function clampKellyFraction(input) {{
+			const parsed = Number.parseFloat(input.value);
+			const fallback = Number.parseFloat(input.defaultValue);
+			const baseValue = Number.isFinite(parsed)
+				? parsed
+				: (Number.isFinite(fallback) ? fallback : MIN_KELLY_FRACTION);
+			const clamped = Math.min(MAX_KELLY_FRACTION, Math.max(MIN_KELLY_FRACTION, baseValue));
+			if (input.value !== clamped.toFixed(2)) {{
+				input.value = clamped.toFixed(2);
+			}}
+			return clamped;
 		}}
 
 		function computeRow(row, stakeFraction) {{
@@ -257,7 +276,7 @@ def render_html_report(
 			const totalBudgetInput = document.getElementById('total-budget');
 			const kellyFractionInput = document.getElementById('kelly-fraction');
 			const totalBudget = Number.parseFloat(totalBudgetInput.value);
-			const stakeFraction = parseNonNegativeNumber(kellyFractionInput, 0);
+			const stakeFraction = clampKellyFraction(kellyFractionInput);
 			const results = rows.map((row) => computeRow(row, stakeFraction));
 			const resolvedBudget = Number.isFinite(totalBudget) && totalBudget >= 0 ? totalBudget : 0;
 			const plan = computeStakePlan(results, resolvedBudget);
