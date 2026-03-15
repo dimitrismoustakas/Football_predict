@@ -93,6 +93,24 @@ def generate_html_report(
 ) -> None:
 	"""Write a styled HTML summary of match-result predictions."""
 
+	html = render_html_report(
+		predictions_df=predictions_df,
+		fixed_budget=fixed_budget,
+		kelly_fraction=kelly_fraction,
+		min_bet_amount=min_bet_amount,
+	)
+	output_path.parent.mkdir(parents=True, exist_ok=True)
+	output_path.write_text(html, encoding="utf-8")
+
+
+def render_html_report(
+	predictions_df: pd.DataFrame,
+	fixed_budget: float | None = None,
+	kelly_fraction: float | None = None,
+	min_bet_amount: float = 0.1,
+) -> str:
+	"""Render the standalone HTML report as a string."""
+
 	today_str = datetime.now().strftime("%Y-%m-%d")
 	predictions_html = _format_interactive_table(predictions_df)
 	default_budget = float(fixed_budget) if fixed_budget is not None else 10.0
@@ -286,5 +304,4 @@ def generate_html_report(
 	</script>
 </body>
 </html>"""
-	output_path.parent.mkdir(parents=True, exist_ok=True)
-	output_path.write_text(html, encoding="utf-8")
+	return html

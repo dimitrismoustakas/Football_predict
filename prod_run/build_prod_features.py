@@ -149,7 +149,11 @@ def refresh_production_european_schedule() -> Path:
     season = get_current_fbref_season_str()
     print(f"Refreshing European schedule for {season}...")
     ensure_league_config()
-    european_df = fetch_league_schedule(european_leagues_for_season(season), season)
+    european_df = fetch_league_schedule(
+        european_leagues_for_season(season),
+        season,
+        strict=True,
+    )
     if european_df.empty:
         raise RuntimeError(f"No European schedule rows fetched for {season}")
     PROD_EUROPEAN_SCHEDULE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -173,11 +177,21 @@ def refresh_production_match_history() -> Path:
 
 
 def _normalize_player_stats_frame(frame: pd.DataFrame) -> pd.DataFrame:
-    normalized = frame.reset_index(drop=True).copy()
+    normalized = frame.reset_index().copy()
     normalized.columns = [c.lower() for c in normalized.columns]
     if "game" in normalized.columns:
         normalized = normalized.rename(columns={"game": "match_id"})
     return normalized
+
+
+def _validate_current_player_schema(frame: pd.DataFrame, league: str) -> None:
+    required_cols = {"league", "season", "match_id", "team", "player"}
+    missing_cols = sorted(required_cols - set(frame.columns))
+    if missing_cols:
+        raise RuntimeError(
+            f"Current-season player data for {league} is missing required columns {missing_cols}. "
+            f"Available columns: {sorted(frame.columns.tolist())}"
+        )
 
 
 def fetch_current_player_data() -> pl.DataFrame:
@@ -194,7 +208,9 @@ def fetch_current_player_data() -> pl.DataFrame:
             if player_stats.empty:
                 failed_leagues.append(f"{league} (empty player data)")
                 continue
-            player_frames.append(_normalize_player_stats_frame(player_stats))
+            normalized = _normalize_player_stats_frame(player_stats)
+            _validate_current_player_schema(normalized, league)
+            player_frames.append(normalized)
         except Exception as e:
             failed_leagues.append(f"{league} ({e})")
 
@@ -207,11 +223,15 @@ def fetch_current_player_data() -> pl.DataFrame:
 
 def load_production_player_features() -> pl.DataFrame:
     current_season_key = get_current_season_key()
-    fresh_player_data = fetch_current_player_data()
     try:
         local_player_data = load_all_player_data()
     except FileNotFoundError as e:
         raise RuntimeError("Local historical player data is required for production features") from e
+
+    try:
+        fresh_player_data = fetch_current_player_data()
+    except Exception as e:
+        raise RuntimeError("Failed to refresh current-season player data") from e
 
     print("Merging fresh current-season player data into production player features...")
     fresh_player_data = fresh_player_data.with_columns(pl.col("season").cast(pl.Utf8))
