@@ -3,7 +3,7 @@ name: deploy-static-report
 on:
   push:
     branches:
-      - feature/static-html-report-hosting
+      - main
     paths:
       - site/**
       - .github/workflows/deploy-static-report.yml
