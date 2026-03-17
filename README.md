@@ -72,6 +72,7 @@ Bankroll Kelly knobs for production:
 - `FIXED_BUDGET` default `100`
 - `KELLY_FRACTION` default `0.5`
 - `MIN_BET_AMOUNT` default `0.1`
+- `PREDICTION_WINDOW_DAYS` default `7`
 
 Static report hosting knobs:
 - `PUBLISH_STATIC_REPORT` default `true`

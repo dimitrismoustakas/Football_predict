@@ -35,6 +35,7 @@ STATIC_REPORT_PATH = Path("site") / "index.html"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RESULT_LABELS = np.array(["Home", "Draw", "Away"])
 DEFAULT_MIN_BET_AMOUNT = 0.1
+DEFAULT_PREDICTION_WINDOW_DAYS = 7
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -309,7 +310,7 @@ def main():
 	odds_api_key = os.environ.get("ODDS_API_KEY")
 	send_email_enabled = _env_flag("SEND_EMAIL", True)
 	publish_static_report = _env_flag("PUBLISH_STATIC_REPORT", True)
-	prediction_window_days = int(os.environ.get("PREDICTION_WINDOW_DAYS", "6"))
+	prediction_window_days = int(os.environ.get("PREDICTION_WINDOW_DAYS", str(DEFAULT_PREDICTION_WINDOW_DAYS)))
 	fixed_budget = _env_float("FIXED_BUDGET", 100.0)
 	kelly_fraction = _env_float("KELLY_FRACTION", DEFAULT_KELLY_FRACTION)
 	min_bet_amount = _env_float("MIN_BET_AMOUNT", DEFAULT_MIN_BET_AMOUNT)
