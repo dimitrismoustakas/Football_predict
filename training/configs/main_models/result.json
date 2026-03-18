@@ -37,11 +37,11 @@
 	"lambda_corr": 0.0,
 	"lambda_logit_delta": 0.01,
 	"market_target_mix": 0.01025,
-	"market_target_draw_weight": 0.32,
+	"market_target_draw_weight": 0.26,
 	"market_target_away_weight": 2.25,
 	"market_target_entropy_scale": 0.7,
 	"entropy_curriculum_mode": "center_only",
 	"entropy_curriculum_strength": 0.125,
-	"gce_mix_weight": 0.066,
+	"gce_mix_weight": 0.072,
 	"gce_q": 1.0
 }
