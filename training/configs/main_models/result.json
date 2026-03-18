@@ -4,7 +4,6 @@
 		384,
 		384
 	],
-	"backbone_type": "cross_resnet",
 	"cross_layers": 2,
 	"activation": "gelu",
 	"norm": "none",
