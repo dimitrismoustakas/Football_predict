@@ -54,63 +54,6 @@ def _resolve_norm(name: str):
 	return {"none": None, "bn": nn.BatchNorm1d, "ln": nn.LayerNorm}.get(name)
 
 
-class MLPWithHiddenAccess(nn.Module):
-	"""MLP that exposes its last hidden representation."""
-
-	def __init__(
-		self,
-		input_dim: int,
-		hidden_layers: List[int],
-		dropout: float = 0.3,
-		norm: str = "none",
-		activation: str = "relu",
-		output_dim: int = 3,
-		cat_config: Optional[CategoricalConfig] = None,
-	):
-		super().__init__()
-
-		self.cat_embedder = None
-		total_input_dim = input_dim
-		if cat_config is not None:
-			self.cat_embedder = CategoricalEmbedder(cat_config)
-			total_input_dim = input_dim + self.cat_embedder.output_dim
-
-		layers = []
-		prev = total_input_dim
-		NormClass = _resolve_norm(norm)
-
-		for width in hidden_layers:
-			layers.append(nn.Linear(prev, width))
-			if NormClass is not None:
-				layers.append(NormClass(width))
-			layers.append(_make_activation(activation))
-			layers.append(nn.Dropout(dropout))
-			prev = width
-
-		self.hidden_net = nn.Sequential(*layers)
-		self.final_layer = nn.Linear(prev, output_dim)
-		self.hidden_dim = prev
-		self.input_dim = input_dim
-		self.hidden_layers = hidden_layers
-		self.dropout = dropout
-		self.norm = norm
-		self.activation = activation
-		self.output_dim = output_dim
-		self.cat_config = cat_config
-
-	def forward(self, x: torch.Tensor, cat_features: Optional[torch.Tensor] = None) -> torch.Tensor:
-		h = self.get_hidden(x, cat_features)
-		return self.final_layer(h)
-
-	def get_hidden(self, x: torch.Tensor, cat_features: Optional[torch.Tensor] = None) -> torch.Tensor:
-		if self.cat_embedder is not None:
-			if cat_features is None:
-				raise ValueError("cat_features required when model has cat_config")
-			cat_emb = self.cat_embedder(cat_features)
-			x = torch.cat([x, cat_emb], dim=-1)
-		return self.hidden_net(x)
-
-
 class ResidualBlock(nn.Module):
 	"""Residual MLP block with optional projection."""
 
@@ -138,58 +81,6 @@ class ResidualBlock(nn.Module):
 		return self.act(h + residual)
 
 
-class ResNetWithHiddenAccess(nn.Module):
-	"""Residual MLP backbone for tabular features."""
-
-	def __init__(
-		self,
-		input_dim: int,
-		hidden_layers: List[int],
-		dropout: float = 0.3,
-		norm: str = "none",
-		activation: str = "relu",
-		output_dim: int = 3,
-		cat_config: Optional[CategoricalConfig] = None,
-	):
-		super().__init__()
-		if not hidden_layers:
-			raise ValueError("hidden_layers must be non-empty for resnet backbone")
-		self.cat_embedder = None
-		total_input_dim = input_dim
-		if cat_config is not None:
-			self.cat_embedder = CategoricalEmbedder(cat_config)
-			total_input_dim = input_dim + self.cat_embedder.output_dim
-
-		blocks = []
-		prev = total_input_dim
-		for width in hidden_layers:
-			blocks.append(ResidualBlock(prev, width, dropout=dropout, norm=norm, activation=activation))
-			prev = width
-
-		self.hidden_net = nn.Sequential(*blocks)
-		self.final_layer = nn.Linear(prev, output_dim)
-		self.hidden_dim = prev
-		self.input_dim = input_dim
-		self.hidden_layers = hidden_layers
-		self.dropout = dropout
-		self.norm = norm
-		self.activation = activation
-		self.output_dim = output_dim
-		self.cat_config = cat_config
-
-	def forward(self, x: torch.Tensor, cat_features: Optional[torch.Tensor] = None) -> torch.Tensor:
-		h = self.get_hidden(x, cat_features)
-		return self.final_layer(h)
-
-	def get_hidden(self, x: torch.Tensor, cat_features: Optional[torch.Tensor] = None) -> torch.Tensor:
-		if self.cat_embedder is not None:
-			if cat_features is None:
-				raise ValueError("cat_features required when model has cat_config")
-			cat_emb = self.cat_embedder(cat_features)
-			x = torch.cat([x, cat_emb], dim=-1)
-		return self.hidden_net(x)
-
-
 class CrossLayer(nn.Module):
 	"""One explicit cross layer over the original tabular inputs."""
 
@@ -201,8 +92,8 @@ class CrossLayer(nn.Module):
 		return x + x0 * self.linear(x)
 
 
-class CrossResNetWithHiddenAccess(nn.Module):
-	"""Parallel cross network plus residual MLP backbone for tabular features."""
+class FeatureBackbone(nn.Module):
+	"""Canonical tabular backbone with residual and explicit cross features."""
 
 	def __init__(
 		self,
@@ -217,9 +108,9 @@ class CrossResNetWithHiddenAccess(nn.Module):
 	):
 		super().__init__()
 		if not hidden_layers:
-			raise ValueError("hidden_layers must be non-empty for cross_resnet backbone")
+			raise ValueError("hidden_layers must be non-empty for feature backbone")
 		if cross_layers <= 0:
-			raise ValueError("cross_layers must be positive for cross_resnet backbone")
+			raise ValueError("cross_layers must be positive for feature backbone")
 
 		self.cat_embedder = None
 		total_input_dim = input_dim
@@ -292,65 +183,37 @@ class GatedResidualModel(nn.Module):
 		learn_league_gate_bias: bool = False,
 		learn_league_residual_bias: bool = False,
 		num_leagues: int = 0,
-		backbone_type: str = "mlp",
 		cross_layers: int = 2,
 	):
 		super().__init__()
-		self.n_classes = n_classes
-		self.gate_target_budget = gate_target_budget
-		self.shared_gate = shared_gate
-		self.linear_gate = linear_gate
-		self.market_logit_scale = market_logit_scale
-		self.learn_market_bias = learn_market_bias
-		self.learn_market_class_scale = learn_market_class_scale
-		self.learn_league_market_bias = learn_league_market_bias
-		self.learn_league_market_scale = learn_league_market_scale
-		self.league_market_scale_enabled_leagues = league_market_scale_enabled_leagues
-		self.learn_league_market_class_scale = learn_league_market_class_scale
-		self.league_market_class_scale_enabled_leagues = league_market_class_scale_enabled_leagues
-		self.learn_league_market_logit_mixer = learn_league_market_logit_mixer
-		self.learn_league_gate_bias = learn_league_gate_bias
-		self.learn_league_residual_bias = learn_league_residual_bias
-		self.market_feature_stats = market_feature_dim
-		self.num_leagues = num_leagues
-		self.backbone_type = backbone_type
-		if self.learn_league_market_bias and self.num_leagues <= 0:
+		if learn_league_market_bias and num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_market_bias is enabled")
-		if self.learn_league_market_scale and self.num_leagues <= 0:
+		if learn_league_market_scale and num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_market_scale is enabled")
-		if self.learn_league_market_class_scale and self.num_leagues <= 0:
+		if learn_league_market_class_scale and num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_market_class_scale is enabled")
-		if self.learn_league_market_logit_mixer and self.num_leagues <= 0:
+		if learn_league_market_logit_mixer and num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_market_logit_mixer is enabled")
-		if self.learn_league_gate_bias and self.num_leagues <= 0:
+		if learn_league_gate_bias and num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_gate_bias is enabled")
-		if self.learn_league_residual_bias and self.num_leagues <= 0:
+		if learn_league_residual_bias and num_leagues <= 0:
 			raise ValueError("num_leagues must be positive when learn_league_residual_bias is enabled")
 
-		backbone_kwargs = {
-			"input_dim": input_dim,
-			"hidden_layers": hidden_layers,
-			"dropout": dropout,
-			"norm": norm,
-			"activation": activation,
-			"output_dim": n_classes,
-			"cat_config": cat_config,
-		}
-		if backbone_type == "mlp":
-			BackboneClass = MLPWithHiddenAccess
-		elif backbone_type == "resnet":
-			BackboneClass = ResNetWithHiddenAccess
-		elif backbone_type == "cross_resnet":
-			BackboneClass = CrossResNetWithHiddenAccess
-			backbone_kwargs["cross_layers"] = cross_layers
-		else:
-			raise ValueError(f"Unknown backbone_type: {backbone_type}")
-		self.base_model = BackboneClass(**backbone_kwargs)
+		self.backbone = FeatureBackbone(
+			input_dim=input_dim,
+			hidden_layers=hidden_layers,
+			dropout=dropout,
+			norm=norm,
+			activation=activation,
+			output_dim=n_classes,
+			cat_config=cat_config,
+			cross_layers=cross_layers,
+		)
 
 		if market_feature_dim not in {3, 4, 5}:
 			raise ValueError(f"Unsupported market_feature_dim: {market_feature_dim}")
 		self.market_feature_dim = market_feature_dim + 3
-		gate_input_dim = self.base_model.hidden_dim + self.market_feature_dim
+		gate_input_dim = self.backbone.hidden_dim + self.market_feature_dim
 		if linear_gate:
 			self.gate_head = nn.Linear(gate_input_dim, 1 if shared_gate else n_classes)
 		else:
@@ -430,7 +293,9 @@ class GatedResidualModel(nn.Module):
 		self.norm = norm
 		self.activation = activation
 		self.cat_config = cat_config
+		self.n_classes = n_classes
 		self.gate_hidden_dim = gate_hidden_dim
+		self.gate_target_budget = gate_target_budget
 		self.shared_gate = shared_gate
 		self.linear_gate = linear_gate
 		self.market_logit_scale = market_logit_scale
@@ -446,7 +311,6 @@ class GatedResidualModel(nn.Module):
 		self.learn_league_residual_bias = learn_league_residual_bias
 		self.market_feature_stats = market_feature_dim
 		self.num_leagues = num_leagues
-		self.backbone_type = backbone_type
 		self.cross_layers = cross_layers
 
 	def _compute_gate_logits(
@@ -535,7 +399,7 @@ class GatedResidualModel(nn.Module):
 		implied_probs: Optional[torch.Tensor] = None,
 		raw_margin: Optional[torch.Tensor] = None,
 	) -> torch.Tensor:
-		h = self.base_model.get_hidden(x, cat_features)
+		h = self.backbone.get_hidden(x, cat_features)
 		residual_logits = self._compute_residual_logits(h, cat_features)
 
 		if implied_probs is None:
@@ -555,7 +419,7 @@ class GatedResidualModel(nn.Module):
 		hidden: torch.Tensor,
 		cat_features: Optional[torch.Tensor] = None,
 	) -> torch.Tensor:
-		residual_logits = self.base_model.final_layer(hidden)
+		residual_logits = self.backbone.final_layer(hidden)
 		if self.league_residual_bias is not None:
 			if cat_features is None:
 				raise ValueError("cat_features required when learn_league_residual_bias is enabled")
@@ -571,7 +435,7 @@ class GatedResidualModel(nn.Module):
 	) -> Dict[str, np.ndarray]:
 		self.eval()
 		with torch.no_grad():
-			h = self.base_model.get_hidden(x, cat_features)
+			h = self.backbone.get_hidden(x, cat_features)
 			gate_logits = self._compute_gate_logits(h, implied_probs, raw_margin, cat_features)
 			gate = torch.sigmoid(gate_logits + self.gate_bias)
 			if self.shared_gate:
@@ -760,7 +624,7 @@ def gated_loss(
 		loss = loss + lambda_logit_delta * logit_delta.pow(2).mean()
 
 	if gate_mean_weight > 0 or gate_sat_weight > 0:
-		h = model.base_model.get_hidden(x, cat_features)
+		h = model.backbone.get_hidden(x, cat_features)
 		gate_logits = model._compute_gate_logits(h, implied_probs, raw_margin, cat_features)
 		gate = torch.sigmoid(gate_logits + model.gate_bias)
 		if model.shared_gate:

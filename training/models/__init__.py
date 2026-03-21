@@ -3,8 +3,8 @@
 from training.models.neural_net import (
 	CategoricalConfig,
 	CategoricalEmbedder,
+	FeatureBackbone,
 	GatedResidualModel,
-	MLPWithHiddenAccess,
 	TrainConfig,
 	_log_softmax_from_implied,
 	gated_loss,
@@ -13,8 +13,8 @@ from training.models.neural_net import (
 __all__ = [
 	"CategoricalConfig",
 	"CategoricalEmbedder",
+	"FeatureBackbone",
 	"GatedResidualModel",
-	"MLPWithHiddenAccess",
 	"TrainConfig",
 	"_log_softmax_from_implied",
 	"gated_loss",

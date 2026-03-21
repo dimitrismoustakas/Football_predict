@@ -169,16 +169,11 @@ def load_evaluation_config() -> dict:
 	return config
 
 
-def build_train_config(
-	training_config: dict,
-	input_dim: int,
-	cat_config: CategoricalConfig,
-	epochs: int,
-	num_leagues: int,
-) -> TrainConfig:
-	model_kwargs = {
+def build_model_kwargs(training_config: dict, num_leagues: int) -> dict:
+	"""Build canonical model kwargs from source-controlled training config."""
+
+	return {
 		"hidden_layers": training_config["hidden_layers"],
-		"backbone_type": training_config.get("backbone_type", "mlp"),
 		"cross_layers": training_config.get("cross_layers", 2),
 		"dropout": training_config["dropout"],
 		"norm": training_config["norm"],
@@ -201,9 +196,18 @@ def build_train_config(
 		"learn_league_residual_bias": training_config.get("learn_league_residual_bias", False),
 		"num_leagues": num_leagues,
 	}
+
+
+def build_train_config(
+	training_config: dict,
+	input_dim: int,
+	cat_config: CategoricalConfig,
+	epochs: int,
+	num_leagues: int,
+) -> TrainConfig:
 	return TrainConfig(
 		input_dim=input_dim,
-		model_kwargs=model_kwargs,
+		model_kwargs=build_model_kwargs(training_config, num_leagues),
 		lr=training_config["lr"],
 		weight_decay=training_config["weight_decay"],
 		beta1=training_config["beta1"],
@@ -258,31 +262,7 @@ def build_bundle_metadata(
 		"display_name": DISPLAY_NAME,
 		"model_name": MODEL_NAME,
 		"comparison_metric": evaluation_config["comparison_metric"],
-		"model_kwargs": {
-			"hidden_layers": training_config["hidden_layers"],
-			"backbone_type": training_config.get("backbone_type", "mlp"),
-			"cross_layers": training_config.get("cross_layers", 2),
-			"dropout": training_config["dropout"],
-			"norm": training_config["norm"],
-			"activation": training_config["activation"],
-			"gate_hidden_dim": training_config["gate_hidden_dim"],
-			"gate_target_budget": training_config["gate_target_budget"],
-			"shared_gate": training_config.get("shared_gate", False),
-			"linear_gate": training_config.get("linear_gate", False),
-			"market_feature_dim": training_config.get("market_feature_dim", 3),
-			"market_logit_scale": training_config.get("market_logit_scale", 1.0),
-			"learn_market_bias": training_config.get("learn_market_bias", False),
-			"learn_market_class_scale": training_config.get("learn_market_class_scale", False),
-			"learn_league_market_bias": training_config.get("learn_league_market_bias", False),
-			"learn_league_market_scale": training_config.get("learn_league_market_scale", False),
-			"league_market_scale_enabled_leagues": training_config.get("league_market_scale_enabled_leagues"),
-			"learn_league_market_class_scale": training_config.get("learn_league_market_class_scale", False),
-			"league_market_class_scale_enabled_leagues": training_config.get("league_market_class_scale_enabled_leagues"),
-			"learn_league_market_logit_mixer": training_config.get("learn_league_market_logit_mixer", False),
-			"learn_league_gate_bias": training_config.get("learn_league_gate_bias", False),
-			"learn_league_residual_bias": training_config.get("learn_league_residual_bias", False),
-			"num_leagues": num_leagues,
-		},
+		"model_kwargs": build_model_kwargs(training_config, num_leagues),
 		"feature_cols": feature_cols,
 		"cat_config": None if cat_config is None else {
 			"num_leagues": cat_config.num_leagues,
