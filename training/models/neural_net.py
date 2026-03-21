@@ -473,6 +473,8 @@ class TrainConfig:
 	lambda_logit_delta: float = 0.0
 	market_target_mix: float = 0.0
 	market_target_surprise_scale: float = 0.0
+	market_target_surprise_power: float = 1.0
+	market_target_surprise_floor: float = 0.0
 	market_target_draw_weight: float = 1.0
 	market_target_away_weight: float = 1.0
 	market_target_entropy_scale: float = 0.0
@@ -545,14 +547,24 @@ def _apply_true_class_surprise_scaling(
 	implied_probs: torch.Tensor,
 	target: torch.Tensor,
 	scale: float,
+	power: float = 1.0,
+	floor: float = 0.0,
 	eps: float = 1e-6,
 ) -> torch.Tensor:
 	"""Increase mix weights for outcomes the market assigned lower true-class probability."""
 
 	if abs(scale) <= eps:
 		return base_mix
+	if power <= 0:
+		raise ValueError("market_target_surprise_power must be positive")
+	if floor < 0 or floor >= 1:
+		raise ValueError("market_target_surprise_floor must be in [0, 1)")
 	true_class_prob = implied_probs.gather(1, target.view(-1, 1).long()).clamp(0.0, 1.0)
 	surprise = 1.0 - true_class_prob
+	if floor > eps:
+		surprise = (surprise - floor).clamp_min(0.0) / max(1.0 - floor, eps)
+	if abs(power - 1.0) > eps:
+		surprise = surprise.pow(power)
 	return base_mix * (1.0 + scale * surprise)
 
 
@@ -570,6 +582,8 @@ def gated_loss(
 	lambda_logit_delta: float = 0.0,
 	market_target_mix: float = 0.0,
 	market_target_surprise_scale: float = 0.0,
+	market_target_surprise_power: float = 1.0,
+	market_target_surprise_floor: float = 0.0,
 	market_target_draw_weight: float = 1.0,
 	market_target_away_weight: float = 1.0,
 	market_target_entropy_scale: float = 0.0,
@@ -611,6 +625,8 @@ def gated_loss(
 			implied_probs,
 			target,
 			market_target_surprise_scale,
+			power=market_target_surprise_power,
+			floor=market_target_surprise_floor,
 			eps=eps,
 		).clamp(0.0, 1.0)
 		soft_target = (1.0 - mix) * soft_target + mix * implied_probs

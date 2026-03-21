@@ -64,6 +64,36 @@ class ResultModelingTests(unittest.TestCase):
 		self.assertAlmostEqual(float(scaled[1, 0]), 0.14, places=6)
 		self.assertAlmostEqual(float(scaled[2, 0]), 0.19, places=6)
 
+	def test_true_class_surprise_scaling_power_focuses_on_larger_upsets(self):
+		base_mix = torch.full((3, 1), 0.10)
+		implied_probs = torch.tensor([
+			[0.70, 0.20, 0.10],
+			[0.20, 0.60, 0.20],
+			[0.10, 0.20, 0.70],
+		], dtype=torch.float32)
+		target = torch.tensor([0, 1, 0])
+
+		scaled = _apply_true_class_surprise_scaling(base_mix, implied_probs, target, scale=1.0, power=2.0)
+
+		self.assertAlmostEqual(float(scaled[0, 0]), 0.109, places=6)
+		self.assertAlmostEqual(float(scaled[1, 0]), 0.116, places=6)
+		self.assertAlmostEqual(float(scaled[2, 0]), 0.181, places=6)
+
+	def test_true_class_surprise_scaling_floor_limits_boost_to_large_upsets(self):
+		base_mix = torch.full((3, 1), 0.10)
+		implied_probs = torch.tensor([
+			[0.70, 0.20, 0.10],
+			[0.20, 0.60, 0.20],
+			[0.10, 0.20, 0.70],
+		], dtype=torch.float32)
+		target = torch.tensor([0, 1, 0])
+
+		scaled = _apply_true_class_surprise_scaling(base_mix, implied_probs, target, scale=1.0, floor=0.5)
+
+		self.assertAlmostEqual(float(scaled[0, 0]), 0.10, places=6)
+		self.assertAlmostEqual(float(scaled[1, 0]), 0.10, places=6)
+		self.assertAlmostEqual(float(scaled[2, 0]), 0.18, places=6)
+
 
 if __name__ == "__main__":
 	unittest.main()
