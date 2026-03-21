@@ -94,6 +94,53 @@ class ResultModelingTests(unittest.TestCase):
 		self.assertAlmostEqual(float(scaled[1, 0]), 0.10, places=6)
 		self.assertAlmostEqual(float(scaled[2, 0]), 0.18, places=6)
 
+	def test_true_class_surprise_scaling_logistic_saturates(self):
+		base_mix = torch.full((3, 1), 0.10)
+		implied_probs = torch.tensor([
+			[0.80, 0.10, 0.10],
+			[0.50, 0.25, 0.25],
+			[0.20, 0.10, 0.70],
+		], dtype=torch.float32)
+		target = torch.tensor([0, 0, 0])
+
+		scaled = _apply_true_class_surprise_scaling(
+			base_mix,
+			implied_probs,
+			target,
+			scale=1.0,
+			mode="logistic",
+			center=0.5,
+			slope=12.0,
+		)
+
+		self.assertLess(float(scaled[0, 0]), float(scaled[1, 0]))
+		self.assertLess(float(scaled[1, 0]), float(scaled[2, 0]))
+		self.assertLessEqual(float(scaled[2, 0]), 0.20)
+
+	def test_true_class_surprise_scaling_band_focuses_middle_surprises(self):
+		base_mix = torch.full((3, 1), 0.10)
+		implied_probs = torch.tensor([
+			[0.80, 0.10, 0.10],
+			[0.50, 0.25, 0.25],
+			[0.20, 0.10, 0.70],
+		], dtype=torch.float32)
+		target = torch.tensor([0, 0, 0])
+
+		scaled = _apply_true_class_surprise_scaling(
+			base_mix,
+			implied_probs,
+			target,
+			scale=1.0,
+			mode="band",
+			center=0.5,
+			width=0.25,
+			slope=30.0,
+		)
+
+		self.assertLess(float(scaled[0, 0]), float(scaled[1, 0]))
+		self.assertLess(float(scaled[2, 0]), float(scaled[1, 0]))
+		self.assertGreater(float(scaled[1, 0]), 0.18)
+
 
 if __name__ == "__main__":
 	unittest.main()
