@@ -94,6 +94,50 @@ class ResultModelingTests(unittest.TestCase):
 		self.assertAlmostEqual(float(scaled[1, 0]), 0.10, places=6)
 		self.assertAlmostEqual(float(scaled[2, 0]), 0.18, places=6)
 
+	def test_true_class_surprise_scaling_can_override_draw_and_away_scale(self):
+		base_mix = torch.full((3, 1), 0.10)
+		implied_probs = torch.tensor([
+			[0.70, 0.20, 0.10],
+			[0.20, 0.60, 0.20],
+			[0.20, 0.20, 0.60],
+		], dtype=torch.float32)
+		target = torch.tensor([0, 1, 2])
+
+		scaled = _apply_true_class_surprise_scaling(
+			base_mix,
+			implied_probs,
+			target,
+			scale=1.0,
+			draw_scale=0.5,
+			away_scale=2.0,
+		)
+
+		self.assertAlmostEqual(float(scaled[0, 0]), 0.13, places=6)
+		self.assertAlmostEqual(float(scaled[1, 0]), 0.12, places=6)
+		self.assertAlmostEqual(float(scaled[2, 0]), 0.18, places=6)
+
+	def test_true_class_surprise_scaling_can_override_draw_and_away_floor(self):
+		base_mix = torch.full((3, 1), 0.10)
+		implied_probs = torch.tensor([
+			[0.70, 0.20, 0.10],
+			[0.20, 0.60, 0.20],
+			[0.20, 0.20, 0.60],
+		], dtype=torch.float32)
+		target = torch.tensor([0, 1, 2])
+
+		scaled = _apply_true_class_surprise_scaling(
+			base_mix,
+			implied_probs,
+			target,
+			scale=1.0,
+			draw_floor=0.30,
+			away_floor=0.60,
+		)
+
+		self.assertAlmostEqual(float(scaled[0, 0]), 0.13, places=6)
+		self.assertAlmostEqual(float(scaled[1, 0]), 0.1142857, places=6)
+		self.assertAlmostEqual(float(scaled[2, 0]), 0.10, places=6)
+
 	def test_true_class_surprise_scaling_logistic_saturates(self):
 		base_mix = torch.full((3, 1), 0.10)
 		implied_probs = torch.tensor([

@@ -475,6 +475,10 @@ class TrainConfig:
 	market_target_surprise_scale: float = 0.0
 	market_target_surprise_power: float = 1.0
 	market_target_surprise_floor: float = 0.0
+	market_target_draw_surprise_scale: Optional[float] = None
+	market_target_away_surprise_scale: Optional[float] = None
+	market_target_draw_surprise_floor: Optional[float] = None
+	market_target_away_surprise_floor: Optional[float] = None
 	market_target_surprise_mode: str = "power"
 	market_target_surprise_center: float = 0.5
 	market_target_surprise_width: float = 0.3
@@ -549,18 +553,38 @@ def _multiclass_conditional_corr(
 def _normalized_true_class_surprise(
 	implied_probs: torch.Tensor,
 	target: torch.Tensor,
-	floor: float = 0.0,
+	floor: float | torch.Tensor = 0.0,
 	eps: float = 1e-6,
 ) -> torch.Tensor:
 	"""Return normalized true-class surprise after applying an optional floor."""
 
-	if floor < 0 or floor >= 1:
-		raise ValueError("market_target_surprise_floor must be in [0, 1)")
 	true_class_prob = implied_probs.gather(1, target.view(-1, 1).long()).clamp(0.0, 1.0)
+	floor = torch.as_tensor(floor, dtype=true_class_prob.dtype, device=true_class_prob.device)
+	if torch.any((floor < 0) | (floor >= 1)):
+		raise ValueError("market_target_surprise_floor must be in [0, 1)")
 	surprise = 1.0 - true_class_prob
-	if floor > eps:
-		surprise = (surprise - floor).clamp_min(0.0) / max(1.0 - floor, eps)
+	if torch.any(floor > eps):
+		surprise = (surprise - floor).clamp_min(0.0) / (1.0 - floor).clamp_min(eps)
 	return surprise.clamp(0.0, 1.0)
+
+
+def _resolve_true_class_surprise_parameter(
+	target: torch.Tensor,
+	base_value: float,
+	draw_value: Optional[float],
+	away_value: Optional[float],
+	like: torch.Tensor,
+) -> torch.Tensor:
+	"""Expand scalar surprise settings into sample-wise values by target class."""
+
+	value = like.new_full((target.shape[0], 1), float(base_value))
+	if draw_value is not None:
+		draw_tensor = like.new_full((target.shape[0], 1), float(draw_value))
+		value = torch.where(target.view(-1, 1) == 1, draw_tensor, value)
+	if away_value is not None:
+		away_tensor = like.new_full((target.shape[0], 1), float(away_value))
+		value = torch.where(target.view(-1, 1) == 2, away_tensor, value)
+	return value
 
 
 def _logistic_surprise_response(
@@ -612,6 +636,10 @@ def _apply_true_class_surprise_scaling(
 	scale: float,
 	power: float = 1.0,
 	floor: float = 0.0,
+	draw_scale: Optional[float] = None,
+	away_scale: Optional[float] = None,
+	draw_floor: Optional[float] = None,
+	away_floor: Optional[float] = None,
 	mode: str = "power",
 	center: float = 0.5,
 	width: float = 0.3,
@@ -620,8 +648,22 @@ def _apply_true_class_surprise_scaling(
 ) -> torch.Tensor:
 	"""Increase mix weights for outcomes the market assigned lower true-class probability."""
 
-	if abs(scale) <= eps:
+	scale = _resolve_true_class_surprise_parameter(
+		target,
+		base_value=scale,
+		draw_value=draw_scale,
+		away_value=away_scale,
+		like=base_mix,
+	)
+	if torch.all(scale.abs() <= eps):
 		return base_mix
+	floor = _resolve_true_class_surprise_parameter(
+		target,
+		base_value=floor,
+		draw_value=draw_floor,
+		away_value=away_floor,
+		like=base_mix,
+	)
 	surprise = _normalized_true_class_surprise(implied_probs, target, floor=floor, eps=eps)
 	if mode == "power":
 		if power <= 0:
@@ -652,6 +694,10 @@ def gated_loss(
 	market_target_surprise_scale: float = 0.0,
 	market_target_surprise_power: float = 1.0,
 	market_target_surprise_floor: float = 0.0,
+	market_target_draw_surprise_scale: Optional[float] = None,
+	market_target_away_surprise_scale: Optional[float] = None,
+	market_target_draw_surprise_floor: Optional[float] = None,
+	market_target_away_surprise_floor: Optional[float] = None,
 	market_target_surprise_mode: str = "power",
 	market_target_surprise_center: float = 0.5,
 	market_target_surprise_width: float = 0.3,
@@ -699,6 +745,10 @@ def gated_loss(
 			market_target_surprise_scale,
 			power=market_target_surprise_power,
 			floor=market_target_surprise_floor,
+			draw_scale=market_target_draw_surprise_scale,
+			away_scale=market_target_away_surprise_scale,
+			draw_floor=market_target_draw_surprise_floor,
+			away_floor=market_target_away_surprise_floor,
 			mode=market_target_surprise_mode,
 			center=market_target_surprise_center,
 			width=market_target_surprise_width,
