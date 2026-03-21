@@ -120,6 +120,7 @@ def run_train_epoch(
 			lambda_corr=config.lambda_corr,
 			lambda_logit_delta=config.lambda_logit_delta,
 			market_target_mix=config.market_target_mix,
+			market_target_surprise_scale=config.market_target_surprise_scale,
 			market_target_draw_weight=config.market_target_draw_weight,
 			market_target_away_weight=config.market_target_away_weight,
 			market_target_entropy_scale=config.market_target_entropy_scale,

@@ -36,6 +36,7 @@
 	"lambda_corr": 0.0,
 	"lambda_logit_delta": 0.01,
 	"market_target_mix": 0.01125,
+	"market_target_surprise_scale": 0.75,
 	"market_target_draw_weight": 0.04,
 	"market_target_away_weight": 2.25,
 	"market_target_entropy_scale": 0.7,
