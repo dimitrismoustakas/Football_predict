@@ -3,6 +3,7 @@ import unittest
 import torch
 
 from training.models import FeatureBackbone, GatedResidualModel
+from training.models.neural_net import _apply_true_class_surprise_scaling
 
 
 class ResultModelingTests(unittest.TestCase):
@@ -38,6 +39,60 @@ class ResultModelingTests(unittest.TestCase):
 				hidden_layers=[8, 8],
 				backbone_type="cross_resnet",
 			)
+
+	def test_true_class_surprise_scaling_is_noop_at_zero_scale(self):
+		base_mix = torch.full((2, 1), 0.05)
+		implied_probs = torch.tensor([[0.70, 0.20, 0.10], [0.20, 0.60, 0.20]], dtype=torch.float32)
+		target = torch.tensor([0, 1])
+
+		scaled = _apply_true_class_surprise_scaling(base_mix, implied_probs, target, scale=0.0)
+
+		self.assertTrue(torch.equal(scaled, base_mix))
+
+	def test_true_class_surprise_scaling_boosts_market_upsets_more(self):
+		base_mix = torch.full((3, 1), 0.10)
+		implied_probs = torch.tensor([
+			[0.70, 0.20, 0.10],
+			[0.20, 0.60, 0.20],
+			[0.10, 0.20, 0.70],
+		], dtype=torch.float32)
+		target = torch.tensor([0, 1, 0])
+
+		scaled = _apply_true_class_surprise_scaling(base_mix, implied_probs, target, scale=1.0)
+
+		self.assertAlmostEqual(float(scaled[0, 0]), 0.13, places=6)
+		self.assertAlmostEqual(float(scaled[1, 0]), 0.14, places=6)
+		self.assertAlmostEqual(float(scaled[2, 0]), 0.19, places=6)
+
+	def test_true_class_surprise_scaling_power_focuses_on_larger_upsets(self):
+		base_mix = torch.full((3, 1), 0.10)
+		implied_probs = torch.tensor([
+			[0.70, 0.20, 0.10],
+			[0.20, 0.60, 0.20],
+			[0.10, 0.20, 0.70],
+		], dtype=torch.float32)
+		target = torch.tensor([0, 1, 0])
+
+		scaled = _apply_true_class_surprise_scaling(base_mix, implied_probs, target, scale=1.0, power=2.0)
+
+		self.assertAlmostEqual(float(scaled[0, 0]), 0.109, places=6)
+		self.assertAlmostEqual(float(scaled[1, 0]), 0.116, places=6)
+		self.assertAlmostEqual(float(scaled[2, 0]), 0.181, places=6)
+
+	def test_true_class_surprise_scaling_floor_limits_boost_to_large_upsets(self):
+		base_mix = torch.full((3, 1), 0.10)
+		implied_probs = torch.tensor([
+			[0.70, 0.20, 0.10],
+			[0.20, 0.60, 0.20],
+			[0.10, 0.20, 0.70],
+		], dtype=torch.float32)
+		target = torch.tensor([0, 1, 0])
+
+		scaled = _apply_true_class_surprise_scaling(base_mix, implied_probs, target, scale=1.0, floor=0.5)
+
+		self.assertAlmostEqual(float(scaled[0, 0]), 0.10, places=6)
+		self.assertAlmostEqual(float(scaled[1, 0]), 0.10, places=6)
+		self.assertAlmostEqual(float(scaled[2, 0]), 0.18, places=6)
 
 
 if __name__ == "__main__":
