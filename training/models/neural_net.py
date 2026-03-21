@@ -475,6 +475,10 @@ class TrainConfig:
 	market_target_surprise_scale: float = 0.0
 	market_target_surprise_power: float = 1.0
 	market_target_surprise_floor: float = 0.0
+	market_target_surprise_mode: str = "power"
+	market_target_surprise_center: float = 0.5
+	market_target_surprise_width: float = 0.3
+	market_target_surprise_slope: float = 12.0
 	market_target_draw_weight: float = 1.0
 	market_target_away_weight: float = 1.0
 	market_target_entropy_scale: float = 0.0
@@ -542,6 +546,65 @@ def _multiclass_conditional_corr(
 	return rho_weighted
 
 
+def _normalized_true_class_surprise(
+	implied_probs: torch.Tensor,
+	target: torch.Tensor,
+	floor: float = 0.0,
+	eps: float = 1e-6,
+) -> torch.Tensor:
+	"""Return normalized true-class surprise after applying an optional floor."""
+
+	if floor < 0 or floor >= 1:
+		raise ValueError("market_target_surprise_floor must be in [0, 1)")
+	true_class_prob = implied_probs.gather(1, target.view(-1, 1).long()).clamp(0.0, 1.0)
+	surprise = 1.0 - true_class_prob
+	if floor > eps:
+		surprise = (surprise - floor).clamp_min(0.0) / max(1.0 - floor, eps)
+	return surprise.clamp(0.0, 1.0)
+
+
+def _logistic_surprise_response(
+	surprise: torch.Tensor,
+	center: float,
+	slope: float,
+	eps: float = 1e-6,
+) -> torch.Tensor:
+	"""Monotone saturating response on normalized surprise."""
+
+	if center < 0 or center > 1:
+		raise ValueError("market_target_surprise_center must be in [0, 1]")
+	if slope <= 0:
+		raise ValueError("market_target_surprise_slope must be positive")
+	lower = torch.sigmoid(surprise.new_tensor(-slope * center))
+	upper = torch.sigmoid(surprise.new_tensor(slope * (1.0 - center)))
+	raw = torch.sigmoid(slope * (surprise - center))
+	return ((raw - lower) / (upper - lower).clamp_min(eps)).clamp(0.0, 1.0)
+
+
+def _band_surprise_response(
+	surprise: torch.Tensor,
+	center: float,
+	width: float,
+	slope: float,
+	eps: float = 1e-6,
+) -> torch.Tensor:
+	"""Windowed response that concentrates extra smoothing inside a surprise band."""
+
+	if center < 0 or center > 1:
+		raise ValueError("market_target_surprise_center must be in [0, 1]")
+	if width <= 0:
+		raise ValueError("market_target_surprise_width must be positive")
+	if slope <= 0:
+		raise ValueError("market_target_surprise_slope must be positive")
+	half_width = width / 2.0
+	start = center - half_width
+	end = center + half_width
+	rise = torch.sigmoid(slope * (surprise - start))
+	fall = torch.sigmoid(slope * (end - surprise))
+	peak = torch.sigmoid(surprise.new_tensor(slope * half_width)).pow(2)
+	return ((rise * fall) / peak.clamp_min(eps)).clamp(0.0, 1.0)
+
+
 def _apply_true_class_surprise_scaling(
 	base_mix: torch.Tensor,
 	implied_probs: torch.Tensor,
@@ -549,23 +612,28 @@ def _apply_true_class_surprise_scaling(
 	scale: float,
 	power: float = 1.0,
 	floor: float = 0.0,
+	mode: str = "power",
+	center: float = 0.5,
+	width: float = 0.3,
+	slope: float = 12.0,
 	eps: float = 1e-6,
 ) -> torch.Tensor:
 	"""Increase mix weights for outcomes the market assigned lower true-class probability."""
 
 	if abs(scale) <= eps:
 		return base_mix
-	if power <= 0:
-		raise ValueError("market_target_surprise_power must be positive")
-	if floor < 0 or floor >= 1:
-		raise ValueError("market_target_surprise_floor must be in [0, 1)")
-	true_class_prob = implied_probs.gather(1, target.view(-1, 1).long()).clamp(0.0, 1.0)
-	surprise = 1.0 - true_class_prob
-	if floor > eps:
-		surprise = (surprise - floor).clamp_min(0.0) / max(1.0 - floor, eps)
-	if abs(power - 1.0) > eps:
-		surprise = surprise.pow(power)
-	return base_mix * (1.0 + scale * surprise)
+	surprise = _normalized_true_class_surprise(implied_probs, target, floor=floor, eps=eps)
+	if mode == "power":
+		if power <= 0:
+			raise ValueError("market_target_surprise_power must be positive")
+		response = surprise if abs(power - 1.0) <= eps else surprise.pow(power)
+	elif mode == "logistic":
+		response = _logistic_surprise_response(surprise, center=center, slope=slope, eps=eps)
+	elif mode == "band":
+		response = _band_surprise_response(surprise, center=center, width=width, slope=slope, eps=eps)
+	else:
+		raise ValueError(f"Unsupported market_target_surprise_mode: {mode}")
+	return base_mix * (1.0 + scale * response)
 
 
 def gated_loss(
@@ -584,6 +652,10 @@ def gated_loss(
 	market_target_surprise_scale: float = 0.0,
 	market_target_surprise_power: float = 1.0,
 	market_target_surprise_floor: float = 0.0,
+	market_target_surprise_mode: str = "power",
+	market_target_surprise_center: float = 0.5,
+	market_target_surprise_width: float = 0.3,
+	market_target_surprise_slope: float = 12.0,
 	market_target_draw_weight: float = 1.0,
 	market_target_away_weight: float = 1.0,
 	market_target_entropy_scale: float = 0.0,
@@ -627,6 +699,10 @@ def gated_loss(
 			market_target_surprise_scale,
 			power=market_target_surprise_power,
 			floor=market_target_surprise_floor,
+			mode=market_target_surprise_mode,
+			center=market_target_surprise_center,
+			width=market_target_surprise_width,
+			slope=market_target_surprise_slope,
 			eps=eps,
 		).clamp(0.0, 1.0)
 		soft_target = (1.0 - mix) * soft_target + mix * implied_probs
