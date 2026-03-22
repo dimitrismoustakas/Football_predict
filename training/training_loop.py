@@ -136,6 +136,7 @@ def run_train_epoch(
 			market_target_entropy_scale=config.market_target_entropy_scale,
 			market_target_entropy_mode=config.market_target_entropy_mode,
 			sample_weights=sample_weights,
+			confidence_penalty_weight=config.confidence_penalty_weight,
 			gce_mix_weight=config.gce_mix_weight,
 			gce_q=config.gce_q,
 		)

@@ -243,6 +243,7 @@ def build_train_config(
 		market_target_entropy_mode=training_config.get("market_target_entropy_mode", "linear"),
 		entropy_curriculum_mode=training_config.get("entropy_curriculum_mode", "none"),
 		entropy_curriculum_strength=training_config.get("entropy_curriculum_strength", 0.0),
+		confidence_penalty_weight=training_config.get("confidence_penalty_weight", 0.0),
 		gce_mix_weight=training_config.get("gce_mix_weight", 0.0),
 		gce_q=training_config.get("gce_q", 0.7),
 	)
