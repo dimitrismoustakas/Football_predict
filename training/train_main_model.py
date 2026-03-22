@@ -405,7 +405,7 @@ def load_experiment_rows(path: Path | str) -> list[dict]:
 		return [row for row in reader]
 
 
-def get_latest_comparable_reference(path: Path) -> dict | None:
+def get_latest_keep_reference(path: Path) -> dict | None:
 	for row in reversed(load_experiment_rows(path)):
 		if row.get("status") == "keep":
 			return row
@@ -599,7 +599,7 @@ def train_main_model(description: str = "") -> dict:
 	print(f"\n--- Model Performance on Fixed Test Set ({evaluation_config['test_role']}) ---")
 	test_metrics = evaluate_model(model, data_test, device=DEVICE, verbose=True)
 
-	reference_row = get_latest_comparable_reference(path=EXPERIMENT_LOG_PATH)
+	reference_row = get_latest_keep_reference(path=EXPERIMENT_LOG_PATH)
 	delta = compute_delta(
 		candidate_objective=objective_value,
 		comparison_metric=comparison_metric,
@@ -637,7 +637,7 @@ def train_main_model(description: str = "") -> dict:
 		LATEST_MAIN_METRICS_PATH,
 		{
 			"schema_version": 3,
-			"description": "Latest evaluated match-result candidate. Runtime-generated; compare with prior comparable rows in artifacts/experiment_metrics/result_main_runs.tsv.",
+			"description": "Latest evaluated match-result candidate. Runtime-generated; compare with prior kept rows in artifacts/experiment_metrics/result_main_runs.tsv.",
 			"model": run_record,
 		},
 	)
