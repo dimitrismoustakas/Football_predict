@@ -150,12 +150,16 @@ def extract_calibration_parameters(model) -> dict[str, Any]:
 				for value in raw_vector.tolist()
 			]
 		if getattr(model, "league_market_bias", None) is not None:
+			enabled = league_row_is_enabled(getattr(model, "league_market_bias_enabled_mask", None), league_idx)
+			row["league_market_bias_enabled"] = enabled
 			row["league_market_bias_centered"] = centered_bias_row(
-				model.league_market_bias.weight[league_idx].detach().cpu().numpy()
+				model.league_market_bias.weight[league_idx].detach().cpu().numpy() if enabled else np.zeros(3, dtype=float)
 			)
 		if getattr(model, "league_market_logit_mixer", None) is not None:
+			enabled = league_row_is_enabled(getattr(model, "league_market_logit_mixer_enabled_mask", None), league_idx)
+			row["league_market_logit_mixer_enabled"] = enabled
 			row["league_market_logit_mixer"] = reshape_mixer(
-				model.league_market_logit_mixer.weight[league_idx].detach().cpu().numpy()
+				model.league_market_logit_mixer.weight[league_idx].detach().cpu().numpy() if enabled else np.zeros(9, dtype=float)
 			)
 		league_rows.append(row)
 	payload["per_league"] = league_rows
