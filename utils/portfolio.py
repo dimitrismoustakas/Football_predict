@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-DEFAULT_KELLY_FRACTION = 1
+DEFAULT_KELLY_FRACTION = 0.5
 DEFAULT_BANKROLL = 100.0
 
 
