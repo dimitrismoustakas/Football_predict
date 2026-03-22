@@ -52,6 +52,8 @@
 	"entropy_curriculum_mode": "center_only",
 	"entropy_curriculum_strength": 0.15,
 	"confidence_penalty_weight": 0.0025,
+	"symmetric_ce_weight": 0.00025,
+	"symmetric_ce_label_floor": 0.0001,
 	"gce_mix_weight": 0.087,
 	"gce_q": 1.0
 }

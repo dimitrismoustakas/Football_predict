@@ -535,6 +535,8 @@ class TrainConfig:
 	entropy_curriculum_mode: str = "none"
 	entropy_curriculum_strength: float = 0.0
 	confidence_penalty_weight: float = 0.0
+	symmetric_ce_weight: float = 0.0
+	symmetric_ce_label_floor: float = 1e-4
 	gce_mix_weight: float = 0.0
 	gce_q: float = 0.7
 
@@ -565,6 +567,19 @@ def _batch_corr(x: torch.Tensor, y: torch.Tensor, eps: float = 1e-6) -> torch.Te
 	vy = y.var(unbiased=False) + eps
 	cov = (x * y).mean()
 	return cov / torch.sqrt(vx * vy)
+
+
+def _reverse_cross_entropy(
+	pred_probs: torch.Tensor,
+	target_distribution: torch.Tensor,
+	label_floor: float = 1e-4,
+) -> torch.Tensor:
+	"""Reverse cross entropy with clipped targets for one-hot or soft labels."""
+
+	if label_floor <= 0 or label_floor >= 1:
+		raise ValueError("symmetric_ce_label_floor must be in (0, 1)")
+	clipped_target = target_distribution.clamp_min(label_floor)
+	return -(pred_probs * torch.log(clipped_target)).sum(dim=-1)
 
 
 def _multiclass_conditional_corr(
@@ -754,6 +769,8 @@ def gated_loss(
 	market_target_entropy_mode: str = "linear",
 	sample_weights: Optional[torch.Tensor] = None,
 	confidence_penalty_weight: float = 0.0,
+	symmetric_ce_weight: float = 0.0,
+	symmetric_ce_label_floor: float = 1e-4,
 	gce_mix_weight: float = 0.0,
 	gce_q: float = 0.7,
 	eps: float = 1e-6,
@@ -765,8 +782,9 @@ def gated_loss(
 	log_probs = F.log_softmax(pred_logits, dim=-1)
 	implied_log = _log_softmax_from_implied(implied_probs)
 	target = target.view(-1).long()
+	target_distribution = F.one_hot(target, num_classes=model.n_classes).float()
 	if market_target_mix > 0:
-		soft_target = F.one_hot(target, num_classes=model.n_classes).float()
+		soft_target = target_distribution
 		mix = pred_logits.new_full((soft_target.shape[0], 1), market_target_mix)
 		if abs(market_target_draw_weight - 1.0) > eps or abs(market_target_away_weight - 1.0) > eps:
 			class_weight = torch.ones_like(mix)
@@ -803,6 +821,7 @@ def gated_loss(
 			eps=eps,
 		).clamp(0.0, 1.0)
 		soft_target = (1.0 - mix) * soft_target + mix * implied_probs
+		target_distribution = soft_target
 		base_loss = -(soft_target * log_probs).sum(dim=-1)
 	else:
 		base_loss = F.nll_loss(log_probs, target, reduction="none")
@@ -819,6 +838,14 @@ def gated_loss(
 		# Positive weight penalizes low-entropy predictions via sum(p log p).
 		confidence_penalty = (pred_probs * log_probs).sum(dim=-1)
 		base_loss = base_loss + confidence_penalty_weight * confidence_penalty
+
+	if symmetric_ce_weight > 0:
+		reverse_ce = _reverse_cross_entropy(
+			pred_probs,
+			target_distribution,
+			label_floor=symmetric_ce_label_floor,
+		)
+		base_loss = base_loss + symmetric_ce_weight * reverse_ce
 
 	if sample_weights is not None:
 		sample_weights = sample_weights.view(-1).clamp_min(eps)
