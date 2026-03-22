@@ -24,7 +24,6 @@ Read these first:
 
 - `.github/copilot-instructions.md`
 - `README.md`
-- `docs/evaluation_policy.md`
 - the most relevant code for the current idea
 
 ## Hard rules
