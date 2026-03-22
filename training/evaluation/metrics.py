@@ -12,7 +12,7 @@ import torch.nn as nn
 from sklearn.metrics import accuracy_score, log_loss
 
 from training.inference import forward_model
-from utils.portfolio import DEFAULT_BUDGET_STRATEGY, DEFAULT_KELLY_FRACTION, evaluate_budget_strategy
+from utils.portfolio import DEFAULT_BANKROLL, DEFAULT_KELLY_FRACTION, evaluate_bankroll_strategy
 
 
 def ranked_probability_score(y_true: np.ndarray, probs: np.ndarray) -> float:
@@ -33,7 +33,7 @@ def evaluate_profit(
 	odds_draw: np.ndarray,
 	odds_away: np.ndarray,
 ) -> Dict:
-	"""Evaluate one best-EV result bet per match when EV is positive."""
+	"""Summarize how often a positive-EV result opportunity appears."""
 
 	odds_matrix = np.stack([odds_home, odds_draw, odds_away], axis=1)
 	ev = probs * odds_matrix - 1
@@ -46,8 +46,6 @@ def evaluate_profit(
 
 	if n_bets == 0:
 		return {
-			"total_profit": 0.0,
-			"avg_profit": 0.0,
 			"n_bets": 0,
 			"percent_bets": 0.0,
 			"n_home_bets": 0,
@@ -57,19 +55,16 @@ def evaluate_profit(
 
 	bet_outcomes = best_outcome[bet_indices]
 	actual_outcomes = y_true[bet_indices]
-	bet_odds = odds_matrix[bet_indices, bet_outcomes]
 	wins = bet_outcomes == actual_outcomes
-	profits = np.where(wins, bet_odds - 1, -1)
-	total_profit = float(np.sum(profits))
+	win_rate = float(np.mean(wins)) if n_bets else 0.0
 
 	return {
-		"total_profit": total_profit,
-		"avg_profit": total_profit / n_bets,
 		"n_bets": n_bets,
 		"percent_bets": float((n_bets / n_samples) * 100) if n_samples > 0 else 0.0,
 		"n_home_bets": int(np.sum(bet_outcomes == 0)),
 		"n_draw_bets": int(np.sum(bet_outcomes == 1)),
 		"n_away_bets": int(np.sum(bet_outcomes == 2)),
+		"bet_win_rate": win_rate,
 	}
 
 
@@ -117,15 +112,15 @@ def evaluate_model(
 		data["odds_draw"],
 		data["odds_away"],
 	)
-	budget_metrics = evaluate_budget_strategy(
+	bankroll_metrics = evaluate_bankroll_strategy(
 		probs=probs,
 		y_true=y_true,
 		odds_home=data["odds_home"],
 		odds_draw=data["odds_draw"],
 		odds_away=data["odds_away"],
 		groups=data.get("dates"),
-		strategy=DEFAULT_BUDGET_STRATEGY,
 		kelly_fraction=DEFAULT_KELLY_FRACTION,
+		initial_bankroll=DEFAULT_BANKROLL,
 	)
 
 	if verbose:
@@ -133,14 +128,16 @@ def evaluate_model(
 			f"Accuracy: {acc:.4f}, Brier: {brier:.4f}, RPS: {rps:.4f}, LogLoss: {ll:.4f}, AvgCorr: {avg_corr:.4f}"
 		)
 		print(
-			f"Profit: {profit_metrics['n_bets']} bets ({profit_metrics['percent_bets']:.1f}%), Total: {profit_metrics['total_profit']:.2f}"
+			f"Positive EV: {profit_metrics['n_bets']} bets ({profit_metrics['percent_bets']:.1f}%), Win rate: {profit_metrics['bet_win_rate']:.4f}"
 		)
 		print(
 			f"  Home bets: {profit_metrics['n_home_bets']}, Draw bets: {profit_metrics['n_draw_bets']}, Away bets: {profit_metrics['n_away_bets']}"
 		)
 		print(
-			f"Budget ROI ({DEFAULT_BUDGET_STRATEGY}, k={DEFAULT_KELLY_FRACTION:.2f}): "
-			f"{budget_metrics['budget_roi']:.4f} across {budget_metrics['budget_active_groups']} active groups"
+			f"Bankroll Kelly (start={DEFAULT_BANKROLL:.2f}, k={DEFAULT_KELLY_FRACTION:.2f}): "
+			f"roi={bankroll_metrics['bankroll_roi']:.4f}, "
+			f"bets={bankroll_metrics['bankroll_bet_count']}, "
+			f"max_dd={bankroll_metrics['max_drawdown']:.4f}"
 		)
 
 	return {
@@ -150,7 +147,7 @@ def evaluate_model(
 		"log_loss": float(ll),
 		"corr_with_implied": avg_corr,
 		**profit_metrics,
-		**budget_metrics,
+		**bankroll_metrics,
 	}
 
 

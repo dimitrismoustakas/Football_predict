@@ -6,9 +6,8 @@ from typing import Any
 
 import numpy as np
 
-RESULT_BUDGET_STRATEGIES = {"flat", "edge", "kelly"}
-DEFAULT_BUDGET_STRATEGY = "kelly"
-DEFAULT_KELLY_FRACTION = 0.5
+DEFAULT_KELLY_FRACTION = 1
+DEFAULT_BANKROLL = 100.0
 
 
 def normalized_implied_probs(odds_matrix: np.ndarray) -> np.ndarray:
@@ -58,44 +57,27 @@ def select_best_result_value(
 	}
 
 
-def _resolve_budget_weights(selection: dict[str, np.ndarray], strategy: str, kelly_fraction: float) -> np.ndarray:
-	"""Build raw positive weights before normalizing to a fixed budget."""
-
-	resolved = strategy.strip().lower()
-	if resolved not in RESULT_BUDGET_STRATEGIES:
-		raise ValueError(f"Unsupported budget strategy '{strategy}'. Expected one of {sorted(RESULT_BUDGET_STRATEGIES)}.")
-
-	positive_mask = selection["positive_mask"]
-	if resolved == "flat":
-		weights = positive_mask.astype(float)
-	elif resolved == "edge":
-		weights = np.where(positive_mask, np.clip(selection["edge"], 0.0, None), 0.0)
-	else:
-		weights = np.where(positive_mask, selection["full_kelly"] * max(0.0, float(kelly_fraction)), 0.0)
-
-	if positive_mask.any() and not np.any(weights > 0.0):
-		weights = positive_mask.astype(float)
-	return weights
-
-
-def allocate_fixed_budget(
+def allocate_bankroll_kelly(
 	selection: dict[str, np.ndarray],
-	total_budget: float,
-	strategy: str = DEFAULT_BUDGET_STRATEGY,
+	total_bankroll: float,
 	kelly_fraction: float = DEFAULT_KELLY_FRACTION,
 ) -> dict[str, Any]:
-	"""Split a fixed budget across positive-EV bets using the chosen strategy."""
+	"""Allocate proper partial Kelly stakes from a bankroll without forcing full deployment."""
 
-	weights = _resolve_budget_weights(selection, strategy=strategy, kelly_fraction=kelly_fraction)
-	weight_sum = float(weights.sum())
-	stake_shares = np.zeros_like(weights, dtype=float)
-	if weight_sum > 0.0:
-		stake_shares = weights / weight_sum
-	stake_amounts = stake_shares * float(total_budget)
+	raw_fractions = np.where(
+		selection["positive_mask"],
+		selection["full_kelly"] * max(0.0, float(kelly_fraction)),
+		0.0,
+	)
+	raw_fractions = np.clip(raw_fractions, 0.0, None)
+	fraction_sum = float(raw_fractions.sum())
+	scale = 1.0 / fraction_sum if fraction_sum > 1.0 and fraction_sum > 0.0 else 1.0
+	stake_shares = raw_fractions * scale
+	stake_amounts = stake_shares * max(0.0, float(total_bankroll))
 	return {
-		"strategy": strategy.strip().lower(),
+		"strategy": "bankroll_kelly",
 		"kelly_fraction": float(kelly_fraction),
-		"raw_weights": weights,
+		"raw_weights": raw_fractions,
 		"stake_shares": stake_shares,
 		"stake_amounts": stake_amounts,
 		"allocated_budget": float(stake_amounts.sum()),
@@ -122,62 +104,58 @@ def _normalize_groups(groups: np.ndarray | None, size: int) -> np.ndarray:
 	return np.asarray(normalized, dtype=object)
 
 
-def evaluate_budget_strategy(
+def evaluate_bankroll_strategy(
 	probs: np.ndarray,
 	y_true: np.ndarray,
 	odds_home: np.ndarray,
 	odds_draw: np.ndarray,
 	odds_away: np.ndarray,
 	groups: np.ndarray | None = None,
-	strategy: str = DEFAULT_BUDGET_STRATEGY,
 	kelly_fraction: float = DEFAULT_KELLY_FRACTION,
-	group_budget: float = 1.0,
+	initial_bankroll: float = DEFAULT_BANKROLL,
 ) -> dict[str, float]:
-	"""Evaluate fixed-budget allocation over all positive-EV selections."""
+	"""Evaluate a bankroll-compounding partial Kelly strategy over grouped fixtures."""
 
 	odds_matrix = np.stack([odds_home, odds_draw, odds_away], axis=1)
 	implied_probs = normalized_implied_probs(odds_matrix)
 	selection = select_best_result_value(probs, odds_matrix, implied_probs=implied_probs)
 	group_labels = _normalize_groups(groups, size=len(y_true))
 	stake_amounts = np.zeros(len(y_true), dtype=float)
-	total_profit = 0.0
-	total_staked = 0.0
-	active_groups = 0
+	starting_bankroll = max(0.0, float(initial_bankroll))
+	current_bankroll = starting_bankroll
+	peak_bankroll = starting_bankroll
+	max_drawdown = 0.0
 
 	for group in np.unique(group_labels):
+		if current_bankroll <= 0.0:
+			break
 		mask = group_labels == group
-		allocation = allocate_fixed_budget(
+		allocation = allocate_bankroll_kelly(
 			selection={
 				key: value[mask] if isinstance(value, np.ndarray) else value
 				for key, value in selection.items()
 			},
-			total_budget=group_budget,
-			strategy=strategy,
+			total_bankroll=current_bankroll,
 			kelly_fraction=kelly_fraction,
 		)
 		group_stakes = allocation["stake_amounts"]
 		if float(group_stakes.sum()) <= 0.0:
 			continue
-		active_groups += 1
 		stake_amounts[mask] = group_stakes
 
 		group_outcomes = selection["best_index"][mask]
 		group_odds = selection["selected_odds"][mask]
 		group_truth = y_true[mask]
 		group_profit = np.where(group_outcomes == group_truth, group_stakes * (group_odds - 1.0), -group_stakes)
-		total_profit += float(group_profit.sum())
-		total_staked += float(group_stakes.sum())
+		current_bankroll += float(group_profit.sum())
+		peak_bankroll = max(peak_bankroll, current_bankroll)
+		if peak_bankroll > 0.0:
+			max_drawdown = max(max_drawdown, (peak_bankroll - current_bankroll) / peak_bankroll)
 
 	n_staked_bets = int(np.count_nonzero(stake_amounts > 0.0))
-	avg_stake = float(stake_amounts[stake_amounts > 0.0].mean()) if n_staked_bets else 0.0
-	max_stake = float(stake_amounts.max()) if n_staked_bets else 0.0
-	roi = total_profit / total_staked if total_staked > 0.0 else 0.0
+	roi = (current_bankroll - starting_bankroll) / starting_bankroll if starting_bankroll > 0.0 else 0.0
 	return {
-		"budget_profit": float(total_profit),
-		"budget_roi": float(roi),
-		"budget_total_staked": float(total_staked),
-		"budget_bet_count": n_staked_bets,
-		"budget_active_groups": int(active_groups),
-		"budget_avg_stake": avg_stake,
-		"budget_max_stake": max_stake,
+		"bankroll_roi": float(roi),
+		"bankroll_bet_count": n_staked_bets,
+		"max_drawdown": float(max_drawdown),
 	}
