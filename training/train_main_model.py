@@ -4,7 +4,7 @@ Canonical training entry point for the production match-result model.
 The evaluation loop is fixed by source-controlled config:
 - frozen rolling CV folds for model selection
 - fixed epoch-selection season for epoch selection
-- fixed held-out watch-only test season for monitoring
+- fixed held-out test season for secondary evaluation
 """
 
 import argparse
@@ -161,7 +161,7 @@ def load_evaluation_config() -> dict:
 	config["rolling_cv_n_folds"] = int(config["rolling_cv_n_folds"])
 	config["test_season"] = str(config["test_season"])
 	config["test_role"] = str(config["test_role"])
-	if config["test_role"] not in {"watch_only", "acceptance"}:
+	if config["test_role"] not in {"held_out", "acceptance"}:
 		raise ValueError(f"Unsupported test_role: {config['test_role']}")
 	return config
 

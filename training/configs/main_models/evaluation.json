@@ -3,5 +3,5 @@
 	"training_seed": 42,
 	"rolling_cv_n_folds": 4,
 	"test_season": "2526",
-	"test_role": "watch_only"
+	"test_role": "held_out"
 }
