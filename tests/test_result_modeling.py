@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from training.models import FeatureBackbone, GatedResidualModel
+from training.models import FeatureBackbone, GatedResidualModel, _log_softmax_from_implied
 from training.models.neural_net import _apply_true_class_surprise_scaling
 
 
@@ -184,6 +184,69 @@ class ResultModelingTests(unittest.TestCase):
 		self.assertLess(float(scaled[0, 0]), float(scaled[1, 0]))
 		self.assertLess(float(scaled[2, 0]), float(scaled[1, 0]))
 		self.assertGreater(float(scaled[1, 0]), 0.18)
+
+	def test_league_market_bias_mask_disables_selected_leagues(self):
+		model = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			num_leagues=2,
+			learn_league_market_bias=True,
+			league_market_bias_enabled_leagues=[1],
+		)
+		with torch.no_grad():
+			model.league_market_bias.weight.copy_(torch.tensor([
+				[0.4, -0.2, -0.2],
+				[0.1, 0.2, -0.3],
+			], dtype=torch.float32))
+
+		implied_probs = torch.tensor([
+			[0.5, 0.3, 0.2],
+			[0.5, 0.3, 0.2],
+		], dtype=torch.float32)
+		cat_features = torch.tensor([
+			[0, 0, 0],
+			[1, 0, 0],
+		], dtype=torch.long)
+
+		logits = model._compute_implied_logits(implied_probs, cat_features)
+		base_logits = _log_softmax_from_implied(implied_probs)
+
+		self.assertTrue(torch.allclose(logits[0], base_logits[0], atol=1e-6))
+		self.assertTrue(torch.allclose(logits[1], base_logits[1] + torch.tensor([0.1, 0.2, -0.3]), atol=1e-6))
+
+	def test_league_market_logit_mixer_mask_disables_selected_leagues(self):
+		model = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			num_leagues=2,
+			learn_league_market_logit_mixer=True,
+			league_market_logit_mixer_enabled_leagues=[1],
+		)
+		with torch.no_grad():
+			model.league_market_logit_mixer.weight.zero_()
+			model.league_market_logit_mixer.weight[1].copy_(torch.tensor([
+				0.0, 0.2, 0.0,
+				0.1, 0.0, -0.1,
+				0.0, 0.3, 0.0,
+			], dtype=torch.float32))
+
+		implied_probs = torch.tensor([
+			[0.5, 0.3, 0.2],
+			[0.5, 0.3, 0.2],
+		], dtype=torch.float32)
+		cat_features = torch.tensor([
+			[0, 0, 0],
+			[1, 0, 0],
+		], dtype=torch.long)
+
+		logits = model._compute_implied_logits(implied_probs, cat_features)
+		base_logits = _log_softmax_from_implied(implied_probs)
+		enabled_mix = model.league_market_logit_mixer(cat_features[1:2, 0]).view(-1, 3, 3)
+		enabled_mix = enabled_mix - torch.diag_embed(torch.diagonal(enabled_mix, dim1=-2, dim2=-1))
+		expected_enabled = base_logits[1] + torch.bmm(base_logits[1:2].unsqueeze(1), enabled_mix).squeeze(1)[0]
+
+		self.assertTrue(torch.allclose(logits[0], base_logits[0], atol=1e-6))
+		self.assertTrue(torch.allclose(logits[1], expected_enabled, atol=1e-6))
 
 
 if __name__ == "__main__":
