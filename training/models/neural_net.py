@@ -535,6 +535,7 @@ class TrainConfig:
 	entropy_curriculum_mode: str = "none"
 	entropy_curriculum_strength: float = 0.0
 	confidence_penalty_weight: float = 0.0
+	brier_aux_weight: float = 0.0
 	symmetric_ce_weight: float = 0.0
 	symmetric_ce_label_floor: float = 1e-4
 	gce_mix_weight: float = 0.0
@@ -769,6 +770,7 @@ def gated_loss(
 	market_target_entropy_mode: str = "linear",
 	sample_weights: Optional[torch.Tensor] = None,
 	confidence_penalty_weight: float = 0.0,
+	brier_aux_weight: float = 0.0,
 	symmetric_ce_weight: float = 0.0,
 	symmetric_ce_label_floor: float = 1e-4,
 	gce_mix_weight: float = 0.0,
@@ -838,6 +840,10 @@ def gated_loss(
 		# Positive weight penalizes low-entropy predictions via sum(p log p).
 		confidence_penalty = (pred_probs * log_probs).sum(dim=-1)
 		base_loss = base_loss + confidence_penalty_weight * confidence_penalty
+
+	if brier_aux_weight > 0:
+		brier_aux = ((pred_probs - target_distribution) ** 2).sum(dim=-1)
+		base_loss = base_loss + brier_aux_weight * brier_aux
 
 	if symmetric_ce_weight > 0:
 		reverse_ce = _reverse_cross_entropy(

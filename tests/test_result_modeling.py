@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 
 from training.models import FeatureBackbone, GatedResidualModel, _log_softmax_from_implied
-from training.models.neural_net import _apply_true_class_surprise_scaling, _reverse_cross_entropy
+from training.models.neural_net import _apply_true_class_surprise_scaling, _reverse_cross_entropy, gated_loss
 
 
 class ResultModelingTests(unittest.TestCase):
@@ -202,6 +202,51 @@ class ResultModelingTests(unittest.TestCase):
 
 		aligned_loss = _reverse_cross_entropy(aligned, target_distribution, label_floor=1e-4)
 		misaligned_loss = _reverse_cross_entropy(misaligned, target_distribution, label_floor=1e-4)
+
+		self.assertLess(float(aligned_loss.item()), float(misaligned_loss.item()))
+
+	def test_brier_aux_weight_penalizes_misaligned_logits_more(self):
+		model = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			gate_hidden_dim=4,
+			linear_gate=True,
+		)
+		x = torch.zeros(1, 2)
+		implied_probs = torch.tensor([[0.7, 0.2, 0.1]], dtype=torch.float32)
+		raw_margin = torch.tensor([[1.0]], dtype=torch.float32)
+		target = torch.tensor([0], dtype=torch.long)
+		with torch.no_grad():
+			model.backbone.final_layer.weight.zero_()
+			model.backbone.final_layer.bias.copy_(torch.tensor([2.0, -1.0, -1.0], dtype=torch.float32))
+			model.gate_head.weight.zero_()
+			model.gate_head.bias.zero_()
+			model.gate_bias.fill_(10.0)
+
+		aligned_loss = gated_loss(
+			model,
+			x,
+			None,
+			implied_probs,
+			target,
+			raw_margin,
+			gate_mean_weight=0.0,
+			gate_sat_weight=0.0,
+			brier_aux_weight=0.5,
+		)
+		with torch.no_grad():
+			model.backbone.final_layer.bias.copy_(torch.tensor([-2.0, 1.0, 1.0], dtype=torch.float32))
+		misaligned_loss = gated_loss(
+			model,
+			x,
+			None,
+			implied_probs,
+			target,
+			raw_margin,
+			gate_mean_weight=0.0,
+			gate_sat_weight=0.0,
+			brier_aux_weight=0.5,
+		)
 
 		self.assertLess(float(aligned_loss.item()), float(misaligned_loss.item()))
 

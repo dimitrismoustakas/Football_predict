@@ -244,6 +244,7 @@ def build_train_config(
 		entropy_curriculum_mode=training_config.get("entropy_curriculum_mode", "none"),
 		entropy_curriculum_strength=training_config.get("entropy_curriculum_strength", 0.0),
 		confidence_penalty_weight=training_config.get("confidence_penalty_weight", 0.0),
+		brier_aux_weight=training_config.get("brier_aux_weight", 0.0),
 		symmetric_ce_weight=training_config.get("symmetric_ce_weight", 0.0),
 		symmetric_ce_label_floor=training_config.get("symmetric_ce_label_floor", 1e-4),
 		gce_mix_weight=training_config.get("gce_mix_weight", 0.0),
