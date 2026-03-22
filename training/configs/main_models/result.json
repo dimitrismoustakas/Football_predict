@@ -31,11 +31,11 @@
 	"market_logit_scale": 1.035,
 	"gate_hidden_dim": 16,
 	"gate_target_budget": 0.135,
-	"gate_mean_weight": 0.163,
+	"gate_mean_weight": 0.161,
 	"gate_sat_weight": 0.0,
 	"lambda_repulsion": 2.3,
 	"lambda_corr": 0.0,
-	"lambda_logit_delta": 0.03,
+	"lambda_logit_delta": 0.0325,
 	"market_target_mix": 0.01125,
 	"market_target_surprise_scale": 1.7,
 	"market_target_surprise_power": 1.0,
@@ -55,6 +55,6 @@
 	"brier_aux_weight": 0.03,
 	"symmetric_ce_weight": 0.001,
 	"symmetric_ce_label_floor": 0.0001,
-	"gce_mix_weight": 0.087,
-	"gce_q": 1.0
+	"gce_mix_weight": 0.0895,
+	"gce_q": 1.25
 }
