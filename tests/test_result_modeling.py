@@ -1,9 +1,10 @@
 import unittest
 
 import torch
+import torch.nn.functional as F
 
 from training.models import FeatureBackbone, GatedResidualModel, _log_softmax_from_implied
-from training.models.neural_net import _apply_true_class_surprise_scaling
+from training.models.neural_net import _apply_true_class_surprise_scaling, _reverse_cross_entropy
 
 
 class ResultModelingTests(unittest.TestCase):
@@ -184,6 +185,25 @@ class ResultModelingTests(unittest.TestCase):
 		self.assertLess(float(scaled[0, 0]), float(scaled[1, 0]))
 		self.assertLess(float(scaled[2, 0]), float(scaled[1, 0]))
 		self.assertGreater(float(scaled[1, 0]), 0.18)
+
+	def test_reverse_cross_entropy_matches_clipped_one_hot_form(self):
+		pred_probs = torch.tensor([[0.70, 0.20, 0.10]], dtype=torch.float32)
+		target_distribution = F.one_hot(torch.tensor([0]), num_classes=3).float()
+
+		loss = _reverse_cross_entropy(pred_probs, target_distribution, label_floor=1e-4)
+
+		expected = -(0.20 + 0.10) * torch.log(torch.tensor(1e-4))
+		self.assertAlmostEqual(float(loss.item()), float(expected.item()), places=6)
+
+	def test_reverse_cross_entropy_prefers_predictions_aligned_with_soft_target(self):
+		target_distribution = torch.tensor([[0.80, 0.15, 0.05]], dtype=torch.float32)
+		aligned = torch.tensor([[0.78, 0.16, 0.06]], dtype=torch.float32)
+		misaligned = torch.tensor([[0.45, 0.30, 0.25]], dtype=torch.float32)
+
+		aligned_loss = _reverse_cross_entropy(aligned, target_distribution, label_floor=1e-4)
+		misaligned_loss = _reverse_cross_entropy(misaligned, target_distribution, label_floor=1e-4)
+
+		self.assertLess(float(aligned_loss.item()), float(misaligned_loss.item()))
 
 	def test_league_market_bias_mask_disables_selected_leagues(self):
 		model = GatedResidualModel(
