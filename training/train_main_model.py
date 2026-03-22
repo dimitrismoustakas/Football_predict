@@ -101,13 +101,10 @@ def summarize_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
 		"brier",
 		"rps",
 		"log_loss",
-		"total_profit",
-		"avg_profit",
-		"n_bets",
-		"budget_profit",
-		"budget_roi",
-		"budget_bet_count",
-		"budget_active_groups",
+		"corr_with_implied",
+		"bankroll_roi",
+		"bankroll_bet_count",
+		"max_drawdown",
 	]
 	return {key: metrics[key] for key in keys if key in metrics}
 

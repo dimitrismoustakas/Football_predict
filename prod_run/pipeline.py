@@ -21,7 +21,7 @@ from prod_run.generate_html_report import generate_html_report
 from training.inference import model_requires_cat_features, predict_probabilities
 from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
 from utils import send_email
-from utils.portfolio import DEFAULT_KELLY_FRACTION, select_best_result_value
+from utils.portfolio import DEFAULT_KELLY_FRACTION, allocate_bankroll_kelly, select_best_result_value
 
 load_dotenv()
 
@@ -82,33 +82,6 @@ def _round_budget_amounts(stake_amounts: np.ndarray, total_budget: float) -> np.
 	if delta != 0.0:
 		rounded[positive_idx[-1]] = np.round(rounded[positive_idx[-1]] + delta, 2)
 	return rounded
-
-
-def allocate_bankroll_kelly(
-	selection: dict[str, np.ndarray],
-	total_bankroll: float,
-	kelly_fraction: float,
-) -> dict[str, np.ndarray | float | str]:
-	"""Allocate proper partial Kelly stakes from a bankroll without forcing full deployment."""
-
-	raw_fractions = np.where(
-		selection["positive_mask"],
-		selection["full_kelly"] * max(0.0, float(kelly_fraction)),
-		0.0,
-	)
-	raw_fractions = np.clip(raw_fractions, 0.0, None)
-	fraction_sum = float(raw_fractions.sum())
-	scale = 1.0 / fraction_sum if fraction_sum > 1.0 and fraction_sum > 0.0 else 1.0
-	stake_shares = raw_fractions * scale
-	stake_amounts = stake_shares * float(total_bankroll)
-	return {
-		"strategy": "bankroll_kelly",
-		"kelly_fraction": float(kelly_fraction),
-		"raw_weights": raw_fractions,
-		"stake_shares": stake_shares,
-		"stake_amounts": stake_amounts,
-		"allocated_budget": float(stake_amounts.sum()),
-	}
 
 
 def allocate_recommended_stakes(
