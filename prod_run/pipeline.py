@@ -117,11 +117,11 @@ def allocate_recommended_stakes(
 	kelly_fraction: float,
 	min_bet_amount: float = DEFAULT_MIN_BET_AMOUNT,
 ) -> dict[str, np.ndarray | float | str]:
-	"""Allocate bankroll Kelly stakes, pruning sub-minimum bets until stable."""
+	"""Allocate bankroll stakes, pruning sub-minimum bets until stable."""
 
 	active_mask = selection["positive_mask"].astype(bool).copy()
 	final_allocation = {
-		"strategy": "bankroll_kelly",
+		"strategy": "joint_bankroll_kelly",
 		"kelly_fraction": float(kelly_fraction),
 		"raw_weights": np.zeros_like(selection["best_ev"], dtype=float),
 		"stake_shares": np.zeros_like(selection["best_ev"], dtype=float),
@@ -280,7 +280,7 @@ def score_result_predictions(
 		"Result_EV": np.where(positive_mask, np.round(selection["best_ev"], 4), np.nan),
 		"Result_Kelly_Fraction": np.where(
 			positive_mask,
-			np.round(selection["full_kelly"] * kelly_fraction, 4),
+			np.round(allocation["raw_weights"], 4),
 			np.nan,
 		),
 		"Result_Budget_Share": np.where(recommended_mask, np.round(allocation["stake_shares"], 4), 0.0),
