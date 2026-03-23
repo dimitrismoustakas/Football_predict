@@ -78,9 +78,36 @@ def _round_budget_amounts(stake_amounts: np.ndarray, total_budget: float) -> np.
 	positive_idx = np.flatnonzero(stake_amounts > 0.0)
 	if positive_idx.size == 0:
 		return rounded
-	delta = round(float(total_budget) - float(rounded.sum()), 2)
-	if delta != 0.0:
-		rounded[positive_idx[-1]] = np.round(rounded[positive_idx[-1]] + delta, 2)
+	delta_cents = int(round((round(float(total_budget), 2) - round(float(rounded.sum()), 2)) * 100))
+	if delta_cents == 0:
+		return rounded
+
+	residuals = stake_amounts - rounded
+	if delta_cents > 0:
+		order = positive_idx[np.lexsort((-positive_idx, -stake_amounts[positive_idx], -residuals[positive_idx]))]
+	else:
+		nonzero_idx = positive_idx[rounded[positive_idx] > 0.0]
+		if nonzero_idx.size == 0:
+			return rounded
+		overround = rounded[nonzero_idx] - stake_amounts[nonzero_idx]
+		order = nonzero_idx[np.lexsort((-nonzero_idx, -rounded[nonzero_idx], -overround))]
+
+	while delta_cents != 0:
+		changed = False
+		for index in order:
+			if delta_cents == 0:
+				break
+			if delta_cents > 0:
+				rounded[index] = np.round(rounded[index] + 0.01, 2)
+				delta_cents -= 1
+				changed = True
+				continue
+			if rounded[index] >= 0.01 - 1e-12:
+				rounded[index] = np.round(rounded[index] - 0.01, 2)
+				delta_cents += 1
+				changed = True
+		if not changed:
+			break
 	return rounded
 
 
@@ -90,11 +117,11 @@ def allocate_recommended_stakes(
 	kelly_fraction: float,
 	min_bet_amount: float = DEFAULT_MIN_BET_AMOUNT,
 ) -> dict[str, np.ndarray | float | str]:
-	"""Allocate bankroll Kelly stakes, pruning sub-minimum bets until stable."""
+	"""Allocate bankroll stakes, pruning sub-minimum bets until stable."""
 
 	active_mask = selection["positive_mask"].astype(bool).copy()
 	final_allocation = {
-		"strategy": "bankroll_kelly",
+		"strategy": "joint_bankroll_kelly",
 		"kelly_fraction": float(kelly_fraction),
 		"raw_weights": np.zeros_like(selection["best_ev"], dtype=float),
 		"stake_shares": np.zeros_like(selection["best_ev"], dtype=float),
@@ -253,7 +280,7 @@ def score_result_predictions(
 		"Result_EV": np.where(positive_mask, np.round(selection["best_ev"], 4), np.nan),
 		"Result_Kelly_Fraction": np.where(
 			positive_mask,
-			np.round(selection["full_kelly"] * kelly_fraction, 4),
+			np.round(allocation["raw_weights"], 4),
 			np.nan,
 		),
 		"Result_Budget_Share": np.where(recommended_mask, np.round(allocation["stake_shares"], 4), 0.0),

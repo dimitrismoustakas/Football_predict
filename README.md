@@ -19,7 +19,7 @@ The source-controlled protocol lives in:
 Current rules:
 - rolling expanding-window CV mean `log_loss` is the single decision metric
 - the last pre-test season is reserved for epoch selection
-- the fixed test season is watch-only and not used for branch acceptance
+- the fixed test season is held out and not used as the primary branch acceptance metric
 - compare against the latest comparable ledger row and keep iterating when CV `log_loss` improves
 - every run records a dataset fingerprint and per-season row counts so comparisons across data refreshes are explicit
 - local prescreens should mirror the canonical split as closely as practical: use the epoch-selection season to choose training length, then score the objective folds without appending to the ledger

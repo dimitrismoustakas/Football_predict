@@ -2,11 +2,22 @@
 Generate a standalone HTML report for match-result predictions.
 """
 
+from __future__ import annotations
+
+import json
 from datetime import datetime
 from html import escape
 from pathlib import Path
 
 import pandas as pd
+
+from utils.portfolio import (
+	DEFAULT_JOINT_OPTIMIZER_INITIAL_STEP,
+	DEFAULT_JOINT_OPTIMIZER_MAX_ITERATIONS,
+	DEFAULT_JOINT_OPTIMIZER_MIN_STEP,
+	DEFAULT_JOINT_QUADRATURE_ORDER,
+	get_joint_quadrature_rule,
+)
 
 
 def _format_pct(value: float) -> str:
@@ -29,6 +40,11 @@ def _format_interactive_table(df: pd.DataFrame) -> str:
 
 	rows = []
 	for _, row in df.iterrows():
+		prob_home = float(row.get("Prob_Home", row.get("Pred_Home")))
+		prob_draw = float(row.get("Prob_Draw", row.get("Pred_Draw")))
+		prob_away = float(row.get("Prob_Away", row.get("Pred_Away")))
+		home_team = str(row.get("Home", row.get("Home Team")))
+		away_team = str(row.get("Away", row.get("Away Team")))
 		is_active = pd.notna(row["Result_Budget_Amount"]) and float(row["Result_Budget_Amount"]) > 0.0
 		best_bet = row["Result_Value_Side"] if is_active and pd.notna(row["Result_Value_Side"]) and row["Result_Value_Side"] else "No Bet"
 		ev_now = _format_pct(float(row["Result_EV"])) if is_active and pd.notna(row["Result_EV"]) else ""
@@ -46,16 +62,16 @@ def _format_interactive_table(df: pd.DataFrame) -> str:
 			"<td class=\"best-bet\">{best_bet}</td><td class=\"ev-now\">{ev_now}</td><td class=\"stake-now\">{stake_now}</td><td class=\"amount-now\">{amount_now}</td>"
 			"</tr>".format(
 				row_class=row_class,
-				prob_home=float(row["Prob_Home"]),
-				prob_draw=float(row["Prob_Draw"]),
-				prob_away=float(row["Prob_Away"]),
+				prob_home=prob_home,
+				prob_draw=prob_draw,
+				prob_away=prob_away,
 				date=escape(str(row["Date"])),
 				league=escape(str(row["League"])),
-				time=escape(str(row["Time"])),
-				match=escape(f"{row['Home']} vs {row['Away']}"),
-				model_home=_format_pct(float(row["Prob_Home"])),
-				model_draw=_format_pct(float(row["Prob_Draw"])),
-				model_away=_format_pct(float(row["Prob_Away"])),
+				time=escape(str(row.get("Time", ""))),
+				match=escape(f"{home_team} vs {away_team}"),
+				model_home=_format_pct(prob_home),
+				model_draw=_format_pct(prob_draw),
+				model_away=_format_pct(prob_away),
 				odds_home=_format_decimal(float(row["Odds_Home"])),
 				odds_draw=_format_decimal(float(row["Odds_Draw"])),
 				odds_away=_format_decimal(float(row["Odds_Away"])),
@@ -119,9 +135,10 @@ def render_html_report(
 	predictions_html = _format_interactive_table(predictions_df)
 	default_budget = float(fixed_budget) if fixed_budget is not None else 10.0
 	default_kelly_fraction = _clamp(float(kelly_fraction) if kelly_fraction is not None else 0.5, 0.1, 1.0)
+	quadrature_nodes, quadrature_weights = get_joint_quadrature_rule(DEFAULT_JOINT_QUADRATURE_ORDER)
 	note = (
-		"Edit the Home, Draw, and Away odds to recalculate the best bet, expected value, and suggested stake. "
-		"Enter your current bankroll and Kelly fraction below to adjust the risk level."
+		"Edit the Home, Draw, and Away odds to recalculate the single best side, expected value, "
+		"and suggested stake. Enter your current bankroll and Kelly fraction below to adjust the risk level."
 	)
 	html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -183,16 +200,19 @@ def render_html_report(
 		const MIN_BET_AMOUNT = {float(min_bet_amount)};
 		const MIN_KELLY_FRACTION = 0.1;
 		const MAX_KELLY_FRACTION = 1.0;
+		const JOINT_OPTIMIZER_MAX_ITERATIONS = {int(DEFAULT_JOINT_OPTIMIZER_MAX_ITERATIONS)};
+		const JOINT_OPTIMIZER_INITIAL_STEP = {float(DEFAULT_JOINT_OPTIMIZER_INITIAL_STEP)};
+		const JOINT_OPTIMIZER_MIN_STEP = {float(DEFAULT_JOINT_OPTIMIZER_MIN_STEP)};
+		const QUADRATURE_NODES = {json.dumps(quadrature_nodes.tolist())};
+		const QUADRATURE_WEIGHTS = {json.dumps(quadrature_weights.tolist())};
+		const QUADRATURE_LOG_NODES = QUADRATURE_NODES.map((value) => Math.log(value));
+		const QUADRATURE_LOG_WEIGHTS = QUADRATURE_WEIGHTS.map((value) => Math.log(value));
+		const QUADRATURE_CONSTANT = QUADRATURE_WEIGHTS.reduce((sum, weight, index) => sum + weight / QUADRATURE_NODES[index], 0);
 		const LABELS = ["Home", "Draw", "Away"];
 
 		function parseOdds(input) {{
 			const value = Number.parseFloat(input.value);
 			return Number.isFinite(value) && value > 1.0 ? value : null;
-		}}
-
-		function parseNonNegativeNumber(input, fallback) {{
-			const value = Number.parseFloat(input.value);
-			return Number.isFinite(value) && value >= 0 ? value : fallback;
 		}}
 
 		function clampKellyFraction(input) {{
@@ -208,62 +228,265 @@ def render_html_report(
 			input.value = clampKellyFraction(input).toFixed(2);
 		}}
 
-		function computeRow(row, stakeFraction) {{
-			const probs = [
-				Number.parseFloat(row.dataset.probHome),
-				Number.parseFloat(row.dataset.probDraw),
-				Number.parseFloat(row.dataset.probAway),
-			];
-			const odds = [
-				parseOdds(row.querySelector('.odds-home')),
-				parseOdds(row.querySelector('.odds-draw')),
-				parseOdds(row.querySelector('.odds-away')),
-			];
-			if (odds.some((value) => value === null)) {{
-				return {{ positive: false, bestIdx: -1, bestEv: 0, weight: 0 }};
+		function roundHalfEven(value, decimals = 2) {{
+			if (!Number.isFinite(value)) {{
+				return 0;
 			}}
+			const factor = 10 ** decimals;
+			const scaled = value * factor;
+			const sign = scaled < 0 ? -1 : 1;
+			const absScaled = Math.abs(scaled);
+			const floor = Math.floor(absScaled);
+			const fraction = absScaled - floor;
+			const epsilon = 1e-10;
+			let roundedInt = floor;
+			if (fraction > 0.5 + epsilon) {{
+				roundedInt = floor + 1;
+			}} else if (Math.abs(fraction - 0.5) <= epsilon) {{
+				roundedInt = floor % 2 === 0 ? floor : floor + 1;
+			}}
+			return sign * roundedInt / factor;
+		}}
 
-			const evs = probs.map((prob, index) => prob * odds[index] - 1);
-			let bestIdx = 0;
-			for (let index = 1; index < evs.length; index += 1) {{
-				if (evs[index] > evs[bestIdx]) {{
-					bestIdx = index;
+		function roundBudgetAmounts(amounts, totalBudget) {{
+			const rounded = amounts.map((amount) => roundHalfEven(amount, 2));
+			const positiveIndices = amounts
+				.map((amount, index) => amount > 0 ? index : -1)
+				.filter((index) => index >= 0);
+			if (!positiveIndices.length) {{
+				return rounded;
+			}}
+			let deltaCents = Math.round(
+				(roundHalfEven(totalBudget, 2) - roundHalfEven(rounded.reduce((sum, amount) => sum + amount, 0), 2)) * 100
+			);
+			if (deltaCents === 0) {{
+				return rounded;
+			}}
+			const residuals = amounts.map((amount, index) => amount - rounded[index]);
+			const order = deltaCents > 0
+				? [...positiveIndices].sort((left, right) => (
+					(residuals[right] - residuals[left]) || (amounts[right] - amounts[left]) || (right - left)
+				))
+				: positiveIndices
+					.filter((index) => rounded[index] > 0)
+					.sort((left, right) => (
+						((rounded[right] - amounts[right]) - (rounded[left] - amounts[left]))
+						|| (rounded[right] - rounded[left])
+						|| (right - left)
+					));
+			if (!order.length) {{
+				return rounded;
+			}}
+			while (deltaCents !== 0) {{
+				let changed = false;
+				for (const index of order) {{
+					if (deltaCents === 0) {{
+						break;
+					}}
+					if (deltaCents > 0) {{
+						rounded[index] = roundHalfEven(rounded[index] + 0.01, 2);
+						deltaCents -= 1;
+						changed = true;
+						continue;
+					}}
+					if (rounded[index] >= 0.01 - 1e-12) {{
+						rounded[index] = roundHalfEven(rounded[index] - 0.01, 2);
+						deltaCents += 1;
+						changed = true;
+					}}
+				}}
+				if (!changed) {{
+					break;
 				}}
 			}}
-			const bestEv = evs[bestIdx];
-			if (!(bestEv > 0)) {{
-				return {{ positive: false, bestIdx, bestEv, weight: 0 }};
+			return rounded;
+		}}
+
+		function projectNonnegativeL1Ball(values, radius) {{
+			const clipped = values.map((value) => Math.max(0, value));
+			const total = clipped.reduce((sum, value) => sum + value, 0);
+			if (total <= radius) {{
+				return clipped;
+			}}
+			const sorted = [...clipped].sort((a, b) => b - a);
+			let cumulative = 0;
+			let rho = -1;
+			for (let index = 0; index < sorted.length; index += 1) {{
+				cumulative += sorted[index];
+				const threshold = sorted[index] - (cumulative - radius) / (index + 1);
+				if (threshold > 0) {{
+					rho = index;
+				}}
+			}}
+			if (rho < 0) {{
+				return clipped.map(() => 0);
+			}}
+			const theta = (sorted.slice(0, rho + 1).reduce((sum, value) => sum + value, 0) - radius) / (rho + 1);
+			return clipped.map((value) => Math.max(0, value - theta));
+		}}
+
+		function collectRows() {{
+			return Array.from(document.querySelectorAll('.predictions-table tbody tr')).map((row) => {{
+				const probs = [
+					Number.parseFloat(row.dataset.probHome),
+					Number.parseFloat(row.dataset.probDraw),
+					Number.parseFloat(row.dataset.probAway),
+				];
+				const odds = [
+					parseOdds(row.querySelector('.odds-home')),
+					parseOdds(row.querySelector('.odds-draw')),
+					parseOdds(row.querySelector('.odds-away')),
+				];
+				if (odds.some((value) => value === null)) {{
+					return {{ row, positive: false, bestIdx: -1, bestEv: 0, bestProb: 0, selectedOdds: 0, fullKelly: 0 }};
+				}}
+
+				const evs = probs.map((prob, index) => prob * odds[index] - 1);
+				let bestIdx = 0;
+				for (let index = 1; index < evs.length; index += 1) {{
+					if (evs[index] > evs[bestIdx]) {{
+						bestIdx = index;
+					}}
+				}}
+				const bestEv = evs[bestIdx];
+				if (!(bestEv > 0)) {{
+					return {{
+						row,
+						positive: false,
+						bestIdx,
+						bestEv,
+						bestProb: probs[bestIdx],
+						selectedOdds: odds[bestIdx],
+						fullKelly: 0
+					}};
+				}}
+				const bestProb = probs[bestIdx];
+				const selectedOdds = odds[bestIdx];
+				const fullKelly = selectedOdds > 1.0
+					? Math.max((bestProb * selectedOdds - 1) / (selectedOdds - 1), 0)
+					: 0;
+				return {{
+					row,
+					positive: true,
+					bestIdx,
+					bestEv,
+					bestProb,
+					selectedOdds,
+					fullKelly
+				}};
+			}});
+		}}
+
+		function jointObjectiveAndGrad(weights, activeResults) {{
+			const width = weights.length;
+			if (!width) {{
+				return {{ value: 0, gradient: new Float64Array(0) }};
+			}}
+			const ratios = QUADRATURE_NODES.map(() => new Float64Array(width));
+			const objectiveLogs = new Float64Array(QUADRATURE_NODES.length);
+			const gradientLogs = new Float64Array(QUADRATURE_NODES.length);
+			let maxObjectiveLog = -Infinity;
+			let maxGradientLog = -Infinity;
+
+			for (let nodeIndex = 0; nodeIndex < QUADRATURE_NODES.length; nodeIndex += 1) {{
+				const node = QUADRATURE_NODES[nodeIndex];
+				let logProduct = 0;
+				for (let betIndex = 0; betIndex < width; betIndex += 1) {{
+					const result = activeResults[betIndex];
+					const winReturn = result.selectedOdds - 1;
+					const lossScale = node * weights[betIndex];
+					const winScale = -node * winReturn * weights[betIndex];
+					const shift = Math.max(lossScale, winScale);
+					const lossTerm = (1 - result.bestProb) * Math.exp(lossScale - shift);
+					const winTerm = result.bestProb * Math.exp(winScale - shift);
+					const denominator = lossTerm + winTerm;
+					logProduct += shift + Math.log(denominator);
+					ratios[nodeIndex][betIndex] = (lossTerm - winReturn * winTerm) / denominator;
+				}}
+				objectiveLogs[nodeIndex] = QUADRATURE_LOG_WEIGHTS[nodeIndex] - QUADRATURE_LOG_NODES[nodeIndex] + logProduct;
+				gradientLogs[nodeIndex] = QUADRATURE_LOG_WEIGHTS[nodeIndex] + logProduct;
+				maxObjectiveLog = Math.max(maxObjectiveLog, objectiveLogs[nodeIndex]);
+				maxGradientLog = Math.max(maxGradientLog, gradientLogs[nodeIndex]);
 			}}
 
-			let fullFraction = 0;
-			if (odds[bestIdx] > 1.0) {{
-				fullFraction = Math.max((probs[bestIdx] * odds[bestIdx] - 1) / (odds[bestIdx] - 1), 0);
+			let objectiveSecond = 0;
+			for (let nodeIndex = 0; nodeIndex < QUADRATURE_NODES.length; nodeIndex += 1) {{
+				objectiveSecond += Math.exp(objectiveLogs[nodeIndex] - maxObjectiveLog);
+			}}
+			objectiveSecond *= Math.exp(maxObjectiveLog);
+
+			const gradient = new Float64Array(width);
+			for (let nodeIndex = 0; nodeIndex < QUADRATURE_NODES.length; nodeIndex += 1) {{
+				const factor = Math.exp(gradientLogs[nodeIndex] - maxGradientLog);
+				for (let betIndex = 0; betIndex < width; betIndex += 1) {{
+					gradient[betIndex] -= factor * ratios[nodeIndex][betIndex];
+				}}
+			}}
+			const gradientScale = Math.exp(maxGradientLog);
+			for (let betIndex = 0; betIndex < width; betIndex += 1) {{
+				gradient[betIndex] *= gradientScale;
 			}}
 			return {{
-				positive: true,
-				bestIdx,
-				bestEv,
-				weight: fullFraction * Math.max(0, stakeFraction),
+				value: QUADRATURE_CONSTANT - objectiveSecond,
+				gradient
 			}};
 		}}
 
-		function computeStakePlan(results, totalBudget) {{
+		function optimizeJointStakePlan(results, totalBudget, stakeFraction) {{
 			let active = results.map((result) => result.positive);
 			let shares = results.map(() => 0);
 			let amounts = results.map(() => 0);
 			while (true) {{
-				const totalWeight = results.reduce((sum, result, index) => sum + (active[index] ? result.weight : 0), 0);
-				if (!(totalWeight > 0) || !(totalBudget > 0)) {{
+				const activeIndices = active
+					.map((flag, index) => flag ? index : -1)
+					.filter((index) => index >= 0);
+				if (!activeIndices.length || !(totalBudget > 0)) {{
 					return {{ active, shares, amounts }};
 				}}
-				shares = results.map((result, index) => {{
-					if (!active[index]) {{
-						return 0;
+
+				const activeResults = activeIndices.map((index) => results[index]);
+				let weights;
+				if (activeResults.length === 1) {{
+					weights = [activeResults[0].fullKelly];
+				}} else {{
+					weights = projectNonnegativeL1Ball(activeResults.map((result) => result.fullKelly), 1 - 1e-12);
+					let step = JOINT_OPTIMIZER_INITIAL_STEP;
+					let current = jointObjectiveAndGrad(weights, activeResults);
+					for (let iteration = 0; iteration < JOINT_OPTIMIZER_MAX_ITERATIONS; iteration += 1) {{
+						const candidate = projectNonnegativeL1Ball(
+							weights.map((weight, index) => weight + step * current.gradient[index]),
+							1 - 1e-12
+						);
+						const next = jointObjectiveAndGrad(candidate, activeResults);
+						if (Number.isFinite(next.value) && next.value >= current.value) {{
+							weights = candidate;
+							current = next;
+							step *= 1.05;
+						}} else {{
+							step *= 0.5;
+						}}
+						if (step < JOINT_OPTIMIZER_MIN_STEP) {{
+							break;
+						}}
 					}}
-					return totalWeight > 1 ? result.weight / totalWeight : result.weight;
+				}}
+
+				const scaledWeights = projectNonnegativeL1Ball(
+					weights.map((weight) => weight * Math.max(0, stakeFraction)),
+					1 - 1e-12
+				);
+				const rawAmounts = scaledWeights.map((weight) => weight * totalBudget);
+				const roundedActiveAmounts = roundBudgetAmounts(
+					rawAmounts,
+					rawAmounts.reduce((sum, amount) => sum + amount, 0)
+				);
+				amounts = results.map(() => 0);
+				shares = results.map(() => 0);
+				activeIndices.forEach((rowIndex, localIndex) => {{
+					amounts[rowIndex] = roundedActiveAmounts[localIndex];
+					shares[rowIndex] = totalBudget > 0 ? roundedActiveAmounts[localIndex] / totalBudget : 0;
 				}});
-				amounts = shares.map((share) => share * totalBudget);
-				const tooSmall = amounts.map((amount, index) => active[index] && amount > 0 && amount + 1e-9 < MIN_BET_AMOUNT);
+				const tooSmall = amounts.map((amount, index) => active[index] && amount > 0 && amount + 1e-12 < MIN_BET_AMOUNT);
 				if (!tooSmall.some(Boolean)) {{
 					return {{ active, shares, amounts }};
 				}}
@@ -272,19 +495,18 @@ def render_html_report(
 		}}
 
 		function updateTable() {{
-			const rows = Array.from(document.querySelectorAll('.predictions-table tbody tr'));
+			const rows = collectRows();
 			const totalBudgetInput = document.getElementById('total-budget');
 			const kellyFractionInput = document.getElementById('kelly-fraction');
 			const totalBudget = Number.parseFloat(totalBudgetInput.value);
 			const stakeFraction = clampKellyFraction(kellyFractionInput);
-			const results = rows.map((row) => computeRow(row, stakeFraction));
 			const resolvedBudget = Number.isFinite(totalBudget) && totalBudget >= 0 ? totalBudget : 0;
-			const plan = computeStakePlan(results, resolvedBudget);
+			const plan = optimizeJointStakePlan(rows, resolvedBudget, stakeFraction);
 			let activeCount = 0;
 			let totalAmount = 0;
 
-			rows.forEach((row, index) => {{
-				const result = results[index];
+			rows.forEach((result, index) => {{
+				const row = result.row;
 				const isActive = plan.active[index] && plan.amounts[index] > 0;
 				const bestBetCell = row.querySelector('.best-bet');
 				const evCell = row.querySelector('.ev-now');
