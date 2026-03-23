@@ -208,6 +208,80 @@ def render_html_report(
 			input.value = clampKellyFraction(input).toFixed(2);
 		}}
 
+		function roundHalfEven(value, decimals = 2) {{
+			if (!Number.isFinite(value)) {{
+				return 0;
+			}}
+			const factor = 10 ** decimals;
+			const scaled = value * factor;
+			const sign = scaled < 0 ? -1 : 1;
+			const absScaled = Math.abs(scaled);
+			const floor = Math.floor(absScaled);
+			const fraction = absScaled - floor;
+			const epsilon = 1e-10;
+			let roundedInt = floor;
+			if (fraction > 0.5 + epsilon) {{
+				roundedInt = floor + 1;
+			}} else if (Math.abs(fraction - 0.5) <= epsilon) {{
+				roundedInt = floor % 2 === 0 ? floor : floor + 1;
+			}}
+			return sign * roundedInt / factor;
+		}}
+
+		function roundBudgetAmounts(amounts, totalBudget) {{
+			const rounded = amounts.map((amount) => roundHalfEven(amount, 2));
+			const positiveIndices = amounts
+				.map((amount, index) => amount > 0 ? index : -1)
+				.filter((index) => index >= 0);
+			if (!positiveIndices.length) {{
+				return rounded;
+			}}
+			let deltaCents = Math.round(
+				(roundHalfEven(totalBudget, 2) - roundHalfEven(rounded.reduce((sum, amount) => sum + amount, 0), 2)) * 100
+			);
+			if (deltaCents === 0) {{
+				return rounded;
+			}}
+			const residuals = amounts.map((amount, index) => amount - rounded[index]);
+			const order = deltaCents > 0
+				? [...positiveIndices].sort((left, right) => (
+					(residuals[right] - residuals[left]) || (amounts[right] - amounts[left]) || (left - right)
+				))
+				: positiveIndices
+					.filter((index) => rounded[index] > 0)
+					.sort((left, right) => (
+						((rounded[right] - amounts[right]) - (rounded[left] - amounts[left]))
+						|| (rounded[right] - rounded[left])
+						|| (left - right)
+					));
+			if (!order.length) {{
+				return rounded;
+			}}
+			while (deltaCents !== 0) {{
+				let changed = false;
+				for (const index of order) {{
+					if (deltaCents === 0) {{
+						break;
+					}}
+					if (deltaCents > 0) {{
+						rounded[index] = roundHalfEven(rounded[index] + 0.01, 2);
+						deltaCents -= 1;
+						changed = true;
+						continue;
+					}}
+					if (rounded[index] >= 0.01 - 1e-12) {{
+						rounded[index] = roundHalfEven(rounded[index] - 0.01, 2);
+						deltaCents += 1;
+						changed = true;
+					}}
+				}}
+				if (!changed) {{
+					break;
+				}}
+			}}
+			return rounded;
+		}}
+
 		function computeRow(row, stakeFraction) {{
 			const probs = [
 				Number.parseFloat(row.dataset.probHome),
@@ -256,14 +330,18 @@ def render_html_report(
 				if (!(totalWeight > 0) || !(totalBudget > 0)) {{
 					return {{ active, shares, amounts }};
 				}}
-				shares = results.map((result, index) => {{
+				const rawShares = results.map((result, index) => {{
 					if (!active[index]) {{
 						return 0;
 					}}
 					return totalWeight > 1 ? result.weight / totalWeight : result.weight;
 				}});
-				amounts = shares.map((share) => share * totalBudget);
-				const tooSmall = amounts.map((amount, index) => active[index] && amount > 0 && amount + 1e-9 < MIN_BET_AMOUNT);
+				const rawAmounts = rawShares.map((share) => share * totalBudget);
+				amounts = roundBudgetAmounts(rawAmounts, rawAmounts.reduce((sum, amount) => sum + amount, 0));
+				shares = totalBudget > 0
+					? amounts.map((amount) => amount / totalBudget)
+					: amounts.map(() => 0);
+				const tooSmall = amounts.map((amount, index) => active[index] && amount > 0 && amount + 1e-12 < MIN_BET_AMOUNT);
 				if (!tooSmall.some(Boolean)) {{
 					return {{ active, shares, amounts }};
 				}}

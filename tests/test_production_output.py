@@ -67,6 +67,86 @@ def _build_merged_frame() -> pd.DataFrame:
 	return pd.DataFrame(rows)
 
 
+def _round_budget_amounts_frontend(amounts: list[float], total_budget: float) -> list[float]:
+	rounded = [round(float(amount), 2) for amount in amounts]
+	positive_idx = [index for index, amount in enumerate(amounts) if float(amount) > 0.0]
+	if not positive_idx:
+		return rounded
+	delta_cents = int(round((round(float(total_budget), 2) - round(float(sum(rounded)), 2)) * 100))
+	if delta_cents == 0:
+		return rounded
+	residuals = [float(amount) - float(rounded[index]) for index, amount in enumerate(amounts)]
+	if delta_cents > 0:
+		order = sorted(
+			positive_idx,
+			key=lambda index: (residuals[index], float(amounts[index]), -index),
+			reverse=True,
+		)
+	else:
+		order = sorted(
+			[index for index in positive_idx if rounded[index] > 0.0],
+			key=lambda index: (float(rounded[index]) - float(amounts[index]), rounded[index], -index),
+			reverse=True,
+		)
+	if not order:
+		return rounded
+	while delta_cents != 0:
+		progress = False
+		for index in order:
+			if delta_cents == 0:
+				break
+			if delta_cents > 0:
+				rounded[index] = round(float(rounded[index]) + 0.01, 2)
+				delta_cents -= 1
+				progress = True
+				continue
+			if rounded[index] >= 0.01 - 1e-12:
+				rounded[index] = round(float(rounded[index]) - 0.01, 2)
+				delta_cents += 1
+				progress = True
+		if not progress:
+			break
+	return rounded
+
+
+def _simulate_frontend_stake_plan(
+	selection: dict[str, np.ndarray],
+	total_budget: float,
+	kelly_fraction: float,
+	min_bet_amount: float,
+) -> tuple[list[bool], list[float], list[float]]:
+	results = [
+		{
+			"positive": bool(selection["positive_mask"][index]),
+			"weight": float(selection["full_kelly"][index]) * max(0.0, float(kelly_fraction)),
+		}
+		for index in range(len(selection["positive_mask"]))
+	]
+	active = [result["positive"] for result in results]
+	shares = [0.0 for _ in results]
+	amounts = [0.0 for _ in results]
+	while True:
+		total_weight = sum(result["weight"] for result, is_active in zip(results, active) if is_active)
+		if not (total_weight > 0.0) or not (float(total_budget) > 0.0):
+			return active, shares, amounts
+		raw_shares = [
+			0.0
+			if not is_active
+			else (result["weight"] / total_weight if total_weight > 1.0 else result["weight"])
+			for result, is_active in zip(results, active)
+		]
+		raw_amounts = [share * float(total_budget) for share in raw_shares]
+		amounts = _round_budget_amounts_frontend(raw_amounts, total_budget=float(sum(raw_amounts)))
+		shares = [amount / float(total_budget) for amount in amounts]
+		too_small = [
+			is_active and amount > 0.0 and amount + 1e-12 < float(min_bet_amount)
+			for amount, is_active in zip(amounts, active)
+		]
+		if not any(too_small):
+			return active, shares, amounts
+		active = [is_active and not is_too_small for is_active, is_too_small in zip(active, too_small)]
+
+
 class ProductionOutputTests(unittest.TestCase):
 	def test_scored_predictions_include_positive_ev_and_budget_fields(self):
 		merged = _build_merged_frame()
@@ -150,6 +230,8 @@ class ProductionOutputTests(unittest.TestCase):
 		self.assertIn("Enter your current bankroll and Kelly fraction below to adjust the risk level", report_html)
 		self.assertIn("const MIN_KELLY_FRACTION = 0.1;", report_html)
 		self.assertIn("const MAX_KELLY_FRACTION = 1.0;", report_html)
+		self.assertIn("function roundHalfEven", report_html)
+		self.assertIn("function roundBudgetAmounts", report_html)
 		self.assertIn("function normalizeKellyFractionInput(input)", report_html)
 		self.assertIn("addEventListener('blur'", report_html)
 		self.assertNotIn("Minimum stake per bet", report_html)
@@ -215,6 +297,35 @@ class ProductionOutputTests(unittest.TestCase):
 		self.assertAlmostEqual(allocation["stake_amounts"][0], 100.0, places=2)
 		self.assertAlmostEqual(allocation["stake_amounts"][1], 0.0, places=2)
 		self.assertEqual(allocation["recommended_mask"].tolist(), [True, False])
+
+	def test_frontend_stake_plan_matches_backend_threshold_rounding(self):
+		selection = {
+			"best_index": np.array([0, 1]),
+			"selected_probs": np.array([0.55, 0.26]),
+			"selected_implied": np.array([0.40, 0.25]),
+			"selected_odds": np.array([2.5, 4.0]),
+			"best_ev": np.array([0.375, 0.04]),
+			"positive_mask": np.array([True, True]),
+			"edge": np.array([0.15, 0.01]),
+			"full_kelly": np.array([1.0, 0.00099]),
+		}
+
+		backend = allocate_recommended_stakes(
+			selection=selection,
+			total_budget=100.0,
+			kelly_fraction=1.0,
+			min_bet_amount=0.1,
+		)
+		frontend_active, frontend_shares, frontend_amounts = _simulate_frontend_stake_plan(
+			selection=selection,
+			total_budget=100.0,
+			kelly_fraction=1.0,
+			min_bet_amount=0.1,
+		)
+
+		self.assertEqual(frontend_active, backend["recommended_mask"].tolist())
+		np.testing.assert_allclose(frontend_shares, backend["stake_shares"], atol=1e-9)
+		np.testing.assert_allclose(frontend_amounts, backend["stake_amounts"], atol=1e-9)
 
 	def test_scoring_passes_cat_features_for_league_bias_models(self):
 		merged = _build_merged_frame()
