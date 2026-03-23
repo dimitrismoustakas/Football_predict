@@ -245,14 +245,14 @@ def render_html_report(
 			const residuals = amounts.map((amount, index) => amount - rounded[index]);
 			const order = deltaCents > 0
 				? [...positiveIndices].sort((left, right) => (
-					(residuals[right] - residuals[left]) || (amounts[right] - amounts[left]) || (left - right)
+					(residuals[right] - residuals[left]) || (amounts[right] - amounts[left]) || (right - left)
 				))
 				: positiveIndices
 					.filter((index) => rounded[index] > 0)
 					.sort((left, right) => (
 						((rounded[right] - amounts[right]) - (rounded[left] - amounts[left]))
 						|| (rounded[right] - rounded[left])
-						|| (left - right)
+						|| (right - left)
 					));
 			if (!order.length) {{
 				return rounded;

@@ -12,7 +12,7 @@ import pandas as pd
 import torch
 
 from prod_run.generate_html_report import generate_html_report
-from prod_run.pipeline import allocate_recommended_stakes, build_prediction_outputs, score_result_predictions
+from prod_run.pipeline import _round_budget_amounts, allocate_recommended_stakes, build_prediction_outputs, score_result_predictions
 from utils.email_utils import build_email_html
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -79,13 +79,13 @@ def _round_budget_amounts_frontend(amounts: list[float], total_budget: float) ->
 	if delta_cents > 0:
 		order = sorted(
 			positive_idx,
-			key=lambda index: (residuals[index], float(amounts[index]), -index),
+			key=lambda index: (residuals[index], float(amounts[index]), index),
 			reverse=True,
 		)
 	else:
 		order = sorted(
 			[index for index in positive_idx if rounded[index] > 0.0],
-			key=lambda index: (float(rounded[index]) - float(amounts[index]), rounded[index], -index),
+			key=lambda index: (float(rounded[index]) - float(amounts[index]), rounded[index], index),
 			reverse=True,
 		)
 	if not order:
@@ -326,6 +326,30 @@ class ProductionOutputTests(unittest.TestCase):
 		self.assertEqual(frontend_active, backend["recommended_mask"].tolist())
 		np.testing.assert_allclose(frontend_shares, backend["stake_shares"], atol=1e-9)
 		np.testing.assert_allclose(frontend_amounts, backend["stake_amounts"], atol=1e-9)
+
+	def test_frontend_rounding_matches_backend_for_tied_allocations(self):
+		positive_delta_amounts = [1.005, 1.005]
+		negative_delta_amounts = [0.335, 0.335]
+
+		positive_delta_backend = _round_budget_amounts(
+			np.array(positive_delta_amounts, dtype=float),
+			total_budget=float(sum(positive_delta_amounts)),
+		)
+		negative_delta_backend = _round_budget_amounts(
+			np.array(negative_delta_amounts, dtype=float),
+			total_budget=float(sum(negative_delta_amounts)),
+		)
+
+		np.testing.assert_allclose(
+			_round_budget_amounts_frontend(positive_delta_amounts, total_budget=float(sum(positive_delta_amounts))),
+			positive_delta_backend,
+			atol=1e-9,
+		)
+		np.testing.assert_allclose(
+			_round_budget_amounts_frontend(negative_delta_amounts, total_budget=float(sum(negative_delta_amounts))),
+			negative_delta_backend,
+			atol=1e-9,
+		)
 
 	def test_scoring_passes_cat_features_for_league_bias_models(self):
 		merged = _build_merged_frame()
