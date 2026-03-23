@@ -14,7 +14,13 @@ import torch
 from prod_run.generate_html_report import generate_html_report
 from prod_run.pipeline import allocate_recommended_stakes, build_prediction_outputs, score_result_predictions
 from utils.email_utils import build_email_html
-from utils.portfolio import _joint_expected_log_growth_and_grad, get_joint_quadrature_rule
+from utils.portfolio import (
+	DEFAULT_JOINT_OPTIMIZER_INITIAL_STEP,
+	DEFAULT_JOINT_OPTIMIZER_MAX_ITERATIONS,
+	DEFAULT_JOINT_OPTIMIZER_MIN_STEP,
+	_joint_expected_log_growth_and_grad,
+	get_joint_quadrature_rule,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FEATURE_COLS = json.loads((PROJECT_ROOT / "training" / "configs" / "main_models" / "result_features.json").read_text(encoding="utf-8"))
@@ -148,7 +154,7 @@ def _simulate_frontend_stake_plan(
 				_project_nonnegative_l1_ball_frontend(full_kelly.tolist(), 1.0 - 1e-12),
 				dtype=float,
 			)
-			step = 0.10
+			step = float(DEFAULT_JOINT_OPTIMIZER_INITIAL_STEP)
 			current_value, current_grad = _joint_expected_log_growth_and_grad(
 				weights=weights,
 				selected_probs=selected_probs,
@@ -156,7 +162,7 @@ def _simulate_frontend_stake_plan(
 				quadrature_nodes=quadrature_nodes,
 				quadrature_weights=quadrature_weights,
 			)
-			for _ in range(80):
+			for _ in range(int(DEFAULT_JOINT_OPTIMIZER_MAX_ITERATIONS)):
 				candidate = np.asarray(
 					_project_nonnegative_l1_ball_frontend((weights + step * current_grad).tolist(), 1.0 - 1e-12),
 					dtype=float,
@@ -175,7 +181,7 @@ def _simulate_frontend_stake_plan(
 					step *= 1.05
 				else:
 					step *= 0.5
-				if step < 1e-6:
+				if step < float(DEFAULT_JOINT_OPTIMIZER_MIN_STEP):
 					break
 
 		scaled = np.asarray(

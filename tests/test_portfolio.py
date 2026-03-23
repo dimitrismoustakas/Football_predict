@@ -113,7 +113,17 @@ class PortfolioTests(unittest.TestCase):
 		)
 		exact = _expected_log_wealth(weights, probs, odds)
 
-		self.assertAlmostEqual(approx, exact, places=8)
+		np.testing.assert_allclose(approx, exact, rtol=1e-7, atol=1e-10)
+
+	def test_joint_quadrature_rule_returns_read_only_cached_arrays(self):
+		nodes, rule_weights = get_joint_quadrature_rule()
+
+		self.assertFalse(nodes.flags.writeable)
+		self.assertFalse(rule_weights.flags.writeable)
+		with self.assertRaises(ValueError):
+			nodes[0] = 0.0
+		with self.assertRaises(ValueError):
+			rule_weights[0] = 0.0
 
 	def test_allocate_bankroll_kelly_beats_independent_full_kelly_on_crowded_slate(self):
 		probs = np.array([

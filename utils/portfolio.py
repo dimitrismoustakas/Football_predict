@@ -69,7 +69,11 @@ def get_joint_quadrature_rule(
 	"""Return Gauss-Laguerre nodes and weights for the joint Kelly objective."""
 
 	nodes, weights = np.polynomial.laguerre.laggauss(int(order))
-	return nodes.astype(float), weights.astype(float)
+	nodes = nodes.astype(float)
+	weights = weights.astype(float)
+	nodes.flags.writeable = False
+	weights.flags.writeable = False
+	return nodes, weights
 
 
 def _project_nonnegative_l1_ball(values: np.ndarray, radius: float) -> np.ndarray:
