@@ -540,6 +540,10 @@ class TrainConfig:
 	symmetric_ce_label_floor: float = 1e-4
 	gce_mix_weight: float = 0.0
 	gce_q: float = 0.7
+	bi_tempered_mix_weight: float = 0.0
+	bi_tempered_t1: float = 1.0
+	bi_tempered_t2: float = 1.0
+	bi_tempered_num_iters: int = 5
 
 
 def _log_softmax_from_implied(implied_probs: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -581,6 +585,87 @@ def _reverse_cross_entropy(
 		raise ValueError("symmetric_ce_label_floor must be in (0, 1)")
 	clipped_target = target_distribution.clamp_min(label_floor)
 	return -(pred_probs * torch.log(clipped_target)).sum(dim=-1)
+
+
+def _log_t(x: torch.Tensor, t: float, eps: float = 1e-6) -> torch.Tensor:
+	"""Tempered logarithm from the bi-tempered logistic loss."""
+
+	x = x.clamp_min(eps)
+	if abs(t - 1.0) <= eps:
+		return torch.log(x)
+	return (x.pow(1.0 - t) - 1.0) / (1.0 - t)
+
+
+def _exp_t(x: torch.Tensor, t: float, eps: float = 1e-6) -> torch.Tensor:
+	"""Tempered exponential from the bi-tempered logistic loss."""
+
+	if abs(t - 1.0) <= eps:
+		return torch.exp(x)
+	base = (1.0 + (1.0 - t) * x).clamp_min(0.0)
+	return base.pow(1.0 / (1.0 - t))
+
+
+def _tempered_normalization_fixed_point(
+	activations: torch.Tensor,
+	t: float,
+	num_iters: int = 5,
+	eps: float = 1e-6,
+) -> torch.Tensor:
+	"""Fixed-point normalization for heavy-tailed tempered softmax (t >= 1)."""
+
+	if t < 1.0 - eps:
+		raise ValueError("bi_tempered_t2 must be >= 1.0 for the fixed-point normalizer")
+	mu = activations.max(dim=-1, keepdim=True).values
+	normalized_step0 = activations - mu
+	normalized = normalized_step0
+	for _ in range(max(1, int(num_iters))):
+		partition = _exp_t(normalized, t, eps=eps).sum(dim=-1, keepdim=True).clamp_min(eps)
+		normalized = normalized_step0 * partition.pow(1.0 - t)
+	partition = _exp_t(normalized, t, eps=eps).sum(dim=-1, keepdim=True).clamp_min(eps)
+	return -_log_t(partition.reciprocal(), t, eps=eps) + mu
+
+
+def _tempered_softmax(
+	activations: torch.Tensor,
+	t: float,
+	num_iters: int = 5,
+	eps: float = 1e-6,
+) -> torch.Tensor:
+	"""Tempered softmax; matches softmax exactly when t == 1."""
+
+	if abs(t - 1.0) <= eps:
+		return F.softmax(activations, dim=-1)
+	normalization = _tempered_normalization_fixed_point(activations, t, num_iters=num_iters, eps=eps)
+	probs = _exp_t(activations - normalization, t, eps=eps)
+	return probs / probs.sum(dim=-1, keepdim=True).clamp_min(eps)
+
+
+def _bi_tempered_logistic_loss(
+	activations: torch.Tensor,
+	target_distribution: torch.Tensor,
+	t1: float,
+	t2: float,
+	num_iters: int = 5,
+	eps: float = 1e-6,
+) -> torch.Tensor:
+	"""Bi-tempered logistic loss for one-hot or soft labels."""
+
+	if t1 >= 2.0 - eps:
+		raise ValueError("bi_tempered_t1 must be < 2.0")
+	if t1 <= 0.0:
+		raise ValueError("bi_tempered_t1 must be positive")
+	if t2 <= 0.0:
+		raise ValueError("bi_tempered_t2 must be positive")
+	probabilities = _tempered_softmax(activations, t2, num_iters=num_iters, eps=eps).clamp_min(eps)
+	target_distribution = target_distribution.clamp_min(0.0)
+	tempered_kl = (
+		(_log_t(target_distribution + eps, t1, eps=eps) - _log_t(probabilities, t1, eps=eps))
+		* target_distribution
+	)
+	bias_correction = (
+		target_distribution.pow(2.0 - t1) - probabilities.pow(2.0 - t1)
+	) / (2.0 - t1)
+	return (tempered_kl - bias_correction).sum(dim=-1)
 
 
 def _multiclass_conditional_corr(
@@ -775,6 +860,10 @@ def gated_loss(
 	symmetric_ce_label_floor: float = 1e-4,
 	gce_mix_weight: float = 0.0,
 	gce_q: float = 0.7,
+	bi_tempered_mix_weight: float = 0.0,
+	bi_tempered_t1: float = 1.0,
+	bi_tempered_t2: float = 1.0,
+	bi_tempered_num_iters: int = 5,
 	eps: float = 1e-6,
 ) -> torch.Tensor:
 	"""Loss for the multiclass gated residual model."""
@@ -835,6 +924,17 @@ def gated_loss(
 		else:
 			gce_loss = (1.0 - true_class_probs.pow(gce_q)) / gce_q
 		base_loss = (1.0 - gce_mix_weight) * base_loss + gce_mix_weight * gce_loss
+
+	if bi_tempered_mix_weight > 0:
+		bi_tempered_loss = _bi_tempered_logistic_loss(
+			pred_logits,
+			target_distribution,
+			t1=bi_tempered_t1,
+			t2=bi_tempered_t2,
+			num_iters=bi_tempered_num_iters,
+			eps=eps,
+		)
+		base_loss = (1.0 - bi_tempered_mix_weight) * base_loss + bi_tempered_mix_weight * bi_tempered_loss
 
 	if confidence_penalty_weight > 0:
 		# Positive weight penalizes low-entropy predictions via sum(p log p).

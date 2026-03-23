@@ -246,6 +246,10 @@ def build_train_config(
 		symmetric_ce_label_floor=training_config.get("symmetric_ce_label_floor", 1e-4),
 		gce_mix_weight=training_config.get("gce_mix_weight", 0.0),
 		gce_q=training_config.get("gce_q", 0.7),
+		bi_tempered_mix_weight=training_config.get("bi_tempered_mix_weight", 0.0),
+		bi_tempered_t1=training_config.get("bi_tempered_t1", 1.0),
+		bi_tempered_t2=training_config.get("bi_tempered_t2", 1.0),
+		bi_tempered_num_iters=training_config.get("bi_tempered_num_iters", 5),
 	)
 
 

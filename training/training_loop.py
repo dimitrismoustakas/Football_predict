@@ -142,6 +142,10 @@ def run_train_epoch(
 			symmetric_ce_label_floor=config.symmetric_ce_label_floor,
 			gce_mix_weight=config.gce_mix_weight,
 			gce_q=config.gce_q,
+			bi_tempered_mix_weight=config.bi_tempered_mix_weight,
+			bi_tempered_t1=config.bi_tempered_t1,
+			bi_tempered_t2=config.bi_tempered_t2,
+			bi_tempered_num_iters=config.bi_tempered_num_iters,
 		)
 		loss.backward()
 		optimizer.step()
