@@ -36,7 +36,7 @@ def _format_interactive_table(df: pd.DataFrame) -> str:
 	if df.empty:
 		return "<p>No matches found for this report.</p>"
 
-	df = df.sort_values(["Date", "League", "Time", "Home", "Away"]).reset_index(drop=True)
+	df = df.sort_values(["League", "Date", "Time", "Home", "Away"]).reset_index(drop=True)
 
 	rows = []
 	for _, row in df.iterrows():

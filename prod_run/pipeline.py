@@ -301,7 +301,7 @@ def build_prediction_outputs(merged: pd.DataFrame, result_predictions: pd.DataFr
 	})
 	output_df = base_output.merge(result_predictions, on="_row_id", how="left")
 	output_df = output_df.drop(columns=["_row_id"])
-	output_df = output_df.sort_values(["Date", "League", "Time", "Home", "Away"]).reset_index(drop=True)
+	output_df = output_df.sort_values(["League", "Date", "Time", "Home", "Away"]).reset_index(drop=True)
 	value_output = output_df[output_df["Result_EV"].notna()].copy()
 	return output_df, value_output
 
