@@ -7,6 +7,7 @@ from training.models import FeatureBackbone, GatedResidualModel, _log_softmax_fr
 from training.models.neural_net import (
 	_apply_true_class_surprise_scaling,
 	_bi_tempered_logistic_loss,
+	_bi_tempered_logistic_loss_autograd,
 	_reverse_cross_entropy,
 	_tempered_softmax,
 	gated_loss,
@@ -227,6 +228,60 @@ class ResultModelingTests(unittest.TestCase):
 		expected = F.cross_entropy(logits, torch.tensor([0]), reduction="none")
 
 		self.assertTrue(torch.allclose(loss, expected, atol=1e-6))
+
+	def test_bi_tempered_loss_matches_reference_forward_on_soft_targets(self):
+		logits = torch.tensor(
+			[
+				[1.2, -0.4, 0.1],
+				[-0.7, 0.3, 1.1],
+			],
+			dtype=torch.float64,
+		)
+		target_distribution = torch.tensor(
+			[
+				[0.82, 0.13, 0.05],
+				[0.10, 0.35, 0.55],
+			],
+			dtype=torch.float64,
+		)
+
+		loss = _bi_tempered_logistic_loss(logits, target_distribution, t1=0.82, t2=1.05, num_iters=5)
+		expected = _bi_tempered_logistic_loss_autograd(
+			logits,
+			target_distribution,
+			t1=0.82,
+			t2=1.05,
+			num_iters=5,
+		)
+
+		self.assertTrue(torch.allclose(loss, expected, atol=1e-10, rtol=1e-8))
+
+	def test_bi_tempered_loss_custom_backward_matches_reference_gradient(self):
+		torch.manual_seed(0)
+		logits = torch.randn(4, 3, dtype=torch.float64, requires_grad=True)
+		reference_logits = logits.detach().clone().requires_grad_(True)
+		target_distribution = torch.tensor(
+			[
+				[0.82, 0.13, 0.05],
+				[0.10, 0.75, 0.15],
+				[0.20, 0.35, 0.45],
+				[0.60, 0.15, 0.25],
+			],
+			dtype=torch.float64,
+		)
+
+		loss = _bi_tempered_logistic_loss(logits, target_distribution, t1=0.82, t2=1.05, num_iters=5).sum()
+		reference_loss = _bi_tempered_logistic_loss_autograd(
+			reference_logits,
+			target_distribution,
+			t1=0.82,
+			t2=1.05,
+			num_iters=5,
+		).sum()
+		loss.backward()
+		reference_loss.backward()
+
+		self.assertTrue(torch.allclose(logits.grad, reference_logits.grad, atol=1e-10, rtol=1e-8))
 
 	def test_bi_tempered_aux_weight_penalizes_misaligned_logits_more(self):
 		model = GatedResidualModel(

@@ -640,7 +640,16 @@ def _tempered_softmax(
 	return probs / probs.sum(dim=-1, keepdim=True).clamp_min(eps)
 
 
-def _bi_tempered_logistic_loss(
+def _validate_bi_tempered_temperatures(t1: float, t2: float, eps: float = 1e-6):
+	if t1 >= 2.0 - eps:
+		raise ValueError("bi_tempered_t1 must be < 2.0")
+	if t1 <= 0.0:
+		raise ValueError("bi_tempered_t1 must be positive")
+	if t2 <= 0.0:
+		raise ValueError("bi_tempered_t2 must be positive")
+
+
+def _bi_tempered_logistic_loss_autograd(
 	activations: torch.Tensor,
 	target_distribution: torch.Tensor,
 	t1: float,
@@ -648,14 +657,9 @@ def _bi_tempered_logistic_loss(
 	num_iters: int = 5,
 	eps: float = 1e-6,
 ) -> torch.Tensor:
-	"""Bi-tempered logistic loss for one-hot or soft labels."""
+	"""Reference bi-tempered logistic loss with the full fixed-point loop in autograd."""
 
-	if t1 >= 2.0 - eps:
-		raise ValueError("bi_tempered_t1 must be < 2.0")
-	if t1 <= 0.0:
-		raise ValueError("bi_tempered_t1 must be positive")
-	if t2 <= 0.0:
-		raise ValueError("bi_tempered_t2 must be positive")
+	_validate_bi_tempered_temperatures(t1, t2, eps=eps)
 	probabilities = _tempered_softmax(activations, t2, num_iters=num_iters, eps=eps).clamp_min(eps)
 	target_distribution = target_distribution.clamp_min(0.0)
 	tempered_kl = (
@@ -666,6 +670,70 @@ def _bi_tempered_logistic_loss(
 		target_distribution.pow(2.0 - t1) - probabilities.pow(2.0 - t1)
 	) / (2.0 - t1)
 	return (tempered_kl - bias_correction).sum(dim=-1)
+
+
+class _BiTemperedLogisticLoss(torch.autograd.Function):
+	@staticmethod
+	def forward(
+		ctx,
+		activations: torch.Tensor,
+		target_distribution: torch.Tensor,
+		t1: float,
+		t2: float,
+		num_iters: int,
+		eps: float,
+	) -> torch.Tensor:
+		t1 = float(t1)
+		t2 = float(t2)
+		num_iters = int(num_iters)
+		eps = float(eps)
+		_validate_bi_tempered_temperatures(t1, t2, eps=eps)
+		probabilities = _tempered_softmax(activations, t2, num_iters=num_iters, eps=eps).clamp_min(eps)
+		target_distribution = target_distribution.clamp_min(0.0)
+		tempered_kl = (
+			(_log_t(target_distribution + eps, t1, eps=eps) - _log_t(probabilities, t1, eps=eps))
+			* target_distribution
+		)
+		bias_correction = (
+			target_distribution.pow(2.0 - t1) - probabilities.pow(2.0 - t1)
+		) / (2.0 - t1)
+		ctx.save_for_backward(probabilities, target_distribution)
+		ctx.t1 = t1
+		ctx.t2 = t2
+		ctx.eps = eps
+		return (tempered_kl - bias_correction).sum(dim=-1)
+
+	@staticmethod
+	def backward(ctx, grad_output: torch.Tensor):
+		probabilities, target_distribution = ctx.saved_tensors
+		delta_probs = probabilities - target_distribution
+		forget_factor = probabilities.pow(ctx.t2 - ctx.t1)
+		delta_probs_times_forget_factor = delta_probs * forget_factor
+		delta_forget_sum = delta_probs_times_forget_factor.sum(dim=-1, keepdim=True)
+		escorts = probabilities.pow(ctx.t2)
+		escorts = escorts / escorts.sum(dim=-1, keepdim=True).clamp_min(ctx.eps)
+		derivative = delta_probs_times_forget_factor - escorts * delta_forget_sum
+		return grad_output.unsqueeze(-1) * derivative, None, None, None, None, None
+
+
+def _bi_tempered_logistic_loss(
+	activations: torch.Tensor,
+	target_distribution: torch.Tensor,
+	t1: float,
+	t2: float,
+	num_iters: int = 5,
+	eps: float = 1e-6,
+) -> torch.Tensor:
+	"""Bi-tempered logistic loss for one-hot or soft labels with analytical backward."""
+
+	return _BiTemperedLogisticLoss.apply(
+		activations,
+		target_distribution,
+		float(t1),
+		float(t2),
+		int(num_iters),
+		float(eps),
+	)
 
 
 def _multiclass_conditional_corr(
