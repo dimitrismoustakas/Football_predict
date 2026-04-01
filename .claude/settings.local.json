@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import polars as pl; df = pl.read_parquet\\(''''/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict/data/understat/ENG-Premier_League/2024-2025/player_match_stats.parquet''''\\); print\\(''''Columns:''''\\); print\\(df.columns\\); print\\(''''\\\\nFirst few rows:''''\\); print\\(df.head\\(3\\)\\)\")",
+      "Bash(grep -r \"set_transformer\\\\|SetTransformer\\\\|PointNet\" '/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict' --include=*.py)",
+      "Bash(python3:*)",
+      "Bash(xargs grep:*)",
+      "Bash(xargs ls:*)",
+      "Bash(python -c \":*)",
+      "Bash(.venv/Scripts/python -c \":*)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_lineup_builder.py -v)",
+      "Bash(\"/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict/.venv/Scripts/python\" -m pytest tests/test_lineup_builder.py -v)",
+      "Bash(\"/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict/.venv/Scripts/python\" -c \":*)",
+      "Bash(\"/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict/.venv/Scripts/python\" -m pytest tests/ -v --ignore=tests/test_lineup_builder.py)",
+      "Bash(\"/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict/.venv/Scripts/python\" -m training.train_player_model --encoder deep_sets)",
+      "Bash(PARQUET_PATH=\"/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict/data/training/understat_df.parquet\" \"/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict/.venv/Scripts/python\" -m training.train_player_model --encoder deep_sets)",
+      "Bash(ln -s \"/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict/data/understat\" data/understat)",
+      "Bash(ln -s \"/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict/data/training\" data/training)",
+      "Bash(\"/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict/.venv/Scripts/python\" -m training.train_player_model --encoder set_transformer)",
+      "Bash(\"/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict/.venv/Scripts/python\" -m training.train_main_model)",
+      "Bash(\"/c/Users/dmoustakas/OneDrive - Viva.com/Documents/Repositories/Football_predict/.venv/Scripts/python\" -m training.train_player_model --encoder deep_sets --no-implied)",
+      "Read(//c/Users/DMOUST~1/AppData/Local/Temp/claude/C--Users-dmoustakas-OneDrive---Viva-com-Documents-Repositories-Football-predict--claude-worktrees-youthful-knuth/3f77fece-c620-45d3-95ab-91e1a08ccb99/tasks/**)",
+      "Bash(tasklist)",
+      "Bash(taskkill //PID 33664 //F)"
+    ]
+  }
+}

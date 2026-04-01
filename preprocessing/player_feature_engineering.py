@@ -250,6 +250,176 @@ def merge_with_match_data(
 	return result
 
 
+# ---------------------------------------------------------------------------
+# Per-player rolling features (for Set Transformer / player-level modelling)
+# ---------------------------------------------------------------------------
+
+PLAYER_WINDOW = 10   # Rolling window over player's personal appearances
+PLAYER_MIN_GAMES = 3 # Minimum appearances to compute rolling stats
+
+# Stats to normalise per 90 minutes
+_PER90_STATS = ["xg", "xa", "shots", "key_passes", "xg_chain", "xg_buildup",
+                "yellow_cards", "red_cards"]
+
+# All positions from Understat (excluding "Sub" which we handle separately)
+POSITION_VOCABULARY = [
+	"GK", "DC", "DL", "DR", "DML", "DMR", "DMC",
+	"MC", "ML", "MR", "AMC", "AML", "AMR",
+	"FW", "FWL", "FWR", "Sub",
+]
+# Mapping: position string -> integer index (0 = padding, 1-17 = positions)
+POSITION_TO_IDX = {pos: idx + 1 for idx, pos in enumerate(POSITION_VOCABULARY)}
+
+
+def compute_player_rolling_features(df: pl.DataFrame) -> pl.DataFrame:
+	"""
+	Compute per-player rolling features over their last N personal appearances.
+
+	For each player, across all their matches (regardless of team), compute:
+	- Per-90 stats: xg, xa, shots, key_passes, xg_chain, xg_buildup, yellow/red cards
+	- avg_minutes: rolling mean of minutes played
+	- appearances: count of games in the rolling window
+	- most_common_position: mode of position over the rolling window
+
+	All features are shifted by 1 to prevent data leakage.
+
+	Returns a DataFrame with one row per (player_id, game_id) containing
+	the player's pre-match rolling features.
+	"""
+	df = prepare_player_data(df)
+
+	# Ensure position column exists
+	if "position" not in df.columns:
+		raise ValueError("Player data must include a 'position' column")
+
+	# Ensure card columns exist (fill with 0 if missing)
+	for col in ["yellow_cards", "red_cards"]:
+		if col not in df.columns:
+			df = df.with_columns(pl.lit(0).cast(pl.Float64).alias(col))
+		else:
+			df = df.with_columns(pl.col(col).cast(pl.Float64))
+
+	# Sort by player, then date (for rolling over personal history)
+	df = df.sort(["player_id", "date"])
+
+	# Add a constant column for counting appearances in rolling window
+	df = df.with_columns(pl.lit(1.0).alias("_one"))
+
+	# --- Per-90 stats: shift first, then rolling sum of raw + rolling sum of minutes ---
+	# per90 = (sum of stat over window) / (sum of minutes over window) * 90
+	rolling_exprs = []
+
+	for stat in _PER90_STATS:
+		if stat not in df.columns:
+			continue
+		# Numerator: rolling sum of raw stat (shifted by 1)
+		rolling_exprs.append(
+			pl.col(stat)
+			.shift(1)
+			.rolling_sum(window_size=PLAYER_WINDOW, min_samples=PLAYER_MIN_GAMES)
+			.over("player_id")
+			.alias(f"_sum_{stat}")
+		)
+
+	# Denominator: rolling sum of minutes (shifted by 1)
+	rolling_exprs.append(
+		pl.col("minutes")
+		.shift(1)
+		.rolling_sum(window_size=PLAYER_WINDOW, min_samples=PLAYER_MIN_GAMES)
+		.over("player_id")
+		.alias("_sum_minutes")
+	)
+
+	# Average minutes per appearance
+	rolling_exprs.append(
+		pl.col("minutes")
+		.shift(1)
+		.rolling_mean(window_size=PLAYER_WINDOW, min_samples=PLAYER_MIN_GAMES)
+		.over("player_id")
+		.alias(f"avg_minutes_r{PLAYER_WINDOW}")
+	)
+
+	# Appearance count in window
+	rolling_exprs.append(
+		pl.col("_one")
+		.shift(1)
+		.rolling_sum(window_size=PLAYER_WINDOW, min_samples=PLAYER_MIN_GAMES)
+		.over("player_id")
+		.alias(f"appearances_r{PLAYER_WINDOW}")
+	)
+
+	df = df.with_columns(rolling_exprs)
+
+	# Compute per-90 rates with safe division (minimum 45 total minutes)
+	per90_exprs = []
+	for stat in _PER90_STATS:
+		if f"_sum_{stat}" not in df.columns:
+			continue
+		per90_exprs.append(
+			pl.when(pl.col("_sum_minutes") >= 45)
+			.then(pl.col(f"_sum_{stat}") / pl.col("_sum_minutes") * 90.0)
+			.otherwise(pl.lit(None))
+			.alias(f"{stat}_per90_r{PLAYER_WINDOW}")
+		)
+	df = df.with_columns(per90_exprs)
+
+	# --- Discipline features ---
+	# Red card in previous game (binary, shifted by 1)
+	df = df.with_columns(
+		pl.when(pl.col("red_cards").shift(1).over("player_id") > 0)
+		.then(pl.lit(1.0))
+		.otherwise(pl.lit(0.0))
+		.alias("red_card_prev_game")
+	)
+
+	# Cumulative yellow cards this season (shifted by 1 to prevent leakage)
+	df = df.with_columns(
+		pl.col("yellow_cards")
+		.shift(1)
+		.cum_sum()
+		.over(["player_id", "season"])
+		.fill_null(0.0)
+		.alias("season_yellow_cards")
+	)
+
+	# --- Most common position over rolling window ---
+	# We compute this by finding the mode of position in the last N appearances.
+	# Polars doesn't have a rolling mode, so we use a struct-based approach:
+	# shift positions, then for each row take the last PLAYER_WINDOW values.
+	# For simplicity, we use the most recent non-Sub position as a proxy.
+	# If all recent positions are Sub, fall back to Sub.
+	df = df.with_columns(
+		pl.when(pl.col("position") != "Sub")
+		.then(pl.col("position"))
+		.otherwise(pl.lit(None))
+		.alias("_starter_position")
+	)
+	# Forward-fill the last starter position within each player
+	df = df.with_columns(
+		pl.col("_starter_position")
+		.shift(1)
+		.forward_fill()
+		.over("player_id")
+		.alias(f"most_common_position_r{PLAYER_WINDOW}")
+	)
+	# Fall back to "Sub" if no starter position found
+	df = df.with_columns(
+		pl.col(f"most_common_position_r{PLAYER_WINDOW}")
+		.fill_null("Sub")
+	)
+
+	# Select output columns
+	id_cols = ["player_id", "league", "season", "team_id", "team", "game_id", "date"]
+	feature_cols = (
+		[f"{stat}_per90_r{PLAYER_WINDOW}" for stat in _PER90_STATS if f"_sum_{stat}" in df.columns]
+		+ [f"avg_minutes_r{PLAYER_WINDOW}", f"appearances_r{PLAYER_WINDOW}",
+		   "red_card_prev_game", "season_yellow_cards",
+		   f"most_common_position_r{PLAYER_WINDOW}"]
+	)
+
+	return df.select(id_cols + feature_cols)
+
+
 def main():
 	"""Test the player feature engineering pipeline."""
 	print("Loading player data...")
