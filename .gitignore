@@ -12,6 +12,7 @@ wheels/
 
 # Folders
 secrets/
+.claude/
 
 # Files
 .env

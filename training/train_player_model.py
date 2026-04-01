@@ -13,7 +13,7 @@ import os
 import random
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
@@ -46,9 +46,7 @@ from training.train_utils import (
 	generate_rolling_cv_folds,
 	get_sorted_seasons,
 	load_frame,
-	resolve_test_season,
 )
-from utils.paths import PROJECT_ROOT
 
 DEFAULT_PARQUET = Path(os.environ.get("PARQUET_PATH", "data/training/understat_df.parquet"))
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -71,6 +69,53 @@ DEFAULT_CONFIG = {
 	"top_n_players": 16,
 	"seed": 42,
 }
+
+
+def build_player_model(config: dict) -> PlayerMatchModel:
+	"""Build a player-set model from the experiment config."""
+
+	return PlayerMatchModel(
+		input_dim=NUM_FEATURES,
+		team_encoder_type=config["encoder_type"],
+		hidden_dim=config["hidden_dim"],
+		team_output_dim=config["team_output_dim"],
+		num_heads=config["num_heads"],
+		num_sab_layers=config["num_sab_layers"],
+		position_embed_dim=config["position_embed_dim"],
+		dropout=config["dropout"],
+		use_implied=config["use_implied"],
+	)
+
+
+def clone_squad_tensors(squad_tensors: dict) -> dict:
+	"""Clone tensor-like squad inputs so experiments can mutate them safely."""
+
+	cloned = {}
+	for key, value in squad_tensors.items():
+		if isinstance(value, np.ndarray):
+			cloned[key] = value.copy()
+		elif isinstance(value, list):
+			cloned[key] = list(value)
+		else:
+			cloned[key] = value
+	return cloned
+
+
+def shuffle_squad_features(squad_tensors: dict, seed: int = 42) -> dict:
+	"""Shuffle valid player feature slots across matches while preserving masks."""
+
+	shuffled = clone_squad_tensors(squad_tensors)
+	rng = np.random.RandomState(seed)
+	for side in ["home", "away"]:
+		features = shuffled[f"{side}_players"]
+		mask = shuffled[f"{side}_mask"]
+		for feature_idx in range(features.shape[2]):
+			column = features[:, :, feature_idx].copy()
+			valid_values = column[mask].copy()
+			rng.shuffle(valid_values)
+			column[mask] = valid_values
+			features[:, :, feature_idx] = column
+	return shuffled
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +205,7 @@ def build_squad_data(match_df: pl.DataFrame, top_n: int = 16) -> Tuple[dict, pl.
 	print(f"  {len(non_null)} player-match records with valid rolling features")
 
 	print(f"Building projected squads (top {top_n} per team)...")
-	squads = build_projected_squads(raw, rolling, top_n=top_n)
+	squads = build_projected_squads(raw, rolling, match_df=match_df, top_n=top_n)
 	print(f"  {len(squads)} squad entries")
 
 	print("Assembling squad tensors...")
@@ -183,9 +228,6 @@ def split_by_seasons(
 	"""Split aligned data into train/val by season, returning indices and label arrays."""
 	season_str = aligned_df["season"].cast(pl.Utf8)
 
-	train_mask = season_str.is_in(train_seasons).to_numpy()
-	val_mask = season_str.is_in(val_seasons).to_numpy()
-
 	train_idx = aligned_df.filter(season_str.is_in(train_seasons))["_tensor_idx"].to_numpy()
 	val_idx = aligned_df.filter(season_str.is_in(val_seasons))["_tensor_idx"].to_numpy()
 
@@ -204,6 +246,7 @@ def split_by_seasons(
 			"odds_home": part["odds_home"].to_numpy(),
 			"odds_draw": part["odds_draw"].to_numpy(),
 			"odds_away": part["odds_away"].to_numpy(),
+			"dates": part["date"].to_numpy() if "date" in part.columns else None,
 		}
 
 	return train_idx, val_idx, extract_arrays(train_df), extract_arrays(val_df)
@@ -343,17 +386,7 @@ def train_player_model(config: dict = None):
 	test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], shuffle=False)
 
 	# Build model
-	model = PlayerMatchModel(
-		input_dim=NUM_FEATURES,
-		team_encoder_type=config["encoder_type"],
-		hidden_dim=config["hidden_dim"],
-		team_output_dim=config["team_output_dim"],
-		num_heads=config["num_heads"],
-		num_sab_layers=config["num_sab_layers"],
-		position_embed_dim=config["position_embed_dim"],
-		dropout=config["dropout"],
-		use_implied=config["use_implied"],
-	).to(DEVICE)
+	model = build_player_model(config).to(DEVICE)
 
 	n_params = sum(p.numel() for p in model.parameters())
 	print(f"\nModel parameters: {n_params:,}")

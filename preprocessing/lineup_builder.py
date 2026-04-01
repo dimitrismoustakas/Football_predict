@@ -13,6 +13,7 @@ import numpy as np
 import polars as pl
 
 from preprocessing.player_feature_engineering import (
+	PLAYER_MIN_GAMES,
 	PLAYER_WINDOW,
 	POSITION_TO_IDX,
 	POSITION_VOCABULARY,
@@ -42,6 +43,23 @@ POSITION_COL = f"most_common_position_r{PLAYER_WINDOW}"
 NUM_POSITIONS = len(POSITION_VOCABULARY)  # 17
 NUM_FEATURES = len(PLAYER_FEATURE_COLS)   # 10
 
+_PER90_STATS = [
+	"xg",
+	"xa",
+	"shots",
+	"key_passes",
+	"xg_chain",
+	"xg_buildup",
+	"yellow_cards",
+	"red_cards",
+]
+
+
+def _normalize_date_column(df: pl.DataFrame) -> pl.DataFrame:
+	if "date" not in df.columns:
+		return df
+	return df.with_columns(pl.col("date").cast(pl.Datetime("us")))
+
 
 def _compute_cumulative_minutes(raw_player_data: pl.DataFrame) -> pl.DataFrame:
 	"""
@@ -54,6 +72,7 @@ def _compute_cumulative_minutes(raw_player_data: pl.DataFrame) -> pl.DataFrame:
 	leakage — it represents total minutes played *before* this game.
 	"""
 	df = prepare_player_data(raw_player_data)
+	df = _normalize_date_column(df)
 	df = df.sort(["league", "team_id", "player_id", "date"])
 
 	df = df.with_columns(
@@ -71,9 +90,137 @@ def _compute_cumulative_minutes(raw_player_data: pl.DataFrame) -> pl.DataFrame:
 	])
 
 
+def _compute_cumulative_minutes_history(raw_player_data: pl.DataFrame) -> pl.DataFrame:
+	"""Compute cumulative minutes after each appearance for leak-free as-of joins."""
+
+	df = prepare_player_data(raw_player_data)
+	df = _normalize_date_column(df)
+	df = df.sort(["league", "team_id", "player_id", "date"])
+	df = df.with_columns(
+		pl.col("minutes")
+		.cum_sum()
+		.over(["league", "team_id", "player_id"])
+		.alias("cumulative_minutes")
+	)
+	return df.select(["league", "team_id", "player_id", "date", "cumulative_minutes"])
+
+
+def _compute_player_state_history(raw_player_data: pl.DataFrame) -> pl.DataFrame:
+	"""Compute player state after each appearance for leak-free as-of joins."""
+
+	df = prepare_player_data(raw_player_data)
+	df = _normalize_date_column(df)
+	if "position" not in df.columns:
+		raise ValueError("Player data must include a 'position' column")
+	for col in ["yellow_cards", "red_cards"]:
+		if col not in df.columns:
+			df = df.with_columns(pl.lit(0.0).alias(col))
+		else:
+			df = df.with_columns(pl.col(col).cast(pl.Float64))
+	df = df.sort(["player_id", "date"])
+	df = df.with_columns(pl.lit(1.0).alias("_one"))
+
+	rolling_exprs = []
+	for stat in _PER90_STATS:
+		if stat not in df.columns:
+			continue
+		rolling_exprs.append(
+			pl.col(stat)
+			.rolling_sum(window_size=PLAYER_WINDOW, min_samples=PLAYER_MIN_GAMES)
+			.over("player_id")
+			.alias(f"_sum_{stat}")
+		)
+	rolling_exprs.append(
+		pl.col("minutes")
+		.rolling_sum(window_size=PLAYER_WINDOW, min_samples=PLAYER_MIN_GAMES)
+		.over("player_id")
+		.alias("_sum_minutes")
+	)
+	rolling_exprs.append(
+		pl.col("minutes")
+		.rolling_mean(window_size=PLAYER_WINDOW, min_samples=PLAYER_MIN_GAMES)
+		.over("player_id")
+		.alias(f"avg_minutes_r{PLAYER_WINDOW}")
+	)
+	rolling_exprs.append(
+		pl.col("_one")
+		.rolling_sum(window_size=PLAYER_WINDOW, min_samples=PLAYER_MIN_GAMES)
+		.over("player_id")
+		.alias(f"appearances_r{PLAYER_WINDOW}")
+	)
+	df = df.with_columns(rolling_exprs)
+
+	per90_exprs = []
+	for stat in _PER90_STATS:
+		if f"_sum_{stat}" not in df.columns:
+			continue
+		per90_exprs.append(
+			pl.when(pl.col("_sum_minutes") >= 45)
+			.then(pl.col(f"_sum_{stat}") / pl.col("_sum_minutes") * 90.0)
+			.otherwise(pl.lit(None))
+			.alias(f"{stat}_per90_r{PLAYER_WINDOW}")
+		)
+	df = df.with_columns(per90_exprs)
+
+	df = df.with_columns(
+		pl.when(pl.col("red_cards") > 0)
+		.then(pl.lit(1.0))
+		.otherwise(pl.lit(0.0))
+		.alias("red_card_prev_game")
+	)
+	df = df.with_columns(
+		pl.col("yellow_cards")
+		.cum_sum()
+		.over(["player_id", "season"])
+		.fill_null(0.0)
+		.alias("season_yellow_cards")
+	)
+	df = df.with_columns(
+		pl.when(pl.col("position") != "Sub")
+		.then(pl.col("position"))
+		.otherwise(pl.lit(None))
+		.alias("_starter_position")
+	)
+	df = df.with_columns(
+		pl.col("_starter_position")
+		.forward_fill()
+		.over("player_id")
+		.alias(POSITION_COL)
+	)
+	df = df.with_columns(pl.col(POSITION_COL).fill_null("Sub"))
+
+	return df.select([
+		"league",
+		"team_id",
+		"player_id",
+		"date",
+		*PLAYER_FEATURE_COLS,
+		POSITION_COL,
+	])
+
+
+def _build_team_match_keys(raw_player_data: pl.DataFrame, match_df: pl.DataFrame | None) -> pl.DataFrame:
+	prepared = prepare_player_data(raw_player_data)
+	prepared = _normalize_date_column(prepared)
+	if match_df is None:
+		return prepared.select(["league", "season", "game_id", "date", "team_id"]).unique()
+
+	date_lookup = prepared.select(["game_id", "date"]).unique()
+	season_lookup = prepared.select(["game_id", "season"]).unique()
+	match_keys = _normalize_date_column(match_df)
+	if "date" not in match_keys.columns:
+		match_keys = match_keys.join(date_lookup, on="game_id", how="left")
+	if "season" not in match_keys.columns:
+		match_keys = match_keys.join(season_lookup, on="game_id", how="left")
+	home_keys = match_keys.select(["league", "season", "game_id", "date", "home_team_id"]).rename({"home_team_id": "team_id"})
+	away_keys = match_keys.select(["league", "season", "game_id", "date", "away_team_id"]).rename({"away_team_id": "team_id"})
+	return pl.concat([home_keys, away_keys], how="vertical_relaxed").unique()
+
+
 def build_projected_squads(
 	raw_player_data: pl.DataFrame,
 	player_rolling: pl.DataFrame,
+	match_df: pl.DataFrame | None = None,
 	top_n: int = 16,
 ) -> pl.DataFrame:
 	"""
@@ -92,20 +239,33 @@ def build_projected_squads(
 		- cumulative_minutes (for sorting/ranking)
 		- squad_rank (1 = most minutes, top_n = least among selected)
 	"""
-	# Step 1: Cumulative minutes per (team, player) up to each match
-	cum_minutes = _compute_cumulative_minutes(raw_player_data)
+	_ = player_rolling
+	team_match_keys = _build_team_match_keys(raw_player_data, match_df)
+	team_player_pool = prepare_player_data(raw_player_data).select(["league", "team_id", "player_id"]).unique()
+	candidate_rows = team_match_keys.join(team_player_pool, on=["league", "team_id"], how="inner")
+	candidate_rows = candidate_rows.sort(["league", "team_id", "player_id", "date"])
 
-	# Step 2: Join rolling features onto cumulative minutes
-	# player_rolling has one row per (player_id, game_id) with pre-match features
-	join_cols = ["league", "team_id", "player_id", "game_id"]
-	squads = cum_minutes.join(
-		player_rolling,
-		on=join_cols,
-		how="inner",  # only keep players with rolling features available
+	cum_minutes_history = _compute_cumulative_minutes_history(raw_player_data).sort(["league", "team_id", "player_id", "date"])
+	player_state_history = _compute_player_state_history(raw_player_data).sort(["league", "team_id", "player_id", "date"])
+
+	squads = candidate_rows.join_asof(
+		cum_minutes_history,
+		on="date",
+		by=["league", "team_id", "player_id"],
+		strategy="backward",
+		allow_exact_matches=False,
 	)
+	squads = squads.join_asof(
+		player_state_history,
+		on="date",
+		by=["league", "team_id", "player_id"],
+		strategy="backward",
+		allow_exact_matches=False,
+	)
+	squads = squads.filter(pl.col("cumulative_minutes").is_not_null())
 
 	# Step 3: Rank players within each (team, match) by cumulative minutes
-	squads = squads.sort(["league", "team_id", "game_id", "cumulative_minutes"], descending=[False, False, False, True])
+	squads = squads.sort(["league", "team_id", "game_id", "cumulative_minutes", "player_id"], descending=[False, False, False, True, False])
 	squads = squads.with_columns(
 		pl.col("cumulative_minutes")
 		.rank(method="ordinal", descending=True)
@@ -221,5 +381,5 @@ def load_and_build_squad_tensors(
 	"""
 	raw = load_all_player_data()
 	rolling = compute_player_rolling_features(raw)
-	squads = build_projected_squads(raw, rolling, top_n=top_n)
+	squads = build_projected_squads(raw, rolling, match_df=match_df, top_n=top_n)
 	return assemble_squad_tensors(squads, match_df, max_players=top_n)

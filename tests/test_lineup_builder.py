@@ -109,17 +109,25 @@ class TestBuildProjectedSquads(unittest.TestCase):
 	def setUp(self):
 		self.raw = _make_player_data(n_matches_per_player=12, n_players=20)
 		self.rolling = compute_player_rolling_features(self.raw)
+		self.match_df = pl.DataFrame({
+			"game_id": list(range(1, 13)),
+			"league": ["ENG-Premier League"] * 12,
+			"season": ["2425"] * 12,
+			"date": [f"2024-09-{day:02d}" for day in range(1, 13)],
+			"home_team_id": [1] * 12,
+			"away_team_id": [2] * 12,
+		}).with_columns(pl.col("date").str.to_datetime("%Y-%m-%d"))
 
 	def test_max_players_per_team_per_match(self):
 		top_n = 10
-		squads = build_projected_squads(self.raw, self.rolling, top_n=top_n)
+		squads = build_projected_squads(self.raw, self.rolling, match_df=self.match_df, top_n=top_n)
 		# No team-match combo should have more than top_n players
 		counts = squads.group_by(["game_id", "team_id"]).len()
 		self.assertTrue((counts["len"] <= top_n).all(),
 						f"Some teams have more than {top_n} players")
 
 	def test_squad_rank_ordering(self):
-		squads = build_projected_squads(self.raw, self.rolling, top_n=16)
+		squads = build_projected_squads(self.raw, self.rolling, match_df=self.match_df, top_n=16)
 		# squad_rank should be 1..N for each team-match
 		for group in squads.group_by(["game_id", "team_id"]):
 			rows = group[1] if isinstance(group, tuple) else group
@@ -127,19 +135,224 @@ class TestBuildProjectedSquads(unittest.TestCase):
 			expected = list(range(1, len(ranks) + 1))
 			self.assertEqual(ranks, expected)
 
+	def test_projected_squads_can_include_player_without_current_match_row(self):
+		rows = [
+			{
+				"player_id": 1,
+				"player": "Known_Starter",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 1,
+				"match_id": "2024-09-01 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.2,
+				"xa": 0.1,
+				"assists": 0.0,
+				"shots": 2.0,
+				"key_passes": 1.0,
+				"xg_chain": 0.4,
+				"xg_buildup": 0.3,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "FW",
+				"position_id": 1,
+			},
+			{
+				"player_id": 1,
+				"player": "Known_Starter",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 2,
+				"match_id": "2024-09-02 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.2,
+				"xa": 0.1,
+				"assists": 0.0,
+				"shots": 2.0,
+				"key_passes": 1.0,
+				"xg_chain": 0.4,
+				"xg_buildup": 0.3,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "FW",
+				"position_id": 1,
+			},
+			{
+				"player_id": 1,
+				"player": "Known_Starter",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 3,
+				"match_id": "2024-09-03 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.2,
+				"xa": 0.1,
+				"assists": 0.0,
+				"shots": 2.0,
+				"key_passes": 1.0,
+				"xg_chain": 0.4,
+				"xg_buildup": 0.3,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "FW",
+				"position_id": 1,
+			},
+			{
+				"player_id": 2,
+				"player": "Bench_Player",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 1,
+				"match_id": "2024-09-01 Team_A-Team_B",
+				"minutes": 30.0,
+				"goals": 0.0,
+				"xg": 0.1,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.2,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "MC",
+				"position_id": 2,
+			},
+			{
+				"player_id": 2,
+				"player": "Bench_Player",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 2,
+				"match_id": "2024-09-02 Team_A-Team_B",
+				"minutes": 30.0,
+				"goals": 0.0,
+				"xg": 0.1,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.2,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "MC",
+				"position_id": 2,
+			},
+			{
+				"player_id": 3,
+				"player": "Opponent",
+				"team_id": 2,
+				"team": "Team_B",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 1,
+				"match_id": "2024-09-01 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.1,
+				"xa": 0.1,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 1.0,
+				"xg_chain": 0.2,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "DC",
+				"position_id": 3,
+			},
+			{
+				"player_id": 3,
+				"player": "Opponent",
+				"team_id": 2,
+				"team": "Team_B",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 2,
+				"match_id": "2024-09-02 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.1,
+				"xa": 0.1,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 1.0,
+				"xg_chain": 0.2,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "DC",
+				"position_id": 3,
+			},
+			{
+				"player_id": 3,
+				"player": "Opponent",
+				"team_id": 2,
+				"team": "Team_B",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 3,
+				"match_id": "2024-09-03 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.1,
+				"xa": 0.1,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 1.0,
+				"xg_chain": 0.2,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "DC",
+				"position_id": 3,
+			},
+		]
+		raw = pl.DataFrame(rows)
+		rolling = compute_player_rolling_features(raw)
+		match_df = pl.DataFrame({
+			"game_id": [1, 2, 3],
+			"league": ["ENG-Premier League"] * 3,
+			"season": ["2425"] * 3,
+			"date": ["2024-09-01", "2024-09-02", "2024-09-03"],
+			"home_team_id": [1] * 3,
+			"away_team_id": [2] * 3,
+		}).with_columns(pl.col("date").str.to_datetime("%Y-%m-%d"))
+
+		squads = build_projected_squads(raw, rolling, match_df=match_df, top_n=1)
+		team_a_game_3 = squads.filter((pl.col("game_id") == 3) & (pl.col("team_id") == 1))
+		self.assertEqual(team_a_game_3["player_id"].to_list(), [1])
+
 
 class TestAssembleSquadTensors(unittest.TestCase):
 	def setUp(self):
 		self.raw = _make_player_data(n_matches_per_player=12, n_players=20)
 		self.rolling = compute_player_rolling_features(self.raw)
-		self.squads = build_projected_squads(self.raw, self.rolling, top_n=16)
-		# Create a match_df
 		self.match_df = pl.DataFrame({
 			"game_id": list(range(1, 13)),
 			"league": ["ENG-Premier League"] * 12,
+			"season": ["2425"] * 12,
+			"date": [f"2024-09-{day:02d}" for day in range(1, 13)],
 			"home_team_id": [1] * 12,
 			"away_team_id": [2] * 12,
-		})
+		}).with_columns(pl.col("date").str.to_datetime("%Y-%m-%d"))
+		self.squads = build_projected_squads(self.raw, self.rolling, match_df=self.match_df, top_n=16)
+		# Create a match_df
+		self.match_df = self.match_df.select(["game_id", "league", "home_team_id", "away_team_id"])
 
 	def test_tensor_shapes(self):
 		max_p = 16
