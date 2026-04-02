@@ -1,17 +1,11 @@
 """
-Run a canonical-style evaluation and anti-leakage test suite for the player-set model.
-
-The current default target is the Deep Sets encoder because the Set Transformer
-variant has not been run locally yet.
+Run a canonical-style evaluation and anti-leakage test suite for the Set Transformer model.
 """
 
 from __future__ import annotations
 
 import argparse
-from csv import DictReader, DictWriter
-from datetime import datetime, timezone
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -58,106 +52,12 @@ DEFAULT_PARQUET = PROJECT_ROOT / "data" / "training" / "understat_df.parquet"
 DEFAULT_OUTPUT_PATH = TRACKED_ASSETS_DIR / "tmp" / "player_model_evaluation.json"
 EVALUATION_CONFIG_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "evaluation.json"
 LATEST_MAIN_METRICS_PATH = PROJECT_ROOT / "artifacts" / "models" / "latest_main_model_metrics.json"
-DEEP_SETS_EXPERIMENT_LOG_PATH = PROJECT_ROOT / "artifacts" / "experiment_metrics" / "deep_sets_runs.tsv"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-EXPERIMENT_LOG_COLUMNS = [
-	"recorded_at_utc",
-	"git_commit",
-	"git_branch",
-	"cv_log_loss",
-	"delta",
-	"best_epoch",
-	"status",
-	"description",
-	"cv_rps",
-	"val_log_loss",
-	"test_log_loss",
-	"cv_metrics_json",
-	"test_metrics_json",
-]
 
 
 def load_json(path: Path) -> dict:
 	with open(path, "r", encoding="utf-8") as file:
 		return json.load(file)
-
-
-def serialize_log_value(value):
-	if isinstance(value, (dict, list)):
-		return json.dumps(value, separators=(",", ":"), sort_keys=True)
-	if value is None:
-		return ""
-	return value
-
-
-def append_tsv_row(path: Path, row: dict):
-	path.parent.mkdir(parents=True, exist_ok=True)
-	serialized = {key: serialize_log_value(row.get(key, "")) for key in EXPERIMENT_LOG_COLUMNS}
-	write_header = not path.exists() or path.stat().st_size == 0
-	with open(path, "a", encoding="utf-8", newline="") as file:
-		writer = DictWriter(file, fieldnames=EXPERIMENT_LOG_COLUMNS, delimiter="\t")
-		if write_header:
-			writer.writeheader()
-		writer.writerow(serialized)
-
-
-def load_tsv_rows(path: Path) -> list[dict]:
-	if not path.exists() or path.stat().st_size == 0:
-		return []
-	with open(path, "r", encoding="utf-8", newline="") as file:
-		return list(DictReader(file, delimiter="\t"))
-
-
-def find_latest_kept_row(rows: list[dict]) -> dict | None:
-	for row in reversed(rows):
-		if row.get("status") == "keep":
-			return row
-	return None
-
-
-def run_git_command(*args: str) -> str:
-	result = subprocess.run(
-		args,
-		cwd=PROJECT_ROOT,
-		check=True,
-		capture_output=True,
-		text=True,
-	)
-	return result.stdout.strip()
-
-
-def append_deep_sets_experiment_log(summary: dict, description: str, ledger_path: Path) -> dict:
-	if "," in description:
-		raise ValueError("Deep Sets ledger descriptions must not contain commas.")
-	rows = load_tsv_rows(ledger_path)
-	reference_row = find_latest_kept_row(rows)
-	objective_metrics = summary["player_model"]["objective_metrics"]
-	test_metrics = summary["player_model"]["test_metrics"]
-	validation_metrics = summary["player_model"]["validation_metrics"]
-	cv_log_loss = float(objective_metrics["log_loss"])
-	reference_cv = float(reference_row["cv_log_loss"]) if reference_row and reference_row.get("cv_log_loss") else None
-	row = {
-		"recorded_at_utc": datetime.now(timezone.utc).isoformat(),
-		"git_commit": run_git_command("git", "rev-parse", "--short", "HEAD"),
-		"git_branch": run_git_command("git", "branch", "--show-current"),
-		"cv_log_loss": cv_log_loss,
-		"delta": (reference_cv - cv_log_loss) if reference_cv is not None else "",
-		"best_epoch": int(summary["player_model"]["best_epoch"]),
-		"status": "",
-		"description": description,
-		"cv_rps": float(objective_metrics["rps"]),
-		"val_log_loss": float(validation_metrics["log_loss"]),
-		"test_log_loss": float(test_metrics["log_loss"]),
-		"cv_metrics_json": objective_metrics,
-		"test_metrics_json": test_metrics,
-	}
-	append_tsv_row(ledger_path, row)
-	return {
-		"ledger_path": str(ledger_path),
-		"reference_cv_log_loss": reference_cv,
-		"delta_vs_latest_keep": (reference_cv - cv_log_loss) if reference_cv is not None else None,
-		"description": description,
-	}
 
 
 def summarize_metrics(metrics: dict) -> dict:
@@ -654,12 +554,14 @@ def build_summary(args) -> dict:
 	config["batch_size"] = args.batch_size
 	config["use_implied"] = not args.no_implied
 	config["head_type"] = args.head_type
-	config["mlp_market_features"] = bool(args.mlp_market_features)
-	config["linear_residual_head"] = bool(args.linear_residual_head)
 	if args.hidden_dim is not None:
 		config["hidden_dim"] = args.hidden_dim
 	if args.team_output_dim is not None:
 		config["team_output_dim"] = args.team_output_dim
+	if args.num_heads is not None:
+		config["num_heads"] = args.num_heads
+	if args.num_sab_layers is not None:
+		config["num_sab_layers"] = args.num_sab_layers
 	if args.dropout is not None:
 		config["dropout"] = args.dropout
 	if args.lr is not None:
@@ -670,28 +572,12 @@ def build_summary(args) -> dict:
 		config["gate_hidden_dim"] = args.gate_hidden_dim
 	if args.gate_target_budget is not None:
 		config["gate_target_budget"] = args.gate_target_budget
-	if args.player_only_gate:
-		config["gate_use_market_features"] = False
-	if args.shared_gate:
-		config["shared_gate"] = True
-	if args.linear_gate:
-		config["linear_gate"] = True
 	if args.market_feature_stats is not None:
 		config["market_feature_stats"] = args.market_feature_stats
 	if args.market_logit_scale is not None:
 		config["market_logit_scale"] = args.market_logit_scale
-	if args.learn_market_bias:
-		config["learn_market_bias"] = True
 	if args.learn_market_class_scale:
 		config["learn_market_class_scale"] = True
-	if args.gate_mean_weight is not None:
-		config["gate_mean_weight"] = args.gate_mean_weight
-	if args.gate_sat_weight is not None:
-		config["gate_sat_weight"] = args.gate_sat_weight
-	if args.lambda_repulsion is not None:
-		config["lambda_repulsion"] = args.lambda_repulsion
-	if args.lambda_logit_delta is not None:
-		config["lambda_logit_delta"] = args.lambda_logit_delta
 
 	evaluation_config = load_json(EVALUATION_CONFIG_PATH)
 	set_seed(config["seed"])
@@ -967,51 +853,31 @@ def main():
 	parser = argparse.ArgumentParser()
 	parser.add_argument("--parquet-path", type=Path, default=DEFAULT_PARQUET)
 	parser.add_argument("--output-path", type=Path, default=DEFAULT_OUTPUT_PATH)
-	parser.add_argument("--encoder", choices=["deep_sets", "deep_sets_role_pool", "deep_sets_stats", "weighted_deep_sets", "set_transformer"], default="deep_sets")
+	parser.add_argument("--encoder", choices=["set_transformer"], default="set_transformer")
 	parser.add_argument("--head-type", choices=["mlp", "gated_residual"], default="mlp")
-	parser.add_argument("--mlp-market-features", action="store_true")
-	parser.add_argument("--linear-residual-head", action="store_true")
 	parser.add_argument("--top-n-players", type=int, default=16)
 	parser.add_argument("--max-epochs", type=int, default=35)
 	parser.add_argument("--batch-size", type=int, default=256)
 	parser.add_argument("--no-implied", action="store_true")
 	parser.add_argument("--hidden-dim", type=int)
 	parser.add_argument("--team-output-dim", type=int)
+	parser.add_argument("--num-heads", type=int)
+	parser.add_argument("--num-sab-layers", type=int)
 	parser.add_argument("--dropout", type=float)
 	parser.add_argument("--lr", type=float)
 	parser.add_argument("--weight-decay", type=float)
 	parser.add_argument("--gate-hidden-dim", type=int)
 	parser.add_argument("--gate-target-budget", type=float)
-	parser.add_argument("--player-only-gate", action="store_true")
-	parser.add_argument("--shared-gate", action="store_true")
-	parser.add_argument("--linear-gate", action="store_true")
 	parser.add_argument("--market-feature-stats", type=int, choices=[3, 4, 5])
 	parser.add_argument("--market-logit-scale", type=float)
-	parser.add_argument("--learn-market-bias", action="store_true")
 	parser.add_argument("--learn-market-class-scale", action="store_true")
-	parser.add_argument("--gate-mean-weight", type=float)
-	parser.add_argument("--gate-sat-weight", type=float)
-	parser.add_argument("--lambda-repulsion", type=float)
-	parser.add_argument("--lambda-logit-delta", type=float)
-	parser.add_argument("--description", type=str, help="Short text for appending a tracked Deep Sets experiment run")
-	parser.add_argument("--ledger-path", type=Path, default=DEEP_SETS_EXPERIMENT_LOG_PATH)
 	args = parser.parse_args()
 
 	summary = build_summary(args)
-	if args.description:
-		if not str(args.encoder).startswith("deep_sets"):
-			raise ValueError("Tracked experiment logging is currently reserved for Deep Sets family runs.")
-		summary["experiment_log"] = append_deep_sets_experiment_log(summary, args.description, args.ledger_path)
 	args.output_path.parent.mkdir(parents=True, exist_ok=True)
 	with open(args.output_path, "w", encoding="utf-8") as file:
 		json.dump(summary, file, indent=2)
 	print_summary(summary)
-	if "experiment_log" in summary:
-		log_info = summary["experiment_log"]
-		print("")
-		print(f"Appended Deep Sets run to {log_info['ledger_path']}")
-		print(f"Reference keep cv_log_loss: {log_info['reference_cv_log_loss']}")
-		print(f"Delta vs latest keep: {log_info['delta_vs_latest_keep']}")
 	print(f"\nWrote summary to {args.output_path}")
 
 

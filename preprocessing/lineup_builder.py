@@ -5,8 +5,7 @@ Builds pre-match "expected squads" for each team by selecting the top-N players
 by cumulative minutes up to (but not including) the match date.  This avoids
 leaking actual lineup information into the model.
 
-The module produces padded tensors suitable for set-based neural networks
-(Deep Sets, Set Transformer).
+The module produces padded tensors suitable for player-set neural networks.
 """
 
 import numpy as np

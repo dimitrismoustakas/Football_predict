@@ -251,7 +251,7 @@ def merge_with_match_data(
 
 
 # ---------------------------------------------------------------------------
-# Per-player rolling features (for Set Transformer / player-level modelling)
+# Per-player rolling features for player-level modelling
 # ---------------------------------------------------------------------------
 
 PLAYER_WINDOW = 10   # Rolling window over player's personal appearances

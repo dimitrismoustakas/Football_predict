@@ -901,16 +901,22 @@ class TestAssembleSquadTensors(unittest.TestCase):
 			self.assertTrue((pos <= len(POSITION_TO_IDX)).all())
 
 
-class TestSetTransformerModel(unittest.TestCase):
+class TestPlayerSetModel(unittest.TestCase):
 	"""Smoke tests for the model forward pass."""
 
-	def test_deep_sets_forward(self):
+	def test_set_transformer_forward(self):
 		import torch
 		from training.models.set_transformer import PlayerMatchModel
 
 		model = PlayerMatchModel(
-			input_dim=NUM_FEATURES, team_encoder_type="deep_sets",
-			hidden_dim=32, team_output_dim=16, dropout=0.0)
+			input_dim=NUM_FEATURES,
+			team_encoder_type="set_transformer",
+			hidden_dim=32,
+			team_output_dim=16,
+			num_heads=2,
+			num_sab_layers=1,
+			dropout=0.0,
+		)
 		model.eval()
 
 		batch = 4
@@ -927,15 +933,17 @@ class TestSetTransformerModel(unittest.TestCase):
 			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
 		self.assertEqual(logits.shape, (batch, 3))
 
-	def test_deep_sets_gated_residual_forward(self):
+	def test_set_transformer_gated_residual_forward(self):
 		import torch
 		from training.models.set_transformer import PlayerMatchModel
 
 		model = PlayerMatchModel(
 			input_dim=NUM_FEATURES,
-			team_encoder_type="deep_sets",
+			team_encoder_type="set_transformer",
 			hidden_dim=32,
 			team_output_dim=16,
+			num_heads=2,
+			num_sab_layers=1,
 			dropout=0.0,
 			use_implied=True,
 			head_type="gated_residual",
@@ -958,160 +966,20 @@ class TestSetTransformerModel(unittest.TestCase):
 			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, raw_margin)
 		self.assertEqual(logits.shape, (batch, 3))
 
-	def test_set_transformer_forward(self):
-		import torch
-		from training.models.set_transformer import PlayerMatchModel
-
-		model = PlayerMatchModel(
-			input_dim=NUM_FEATURES, team_encoder_type="set_transformer",
-			hidden_dim=32, team_output_dim=16, num_heads=2, num_sab_layers=1, dropout=0.0)
-		model.eval()
-
-		batch = 4
-		max_p = 16
-		home_feat = torch.randn(batch, max_p, NUM_FEATURES)
-		home_pos = torch.randint(0, 18, (batch, max_p))
-		home_mask = torch.ones(batch, max_p, dtype=torch.bool)
-		away_feat = torch.randn(batch, max_p, NUM_FEATURES)
-		away_pos = torch.randint(0, 18, (batch, max_p))
-		away_mask = torch.ones(batch, max_p, dtype=torch.bool)
-		implied = torch.rand(batch, 3)
-
-		with torch.no_grad():
-			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
-		self.assertEqual(logits.shape, (batch, 3))
-
-	def test_weighted_deep_sets_forward_and_permutation_invariance(self):
-		import torch
-		from training.models.set_transformer import PlayerMatchModel
-
-		model = PlayerMatchModel(
-			input_dim=NUM_FEATURES, team_encoder_type="weighted_deep_sets",
-			hidden_dim=32, team_output_dim=16, dropout=0.0)
-		model.eval()
-
-		batch = 4
-		max_p = 16
-		home_feat = torch.randn(batch, max_p, NUM_FEATURES)
-		home_pos = torch.randint(1, 18, (batch, max_p))
-		home_mask = torch.ones(batch, max_p, dtype=torch.bool)
-		away_feat = torch.randn(batch, max_p, NUM_FEATURES)
-		away_pos = torch.randint(1, 18, (batch, max_p))
-		away_mask = torch.ones(batch, max_p, dtype=torch.bool)
-		implied = torch.rand(batch, 3)
-		perm = torch.randperm(max_p)
-
-		with torch.no_grad():
-			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
-			logits_perm = model(
-				home_feat[:, perm], home_pos[:, perm], home_mask[:, perm],
-				away_feat[:, perm], away_pos[:, perm], away_mask[:, perm],
-				implied,
-			)
-		self.assertEqual(logits.shape, (batch, 3))
-		self.assertTrue(torch.allclose(logits, logits_perm, atol=1e-6, rtol=1e-6))
-
-	def test_stats_deep_sets_forward_and_permutation_invariance(self):
-		import torch
-		from training.models.set_transformer import PlayerMatchModel
-
-		model = PlayerMatchModel(
-			input_dim=NUM_FEATURES, team_encoder_type="deep_sets_stats",
-			hidden_dim=32, team_output_dim=16, dropout=0.0)
-		model.eval()
-
-		batch = 4
-		max_p = 16
-		home_feat = torch.randn(batch, max_p, NUM_FEATURES)
-		home_pos = torch.randint(1, 18, (batch, max_p))
-		home_mask = torch.ones(batch, max_p, dtype=torch.bool)
-		away_feat = torch.randn(batch, max_p, NUM_FEATURES)
-		away_pos = torch.randint(1, 18, (batch, max_p))
-		away_mask = torch.ones(batch, max_p, dtype=torch.bool)
-		implied = torch.rand(batch, 3)
-		perm = torch.randperm(max_p)
-
-		with torch.no_grad():
-			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
-			logits_perm = model(
-				home_feat[:, perm], home_pos[:, perm], home_mask[:, perm],
-				away_feat[:, perm], away_pos[:, perm], away_mask[:, perm],
-				implied,
-			)
-		self.assertEqual(logits.shape, (batch, 3))
-		self.assertTrue(torch.allclose(logits, logits_perm, atol=1e-6, rtol=1e-6))
-
-	def test_role_aware_deep_sets_forward_and_permutation_invariance(self):
-		import torch
-		from training.models.set_transformer import PlayerMatchModel
-
-		model = PlayerMatchModel(
-			input_dim=NUM_FEATURES, team_encoder_type="deep_sets_role_pool",
-			hidden_dim=32, team_output_dim=16, dropout=0.0)
-		model.eval()
-
-		batch = 4
-		max_p = 16
-		home_feat = torch.randn(batch, max_p, NUM_FEATURES)
-		home_pos = torch.randint(1, 18, (batch, max_p))
-		home_mask = torch.ones(batch, max_p, dtype=torch.bool)
-		away_feat = torch.randn(batch, max_p, NUM_FEATURES)
-		away_pos = torch.randint(1, 18, (batch, max_p))
-		away_mask = torch.ones(batch, max_p, dtype=torch.bool)
-		implied = torch.rand(batch, 3)
-		perm = torch.randperm(max_p)
-
-		with torch.no_grad():
-			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
-			logits_perm = model(
-				home_feat[:, perm], home_pos[:, perm], home_mask[:, perm],
-				away_feat[:, perm], away_pos[:, perm], away_mask[:, perm],
-				implied,
-			)
-		self.assertEqual(logits.shape, (batch, 3))
-		self.assertTrue(torch.allclose(logits, logits_perm, atol=1e-6, rtol=1e-6))
-
-	def test_role_aware_deep_sets_mlp_market_features_forward(self):
-		import torch
-		from training.models.set_transformer import PlayerMatchModel
-
-		model = PlayerMatchModel(
-			input_dim=NUM_FEATURES,
-			team_encoder_type="deep_sets_role_pool",
-			hidden_dim=32,
-			team_output_dim=16,
-			dropout=0.0,
-			use_implied=True,
-			head_type="mlp",
-			mlp_market_features=True,
-			market_feature_stats=4,
-		)
-		model.eval()
-
-		batch = 4
-		max_p = 16
-		home_feat = torch.randn(batch, max_p, NUM_FEATURES)
-		home_pos = torch.randint(1, 18, (batch, max_p))
-		home_mask = torch.ones(batch, max_p, dtype=torch.bool)
-		away_feat = torch.randn(batch, max_p, NUM_FEATURES)
-		away_pos = torch.randint(1, 18, (batch, max_p))
-		away_mask = torch.ones(batch, max_p, dtype=torch.bool)
-		implied = torch.rand(batch, 3)
-		implied = implied / implied.sum(dim=1, keepdim=True)
-		raw_margin = torch.rand(batch)
-
-		with torch.no_grad():
-			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, raw_margin)
-		self.assertEqual(logits.shape, (batch, 3))
-
 	def test_masking_changes_output(self):
 		"""Masking out players should change the model output."""
 		import torch
 		from training.models.set_transformer import PlayerMatchModel
 
 		model = PlayerMatchModel(
-			input_dim=NUM_FEATURES, team_encoder_type="deep_sets",
-			hidden_dim=32, team_output_dim=16, dropout=0.0)
+			input_dim=NUM_FEATURES,
+			team_encoder_type="set_transformer",
+			hidden_dim=32,
+			team_output_dim=16,
+			num_heads=2,
+			num_sab_layers=1,
+			dropout=0.0,
+		)
 		model.eval()
 
 		batch = 2
