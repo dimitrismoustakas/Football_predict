@@ -8,7 +8,10 @@ variant has not been run locally yet.
 from __future__ import annotations
 
 import argparse
+from csv import DictReader, DictWriter
+from datetime import datetime, timezone
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -42,6 +45,7 @@ from training.train_utils import (
 	CAT_COLS,
 	build_data_snapshot,
 	evaluate_implied_baseline,
+	extract_categorical_features,
 	generate_rolling_cv_folds,
 	load_frame,
 	prepare_data,
@@ -54,12 +58,106 @@ DEFAULT_PARQUET = PROJECT_ROOT / "data" / "training" / "understat_df.parquet"
 DEFAULT_OUTPUT_PATH = TRACKED_ASSETS_DIR / "tmp" / "player_model_evaluation.json"
 EVALUATION_CONFIG_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "evaluation.json"
 LATEST_MAIN_METRICS_PATH = PROJECT_ROOT / "artifacts" / "models" / "latest_main_model_metrics.json"
+DEEP_SETS_EXPERIMENT_LOG_PATH = PROJECT_ROOT / "artifacts" / "experiment_metrics" / "deep_sets_runs.tsv"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+EXPERIMENT_LOG_COLUMNS = [
+	"recorded_at_utc",
+	"git_commit",
+	"git_branch",
+	"cv_log_loss",
+	"delta",
+	"best_epoch",
+	"status",
+	"description",
+	"cv_rps",
+	"val_log_loss",
+	"test_log_loss",
+	"cv_metrics_json",
+	"test_metrics_json",
+]
 
 
 def load_json(path: Path) -> dict:
 	with open(path, "r", encoding="utf-8") as file:
 		return json.load(file)
+
+
+def serialize_log_value(value):
+	if isinstance(value, (dict, list)):
+		return json.dumps(value, separators=(",", ":"), sort_keys=True)
+	if value is None:
+		return ""
+	return value
+
+
+def append_tsv_row(path: Path, row: dict):
+	path.parent.mkdir(parents=True, exist_ok=True)
+	serialized = {key: serialize_log_value(row.get(key, "")) for key in EXPERIMENT_LOG_COLUMNS}
+	write_header = not path.exists() or path.stat().st_size == 0
+	with open(path, "a", encoding="utf-8", newline="") as file:
+		writer = DictWriter(file, fieldnames=EXPERIMENT_LOG_COLUMNS, delimiter="\t")
+		if write_header:
+			writer.writeheader()
+		writer.writerow(serialized)
+
+
+def load_tsv_rows(path: Path) -> list[dict]:
+	if not path.exists() or path.stat().st_size == 0:
+		return []
+	with open(path, "r", encoding="utf-8", newline="") as file:
+		return list(DictReader(file, delimiter="\t"))
+
+
+def find_latest_kept_row(rows: list[dict]) -> dict | None:
+	for row in reversed(rows):
+		if row.get("status") == "keep":
+			return row
+	return None
+
+
+def run_git_command(*args: str) -> str:
+	result = subprocess.run(
+		args,
+		cwd=PROJECT_ROOT,
+		check=True,
+		capture_output=True,
+		text=True,
+	)
+	return result.stdout.strip()
+
+
+def append_deep_sets_experiment_log(summary: dict, description: str, ledger_path: Path) -> dict:
+	if "," in description:
+		raise ValueError("Deep Sets ledger descriptions must not contain commas.")
+	rows = load_tsv_rows(ledger_path)
+	reference_row = find_latest_kept_row(rows)
+	objective_metrics = summary["player_model"]["objective_metrics"]
+	test_metrics = summary["player_model"]["test_metrics"]
+	validation_metrics = summary["player_model"]["validation_metrics"]
+	cv_log_loss = float(objective_metrics["log_loss"])
+	reference_cv = float(reference_row["cv_log_loss"]) if reference_row and reference_row.get("cv_log_loss") else None
+	row = {
+		"recorded_at_utc": datetime.now(timezone.utc).isoformat(),
+		"git_commit": run_git_command("git", "rev-parse", "--short", "HEAD"),
+		"git_branch": run_git_command("git", "branch", "--show-current"),
+		"cv_log_loss": cv_log_loss,
+		"delta": (reference_cv - cv_log_loss) if reference_cv is not None else "",
+		"best_epoch": int(summary["player_model"]["best_epoch"]),
+		"status": "",
+		"description": description,
+		"cv_rps": float(objective_metrics["rps"]),
+		"val_log_loss": float(validation_metrics["log_loss"]),
+		"test_log_loss": float(test_metrics["log_loss"]),
+		"cv_metrics_json": objective_metrics,
+		"test_metrics_json": test_metrics,
+	}
+	append_tsv_row(ledger_path, row)
+	return {
+		"ledger_path": str(ledger_path),
+		"reference_cv_log_loss": reference_cv,
+		"delta_vs_latest_keep": (reference_cv - cv_log_loss) if reference_cv is not None else None,
+		"description": description,
+	}
 
 
 def summarize_metrics(metrics: dict) -> dict:
@@ -285,7 +383,7 @@ def train_player_with_early_stopping(
 	patience_counter = 0
 	best_state = None
 	for epoch in range(1, config["max_epochs"] + 1):
-		train_one_epoch(model, train_loader, optimizer, DEVICE)
+		train_one_epoch(model, train_loader, optimizer, DEVICE, config)
 		val_loss, _ = evaluate(model, val_loader, DEVICE)
 		scheduler.step()
 		if val_loss < best_val_loss:
@@ -324,7 +422,7 @@ def train_player_fixed_epochs(
 		eta_min=config["lr"] * 0.01,
 	)
 	for _ in range(max(1, epochs)):
-		train_one_epoch(model, train_loader, optimizer, DEVICE)
+		train_one_epoch(model, train_loader, optimizer, DEVICE, config)
 		scheduler.step()
 	return model
 
@@ -392,27 +490,46 @@ def prepare_main_model_test_data(df: pl.DataFrame, feature_cols: list[str], scal
 	)
 	part = part.drop_nulls(subset=req_cols)
 	part = part.drop_nulls(subset=feature_cols)
-	data = prepare_data(df, feature_cols, [test_season], scaler=scaler)
+	feature_frame = part.select([pl.col(col).cast(pl.Float64).alias(col) for col in feature_cols])
+	X = feature_frame.to_pandas().to_numpy(dtype=np.float64)
+	X = scaler.transform(X)
+	data = {
+		"X": X,
+		"y": part["result_label"].to_numpy().astype(int),
+		"implied": np.stack([
+			part["implied_home"].to_numpy(),
+			part["implied_draw"].to_numpy(),
+			part["implied_away"].to_numpy(),
+		], axis=1).astype(np.float64),
+		"cat_features": extract_categorical_features(part),
+		"odds_home": part["odds_home"].to_numpy(),
+		"odds_draw": part["odds_draw"].to_numpy(),
+		"odds_away": part["odds_away"].to_numpy(),
+		"raw_margin": part["raw_margin"].to_numpy().astype(np.float64),
+		"dates": part["date"].to_numpy(),
+	}
 	return data, part["game_id"].to_numpy()
 
 
-def align_prob_sets(
-	player_game_ids: np.ndarray,
-	player_y: np.ndarray,
-	player_probs: np.ndarray,
-	player_implied: np.ndarray,
-	main_game_ids: np.ndarray,
-	main_probs: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-	main_row_by_game = {game_id: idx for idx, game_id in enumerate(main_game_ids)}
-	player_rows = [idx for idx, game_id in enumerate(player_game_ids) if game_id in main_row_by_game]
-	main_rows = [main_row_by_game[player_game_ids[idx]] for idx in player_rows]
-	return (
-		player_y[player_rows],
-		player_probs[player_rows],
-		player_implied[player_rows],
-		main_probs[main_rows],
-	)
+def align_row_indices(
+	primary_game_ids: np.ndarray,
+	secondary_game_ids: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+	secondary_row_by_game = {game_id: idx for idx, game_id in enumerate(secondary_game_ids)}
+	primary_rows = [idx for idx, game_id in enumerate(primary_game_ids) if game_id in secondary_row_by_game]
+	secondary_rows = [secondary_row_by_game[primary_game_ids[idx]] for idx in primary_rows]
+	return np.asarray(primary_rows, dtype=int), np.asarray(secondary_rows, dtype=int)
+
+
+def slice_data_rows(data: dict, rows: np.ndarray) -> dict:
+	sliced = {}
+	n_rows = len(data["y"])
+	for key, value in data.items():
+		if isinstance(value, np.ndarray) and value.shape[0] == n_rows:
+			sliced[key] = value[rows]
+		else:
+			sliced[key] = value
+	return sliced
 
 
 def compute_overlap(raw_player_data: pl.DataFrame, squads: pl.DataFrame, season: str) -> dict:
@@ -536,6 +653,45 @@ def build_summary(args) -> dict:
 	config["max_epochs"] = args.max_epochs
 	config["batch_size"] = args.batch_size
 	config["use_implied"] = not args.no_implied
+	config["head_type"] = args.head_type
+	config["mlp_market_features"] = bool(args.mlp_market_features)
+	config["linear_residual_head"] = bool(args.linear_residual_head)
+	if args.hidden_dim is not None:
+		config["hidden_dim"] = args.hidden_dim
+	if args.team_output_dim is not None:
+		config["team_output_dim"] = args.team_output_dim
+	if args.dropout is not None:
+		config["dropout"] = args.dropout
+	if args.lr is not None:
+		config["lr"] = args.lr
+	if args.weight_decay is not None:
+		config["weight_decay"] = args.weight_decay
+	if args.gate_hidden_dim is not None:
+		config["gate_hidden_dim"] = args.gate_hidden_dim
+	if args.gate_target_budget is not None:
+		config["gate_target_budget"] = args.gate_target_budget
+	if args.player_only_gate:
+		config["gate_use_market_features"] = False
+	if args.shared_gate:
+		config["shared_gate"] = True
+	if args.linear_gate:
+		config["linear_gate"] = True
+	if args.market_feature_stats is not None:
+		config["market_feature_stats"] = args.market_feature_stats
+	if args.market_logit_scale is not None:
+		config["market_logit_scale"] = args.market_logit_scale
+	if args.learn_market_bias:
+		config["learn_market_bias"] = True
+	if args.learn_market_class_scale:
+		config["learn_market_class_scale"] = True
+	if args.gate_mean_weight is not None:
+		config["gate_mean_weight"] = args.gate_mean_weight
+	if args.gate_sat_weight is not None:
+		config["gate_sat_weight"] = args.gate_sat_weight
+	if args.lambda_repulsion is not None:
+		config["lambda_repulsion"] = args.lambda_repulsion
+	if args.lambda_logit_delta is not None:
+		config["lambda_logit_delta"] = args.lambda_logit_delta
 
 	evaluation_config = load_json(EVALUATION_CONFIG_PATH)
 	set_seed(config["seed"])
@@ -604,15 +760,19 @@ def build_summary(args) -> dict:
 	main_test_data, main_test_game_ids = prepare_main_model_test_data(df, main_bundle.feature_cols, main_bundle.scaler, test_season)
 	main_test_probs = predict_main_model_probs(main_test_data, main_bundle.model)
 	main_reference = evaluate_main_model_reference(df, test_season=test_season)
-	aligned_y, aligned_player_probs, aligned_implied_probs, aligned_main_probs = align_prob_sets(
-		test_game_ids,
-		test_data["y"],
-		test_probs,
-		test_data["implied"],
-		main_test_game_ids,
-		main_test_probs,
-	)
+	player_rows, main_rows = align_row_indices(test_game_ids, main_test_game_ids)
+	aligned_test_data = slice_data_rows(test_data, player_rows)
+	aligned_main_test_data = slice_data_rows(main_test_data, main_rows)
+	aligned_y = aligned_test_data["y"]
+	aligned_player_probs = test_probs[player_rows]
+	aligned_implied_probs = aligned_test_data["implied"]
+	aligned_main_probs = main_test_probs[main_rows]
+	if not np.array_equal(aligned_y, aligned_main_test_data["y"]):
+		raise ValueError("Aligned player and main test labels do not match by game_id.")
 	calibration_comparison = build_calibration_comparison(aligned_y, aligned_player_probs, aligned_implied_probs, aligned_main_probs)
+	common_player_metrics = summarize_metrics(evaluate_player_probs(aligned_player_probs, aligned_test_data))
+	common_implied_metrics = summarize_metrics(evaluate_implied_baseline(aligned_test_data))
+	common_main_metrics = summarize_metrics(evaluate_player_probs(aligned_main_probs, aligned_main_test_data))
 	shuffled_implied_test = shuffled_implied_probs(test_data["implied"], seed=config["seed"])
 	shuffled_implied_test_metrics = evaluate_player_model_on_split(
 		final_model,
@@ -697,6 +857,18 @@ def build_summary(args) -> dict:
 		},
 		"comparison": {
 			"main_reference": main_reference,
+			"common_test_set": {
+				"sample_count": int(len(aligned_y)),
+				"player_metrics": common_player_metrics,
+				"implied_metrics": common_implied_metrics,
+				"main_metrics": common_main_metrics,
+				"player_minus_implied_log_loss": float(common_player_metrics["log_loss"] - common_implied_metrics["log_loss"]),
+				"player_minus_main_log_loss": float(common_player_metrics["log_loss"] - common_main_metrics["log_loss"]),
+				"player_minus_implied_bankroll_roi": float(common_player_metrics["bankroll_roi"] - common_implied_metrics["bankroll_roi"]),
+				"player_minus_main_bankroll_roi": float(common_player_metrics["bankroll_roi"] - common_main_metrics["bankroll_roi"]),
+				"main_minus_implied_log_loss": float(common_main_metrics["log_loss"] - common_implied_metrics["log_loss"]),
+				"main_minus_implied_bankroll_roi": float(common_main_metrics["bankroll_roi"] - common_implied_metrics["bankroll_roi"]),
+			},
 			"calibration": calibration_comparison,
 			"objective_log_loss_delta_vs_main_recorded": float(mean_metric(objective_metrics)["log_loss"] - main_reference["recorded_objective_metrics"]["log_loss"]),
 			"test_log_loss_delta_vs_main_live": float(test_metrics["log_loss"] - main_reference["live_test_metrics"]["log_loss"]),
@@ -733,6 +905,7 @@ def build_summary(args) -> dict:
 def print_summary(summary: dict):
 	player = summary["player_model"]
 	comparison = summary["comparison"]
+	common = comparison["common_test_set"]
 	leakage = summary["anti_leakage"]
 	print("=" * 72)
 	print("PLAYER MODEL EVALUATION")
@@ -752,6 +925,19 @@ def print_summary(summary: dict):
 	print(f"  Main macro aECE: {comparison['calibration']['main']['calibration']['macro_adaptive_ece']:.6f}")
 	print(f"  Player minus implied macro aECE: {comparison['calibration']['comparison']['player_minus_implied_macro_adaptive_ece']:+.6f}")
 	print(f"  Player minus main macro aECE: {comparison['calibration']['comparison']['player_minus_main_macro_adaptive_ece']:+.6f}")
+	print("")
+	print("Common held-out test set comparison")
+	print(f"  Common sample count: {common['sample_count']}")
+	print(f"  Implied log_loss: {common['implied_metrics']['log_loss']:.6f}")
+	print(f"  Main log_loss: {common['main_metrics']['log_loss']:.6f}")
+	print(f"  Player log_loss: {common['player_metrics']['log_loss']:.6f}")
+	print(f"  Implied bankroll ROI: {common['implied_metrics']['bankroll_roi']:.4f}")
+	print(f"  Main bankroll ROI: {common['main_metrics']['bankroll_roi']:.4f}")
+	print(f"  Player bankroll ROI: {common['player_metrics']['bankroll_roi']:.4f}")
+	print(f"  Player minus implied log_loss: {common['player_minus_implied_log_loss']:+.6f}")
+	print(f"  Player minus main log_loss: {common['player_minus_main_log_loss']:+.6f}")
+	print(f"  Player minus implied ROI: {common['player_minus_implied_bankroll_roi']:+.4f}")
+	print(f"  Player minus main ROI: {common['player_minus_main_bankroll_roi']:+.4f}")
 	print("")
 	print("Comparison vs current best gated model")
 	print(f"  Main recorded objective log_loss: {comparison['main_reference']['recorded_objective_metrics']['log_loss']:.6f}")
@@ -781,18 +967,51 @@ def main():
 	parser = argparse.ArgumentParser()
 	parser.add_argument("--parquet-path", type=Path, default=DEFAULT_PARQUET)
 	parser.add_argument("--output-path", type=Path, default=DEFAULT_OUTPUT_PATH)
-	parser.add_argument("--encoder", choices=["deep_sets", "set_transformer"], default="deep_sets")
+	parser.add_argument("--encoder", choices=["deep_sets", "deep_sets_role_pool", "deep_sets_stats", "weighted_deep_sets", "set_transformer"], default="deep_sets")
+	parser.add_argument("--head-type", choices=["mlp", "gated_residual"], default="mlp")
+	parser.add_argument("--mlp-market-features", action="store_true")
+	parser.add_argument("--linear-residual-head", action="store_true")
 	parser.add_argument("--top-n-players", type=int, default=16)
 	parser.add_argument("--max-epochs", type=int, default=35)
 	parser.add_argument("--batch-size", type=int, default=256)
 	parser.add_argument("--no-implied", action="store_true")
+	parser.add_argument("--hidden-dim", type=int)
+	parser.add_argument("--team-output-dim", type=int)
+	parser.add_argument("--dropout", type=float)
+	parser.add_argument("--lr", type=float)
+	parser.add_argument("--weight-decay", type=float)
+	parser.add_argument("--gate-hidden-dim", type=int)
+	parser.add_argument("--gate-target-budget", type=float)
+	parser.add_argument("--player-only-gate", action="store_true")
+	parser.add_argument("--shared-gate", action="store_true")
+	parser.add_argument("--linear-gate", action="store_true")
+	parser.add_argument("--market-feature-stats", type=int, choices=[3, 4, 5])
+	parser.add_argument("--market-logit-scale", type=float)
+	parser.add_argument("--learn-market-bias", action="store_true")
+	parser.add_argument("--learn-market-class-scale", action="store_true")
+	parser.add_argument("--gate-mean-weight", type=float)
+	parser.add_argument("--gate-sat-weight", type=float)
+	parser.add_argument("--lambda-repulsion", type=float)
+	parser.add_argument("--lambda-logit-delta", type=float)
+	parser.add_argument("--description", type=str, help="Short text for appending a tracked Deep Sets experiment run")
+	parser.add_argument("--ledger-path", type=Path, default=DEEP_SETS_EXPERIMENT_LOG_PATH)
 	args = parser.parse_args()
 
 	summary = build_summary(args)
+	if args.description:
+		if not str(args.encoder).startswith("deep_sets"):
+			raise ValueError("Tracked experiment logging is currently reserved for Deep Sets family runs.")
+		summary["experiment_log"] = append_deep_sets_experiment_log(summary, args.description, args.ledger_path)
 	args.output_path.parent.mkdir(parents=True, exist_ok=True)
 	with open(args.output_path, "w", encoding="utf-8") as file:
 		json.dump(summary, file, indent=2)
 	print_summary(summary)
+	if "experiment_log" in summary:
+		log_info = summary["experiment_log"]
+		print("")
+		print(f"Appended Deep Sets run to {log_info['ledger_path']}")
+		print(f"Reference keep cv_log_loss: {log_info['reference_cv_log_loss']}")
+		print(f"Delta vs latest keep: {log_info['delta_vs_latest_keep']}")
 	print(f"\nWrote summary to {args.output_path}")
 
 

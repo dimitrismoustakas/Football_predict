@@ -13,17 +13,22 @@ import numpy as np
 import polars as pl
 
 from preprocessing.player_feature_engineering import (
+	ABSENCE_STREAK_SCORE_COL,
+	CONSECUTIVE_MISSED_FEATURE_COL,
 	PLAYER_MIN_GAMES,
 	PLAYER_WINDOW,
 	POSITION_TO_IDX,
 	POSITION_VOCABULARY,
+	RECENT_MINUTES_WINDOW,
+	START_RATE_WINDOW,
+	build_team_match_sequence_lookup,
 	compute_player_rolling_features,
 	load_all_player_data,
 	prepare_player_data,
 )
 
-# Feature columns produced by compute_player_rolling_features (continuous only)
-PLAYER_FEATURE_COLS = [
+# Default continuous features fed into the player-set models.
+BASE_PLAYER_FEATURE_COLS = [
 	f"xg_per90_r{PLAYER_WINDOW}",
 	f"xa_per90_r{PLAYER_WINDOW}",
 	f"shots_per90_r{PLAYER_WINDOW}",
@@ -34,14 +39,27 @@ PLAYER_FEATURE_COLS = [
 	f"red_cards_per90_r{PLAYER_WINDOW}",
 	f"avg_minutes_r{PLAYER_WINDOW}",
 	f"appearances_r{PLAYER_WINDOW}",
+	ABSENCE_STREAK_SCORE_COL,
 	"red_card_prev_game",
 	"season_yellow_cards",
 ]
+PLAYER_FEATURE_COLS = list(BASE_PLAYER_FEATURE_COLS)
+PLAYER_DYNAMIC_FEATURE_COLS = [CONSECUTIVE_MISSED_FEATURE_COL, ABSENCE_STREAK_SCORE_COL]
+PLAYER_STATE_FEATURE_COLS = [col for col in PLAYER_FEATURE_COLS if col not in PLAYER_DYNAMIC_FEATURE_COLS]
+PLAYER_AUX_STATE_COLS = [
+	f"avg_minutes_r{RECENT_MINUTES_WINDOW}",
+	"minutes_last_match",
+	f"start_rate_r{START_RATE_WINDOW}",
+	CONSECUTIVE_MISSED_FEATURE_COL,
+	"log_team_cumulative_minutes",
+]
+PLAYER_DYNAMIC_AUX_STATE_COLS = [CONSECUTIVE_MISSED_FEATURE_COL]
+PLAYER_STATE_AUX_COLS = [col for col in PLAYER_AUX_STATE_COLS if col not in PLAYER_DYNAMIC_AUX_STATE_COLS]
 
 POSITION_COL = f"most_common_position_r{PLAYER_WINDOW}"
 
 NUM_POSITIONS = len(POSITION_VOCABULARY)  # 17
-NUM_FEATURES = len(PLAYER_FEATURE_COLS)   # 10
+NUM_FEATURES = len(PLAYER_FEATURE_COLS)
 
 _PER90_STATS = [
 	"xg",
@@ -106,7 +124,7 @@ def _compute_cumulative_minutes_history(raw_player_data: pl.DataFrame) -> pl.Dat
 
 
 def _compute_player_state_history(raw_player_data: pl.DataFrame) -> pl.DataFrame:
-	"""Compute player state after each appearance for leak-free as-of joins."""
+	"""Compute end-of-appearance player state for leak-free as-of joins."""
 
 	df = prepare_player_data(raw_player_data)
 	df = _normalize_date_column(df)
@@ -118,7 +136,10 @@ def _compute_player_state_history(raw_player_data: pl.DataFrame) -> pl.DataFrame
 		else:
 			df = df.with_columns(pl.col(col).cast(pl.Float64))
 	df = df.sort(["player_id", "date"])
-	df = df.with_columns(pl.lit(1.0).alias("_one"))
+	df = df.with_columns([
+		pl.lit(1.0).alias("_one"),
+		pl.when(pl.col("position") != "Sub").then(pl.lit(1.0)).otherwise(pl.lit(0.0)).alias("_starter_flag"),
+	])
 
 	rolling_exprs = []
 	for stat in _PER90_STATS:
@@ -147,6 +168,22 @@ def _compute_player_state_history(raw_player_data: pl.DataFrame) -> pl.DataFrame
 		.rolling_sum(window_size=PLAYER_WINDOW, min_samples=PLAYER_MIN_GAMES)
 		.over("player_id")
 		.alias(f"appearances_r{PLAYER_WINDOW}")
+	)
+	rolling_exprs.append(
+		pl.col("minutes")
+		.rolling_mean(window_size=RECENT_MINUTES_WINDOW, min_samples=1)
+		.over("player_id")
+		.alias(f"avg_minutes_r{RECENT_MINUTES_WINDOW}")
+	)
+	rolling_exprs.append(
+		pl.col("minutes")
+		.alias("minutes_last_match")
+	)
+	rolling_exprs.append(
+		pl.col("_starter_flag")
+		.rolling_mean(window_size=START_RATE_WINDOW, min_samples=1)
+		.over("player_id")
+		.alias(f"start_rate_r{START_RATE_WINDOW}")
 	)
 	df = df.with_columns(rolling_exprs)
 
@@ -188,14 +225,35 @@ def _compute_player_state_history(raw_player_data: pl.DataFrame) -> pl.DataFrame
 		.alias(POSITION_COL)
 	)
 	df = df.with_columns(pl.col(POSITION_COL).fill_null("Sub"))
+	df = df.sort(["league", "team_id", "player_id", "date"])
+	df = df.with_columns(
+		pl.col("minutes")
+		.cum_sum()
+		.over(["league", "team_id", "player_id"])
+		.log1p()
+		.alias("log_team_cumulative_minutes")
+	)
+	team_match_sequence = build_team_match_sequence_lookup(raw_player_data)
+	df = df.join(
+		team_match_sequence,
+		on=["league", "season", "team_id", "game_id", "date"],
+		how="left",
+	)
+	df = df.with_columns([
+		pl.col("team_match_sequence").alias("last_appearance_team_match_sequence"),
+		pl.col("season").alias("last_appearance_season"),
+	])
 
 	return df.select([
 		"league",
 		"team_id",
 		"player_id",
 		"date",
-		*PLAYER_FEATURE_COLS,
+		*PLAYER_STATE_FEATURE_COLS,
+		*PLAYER_STATE_AUX_COLS,
 		POSITION_COL,
+		"last_appearance_team_match_sequence",
+		"last_appearance_season",
 	])
 
 
@@ -241,6 +299,12 @@ def build_projected_squads(
 	"""
 	_ = player_rolling
 	team_match_keys = _build_team_match_keys(raw_player_data, match_df)
+	team_match_sequence = build_team_match_sequence_lookup(raw_player_data)
+	team_match_keys = team_match_keys.join(
+		team_match_sequence,
+		on=["league", "season", "team_id", "game_id", "date"],
+		how="left",
+	)
 	team_player_pool = prepare_player_data(raw_player_data).select(["league", "team_id", "player_id"]).unique()
 	candidate_rows = team_match_keys.join(team_player_pool, on=["league", "team_id"], how="inner")
 	candidate_rows = candidate_rows.sort(["league", "team_id", "player_id", "date"])
@@ -263,6 +327,31 @@ def build_projected_squads(
 		allow_exact_matches=False,
 	)
 	squads = squads.filter(pl.col("cumulative_minutes").is_not_null())
+	squads = squads.with_columns(
+		pl.when(
+			pl.col("last_appearance_team_match_sequence").is_not_null()
+			& (pl.col("last_appearance_season") == pl.col("season"))
+		)
+		.then(
+			(
+				pl.col("team_match_sequence").cast(pl.Int64)
+				- pl.col("last_appearance_team_match_sequence").cast(pl.Int64)
+				- 1
+			)
+			.clip(lower_bound=0)
+			.cast(pl.Float64)
+		)
+		.otherwise(pl.lit(0.0))
+		.alias(CONSECUTIVE_MISSED_FEATURE_COL)
+	)
+	squads = squads.with_columns(
+		(
+			pl.col(CONSECUTIVE_MISSED_FEATURE_COL).log1p()
+			* pl.col(f"start_rate_r{START_RATE_WINDOW}").fill_null(0.0)
+		)
+		.cast(pl.Float64)
+		.alias(ABSENCE_STREAK_SCORE_COL)
+	)
 
 	# Step 3: Rank players within each (team, match) by cumulative minutes
 	squads = squads.sort(["league", "team_id", "game_id", "cumulative_minutes", "player_id"], descending=[False, False, False, True, False])
@@ -275,6 +364,7 @@ def build_projected_squads(
 
 	# Step 4: Keep only top-N players per team per match
 	squads = squads.filter(pl.col("squad_rank") <= top_n)
+	squads = squads.drop(["team_match_sequence", "last_appearance_team_match_sequence", "last_appearance_season"])
 
 	return squads
 

@@ -22,7 +22,7 @@ MIN_GAMES = 2    # Minimum games required to compute features (matches base feat
 
 def load_all_player_data(data_root: Path = Path("data/understat")) -> pl.DataFrame:
 	"""Load all player match stats from parquet files."""
-	player_files = list(data_root.rglob("player_match_stats.parquet"))
+	player_files = sorted(data_root.rglob("player_match_stats.parquet"), key=lambda path: str(path))
 	
 	if not player_files:
 		raise FileNotFoundError(f"No player_match_stats.parquet files found in {data_root}")
@@ -256,6 +256,10 @@ def merge_with_match_data(
 
 PLAYER_WINDOW = 10   # Rolling window over player's personal appearances
 PLAYER_MIN_GAMES = 3 # Minimum appearances to compute rolling stats
+RECENT_MINUTES_WINDOW = 3
+START_RATE_WINDOW = 5
+CONSECUTIVE_MISSED_FEATURE_COL = "consecutive_team_matches_missed"
+ABSENCE_STREAK_SCORE_COL = "absence_streak_score"
 
 # Stats to normalise per 90 minutes
 _PER90_STATS = ["xg", "xa", "shots", "key_passes", "xg_chain", "xg_buildup",
@@ -269,6 +273,24 @@ POSITION_VOCABULARY = [
 ]
 # Mapping: position string -> integer index (0 = padding, 1-17 = positions)
 POSITION_TO_IDX = {pos: idx + 1 for idx, pos in enumerate(POSITION_VOCABULARY)}
+
+
+def build_team_match_sequence_lookup(df: pl.DataFrame) -> pl.DataFrame:
+	"""Enumerate each team's matches within a season in chronological order."""
+
+	prepared = prepare_player_data(df)
+	return (
+		prepared
+		.select(["league", "season", "team_id", "game_id", "date"])
+		.unique()
+		.sort(["league", "season", "team_id", "date", "game_id"])
+		.with_columns(
+			pl.col("game_id")
+			.cum_count()
+			.over(["league", "season", "team_id"])
+			.alias("team_match_sequence")
+		)
+	)
 
 
 def compute_player_rolling_features(df: pl.DataFrame) -> pl.DataFrame:
@@ -303,7 +325,10 @@ def compute_player_rolling_features(df: pl.DataFrame) -> pl.DataFrame:
 	df = df.sort(["player_id", "date"])
 
 	# Add a constant column for counting appearances in rolling window
-	df = df.with_columns(pl.lit(1.0).alias("_one"))
+	df = df.with_columns([
+		pl.lit(1.0).alias("_one"),
+		pl.when(pl.col("position") != "Sub").then(pl.lit(1.0)).otherwise(pl.lit(0.0)).alias("_starter_flag"),
+	])
 
 	# --- Per-90 stats: shift first, then rolling sum of raw + rolling sum of minutes ---
 	# per90 = (sum of stat over window) / (sum of minutes over window) * 90
@@ -346,6 +371,26 @@ def compute_player_rolling_features(df: pl.DataFrame) -> pl.DataFrame:
 		.rolling_sum(window_size=PLAYER_WINDOW, min_samples=PLAYER_MIN_GAMES)
 		.over("player_id")
 		.alias(f"appearances_r{PLAYER_WINDOW}")
+	)
+	rolling_exprs.append(
+		pl.col("minutes")
+		.shift(1)
+		.rolling_mean(window_size=RECENT_MINUTES_WINDOW, min_samples=1)
+		.over("player_id")
+		.alias(f"avg_minutes_r{RECENT_MINUTES_WINDOW}")
+	)
+	rolling_exprs.append(
+		pl.col("minutes")
+		.shift(1)
+		.over("player_id")
+		.alias("minutes_last_match")
+	)
+	rolling_exprs.append(
+		pl.col("_starter_flag")
+		.shift(1)
+		.rolling_mean(window_size=START_RATE_WINDOW, min_samples=1)
+		.over("player_id")
+		.alias(f"start_rate_r{START_RATE_WINDOW}")
 	)
 
 	df = df.with_columns(rolling_exprs)
@@ -408,13 +453,62 @@ def compute_player_rolling_features(df: pl.DataFrame) -> pl.DataFrame:
 		.fill_null("Sub")
 	)
 
+	# Team-specific tenure / usage signal.
+	# Keep this numerically compact because player-set models do not standardize inputs.
+	df = df.sort(["league", "team_id", "player_id", "date"])
+	df = df.with_columns(
+		pl.col("minutes")
+		.shift(1)
+		.cum_sum()
+		.over(["league", "team_id", "player_id"])
+		.fill_null(0.0)
+		.log1p()
+		.alias("log_team_cumulative_minutes")
+	)
+	team_match_sequence = build_team_match_sequence_lookup(df)
+	df = df.join(
+		team_match_sequence,
+		on=["league", "season", "team_id", "game_id", "date"],
+		how="left",
+	)
+	df = df.sort(["league", "season", "team_id", "player_id", "date", "game_id"])
+	df = df.with_columns(
+		pl.col("team_match_sequence")
+		.shift(1)
+		.over(["league", "season", "team_id", "player_id"])
+		.alias("_previous_team_match_sequence")
+	)
+	df = df.with_columns(
+		pl.when(pl.col("_previous_team_match_sequence").is_not_null())
+		.then(
+			(
+				pl.col("team_match_sequence").cast(pl.Int64)
+				- pl.col("_previous_team_match_sequence").cast(pl.Int64)
+				- 1
+			)
+			.clip(lower_bound=0)
+			.cast(pl.Float64)
+		)
+		.otherwise(pl.lit(0.0))
+		.alias(CONSECUTIVE_MISSED_FEATURE_COL)
+	)
+	df = df.with_columns(
+		(
+			pl.col(CONSECUTIVE_MISSED_FEATURE_COL).log1p()
+			* pl.col(f"start_rate_r{START_RATE_WINDOW}").fill_null(0.0)
+		)
+		.cast(pl.Float64)
+		.alias(ABSENCE_STREAK_SCORE_COL)
+	)
+
 	# Select output columns
 	id_cols = ["player_id", "league", "season", "team_id", "team", "game_id", "date"]
 	feature_cols = (
 		[f"{stat}_per90_r{PLAYER_WINDOW}" for stat in _PER90_STATS if f"_sum_{stat}" in df.columns]
 		+ [f"avg_minutes_r{PLAYER_WINDOW}", f"appearances_r{PLAYER_WINDOW}",
-		   "red_card_prev_game", "season_yellow_cards",
-		   f"most_common_position_r{PLAYER_WINDOW}"]
+		   f"avg_minutes_r{RECENT_MINUTES_WINDOW}", "minutes_last_match", f"start_rate_r{START_RATE_WINDOW}",
+		   CONSECUTIVE_MISSED_FEATURE_COL, ABSENCE_STREAK_SCORE_COL, "red_card_prev_game", "season_yellow_cards",
+		   "log_team_cumulative_minutes", f"most_common_position_r{PLAYER_WINDOW}"]
 	)
 
 	return df.select(id_cols + feature_cols)

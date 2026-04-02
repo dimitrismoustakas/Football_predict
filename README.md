@@ -41,6 +41,9 @@ Generated runtime artifacts are written to `artifacts/models/` and are not meant
 The trainer appends one row per canonical run to `artifacts/experiment_metrics/result_main_runs.tsv`.
 That TSV is the single experiment ledger.
 
+Tracked Deep Sets evaluations can be logged from `training/evaluate_player_model.py` to:
+- `artifacts/experiment_metrics/deep_sets_runs.tsv`
+
 ## Commands
 
 ### Data refresh
@@ -92,6 +95,7 @@ Tracked source assets:
 - mappings under `artifacts/mappings/`
 - frozen source config under `training/configs/main_models/`
 - the canonical experiment ledger `artifacts/experiment_metrics/result_main_runs.tsv`
+- the Deep Sets experiment ledger `artifacts/experiment_metrics/deep_sets_runs.tsv`
 
 Ignored or generated outputs:
 - `artifacts/models/`

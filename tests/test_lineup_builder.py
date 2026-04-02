@@ -6,8 +6,12 @@ import numpy as np
 import polars as pl
 
 from preprocessing.player_feature_engineering import (
+	ABSENCE_STREAK_SCORE_COL,
+	CONSECUTIVE_MISSED_FEATURE_COL,
 	PLAYER_WINDOW,
 	POSITION_TO_IDX,
+	RECENT_MINUTES_WINDOW,
+	START_RATE_WINDOW,
 	compute_player_rolling_features,
 )
 from preprocessing.lineup_builder import (
@@ -91,6 +95,349 @@ class TestPlayerRollingFeatures(unittest.TestCase):
 		positions = rolling[pos_col].unique().to_list()
 		# Should contain real positions (not all null)
 		self.assertTrue(any(p is not None for p in positions))
+
+	def test_recent_usage_features_are_shifted(self):
+		raw = pl.DataFrame([
+			{
+				"player_id": 1,
+				"player": "Player_1",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": idx + 1,
+				"match_id": f"2024-09-0{idx + 1} Team_A-Team_B",
+				"minutes": float(minutes),
+				"goals": 0.0,
+				"xg": 0.0,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.0,
+				"xg_buildup": 0.0,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": position,
+				"position_id": 1,
+			}
+			for idx, (minutes, position) in enumerate([(10, "Sub"), (20, "Sub"), (30, "FW"), (40, "FW")])
+		])
+
+		rolling = compute_player_rolling_features(raw).sort("date")
+		row = rolling.row(3, named=True)
+		self.assertEqual(row["minutes_last_match"], 30.0)
+		self.assertAlmostEqual(row[f"avg_minutes_r{RECENT_MINUTES_WINDOW}"], 20.0, places=6)
+		self.assertAlmostEqual(row[f"start_rate_r{START_RATE_WINDOW}"], 1.0 / 3.0, places=6)
+		self.assertAlmostEqual(row["log_team_cumulative_minutes"], np.log1p(60.0), places=6)
+
+	def test_consecutive_team_matches_missed_tracks_intervening_team_games(self):
+		raw = pl.DataFrame([
+			{
+				"player_id": 1,
+				"player": "Player_1",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 1,
+				"match_id": "2024-09-01 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.3,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 2.0,
+				"key_passes": 1.0,
+				"xg_chain": 0.4,
+				"xg_buildup": 0.2,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "FW",
+				"position_id": 1,
+			},
+			{
+				"player_id": 99,
+				"player": "Teammate",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 1,
+				"match_id": "2024-09-01 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.0,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.1,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "MC",
+				"position_id": 99,
+			},
+			{
+				"player_id": 99,
+				"player": "Teammate",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 2,
+				"match_id": "2024-09-08 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.0,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.1,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "MC",
+				"position_id": 99,
+			},
+			{
+				"player_id": 99,
+				"player": "Teammate",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 3,
+				"match_id": "2024-09-15 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.0,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.1,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "MC",
+				"position_id": 99,
+			},
+			{
+				"player_id": 1,
+				"player": "Player_1",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 4,
+				"match_id": "2024-09-22 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.3,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 2.0,
+				"key_passes": 1.0,
+				"xg_chain": 0.4,
+				"xg_buildup": 0.2,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "FW",
+				"position_id": 1,
+			},
+			{
+				"player_id": 99,
+				"player": "Teammate",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 4,
+				"match_id": "2024-09-22 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.0,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.1,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "MC",
+				"position_id": 99,
+			},
+			{
+				"player_id": 1,
+				"player": "Player_1",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2526",
+				"game_id": 5,
+				"match_id": "2025-08-01 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.3,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 2.0,
+				"key_passes": 1.0,
+				"xg_chain": 0.4,
+				"xg_buildup": 0.2,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "FW",
+				"position_id": 1,
+			},
+			{
+				"player_id": 99,
+				"player": "Teammate",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2526",
+				"game_id": 5,
+				"match_id": "2025-08-01 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.0,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.1,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "MC",
+				"position_id": 99,
+			},
+			{
+				"player_id": 2,
+				"player": "Opponent",
+				"team_id": 2,
+				"team": "Team_B",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 1,
+				"match_id": "2024-09-01 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.0,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.1,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "DC",
+				"position_id": 2,
+			},
+			{
+				"player_id": 2,
+				"player": "Opponent",
+				"team_id": 2,
+				"team": "Team_B",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 2,
+				"match_id": "2024-09-08 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.0,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.1,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "DC",
+				"position_id": 2,
+			},
+			{
+				"player_id": 2,
+				"player": "Opponent",
+				"team_id": 2,
+				"team": "Team_B",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 3,
+				"match_id": "2024-09-15 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.0,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.1,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "DC",
+				"position_id": 2,
+			},
+			{
+				"player_id": 2,
+				"player": "Opponent",
+				"team_id": 2,
+				"team": "Team_B",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": 4,
+				"match_id": "2024-09-22 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.0,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.1,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "DC",
+				"position_id": 2,
+			},
+			{
+				"player_id": 2,
+				"player": "Opponent",
+				"team_id": 2,
+				"team": "Team_B",
+				"league": "ENG-Premier League",
+				"season": "2526",
+				"game_id": 5,
+				"match_id": "2025-08-01 Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.0,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.1,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "DC",
+				"position_id": 2,
+			},
+		])
+
+		rolling = compute_player_rolling_features(raw).sort(["season", "date"])
+		player_rows = rolling.filter(pl.col("player_id") == 1)
+		self.assertEqual(player_rows[CONSECUTIVE_MISSED_FEATURE_COL].to_list(), [0.0, 2.0, 0.0])
+		self.assertAlmostEqual(player_rows[ABSENCE_STREAK_SCORE_COL][1], np.log1p(2.0), places=6)
 
 
 class TestCumulativeMinutes(unittest.TestCase):
@@ -337,6 +684,173 @@ class TestBuildProjectedSquads(unittest.TestCase):
 		team_a_game_3 = squads.filter((pl.col("game_id") == 3) & (pl.col("team_id") == 1))
 		self.assertEqual(team_a_game_3["player_id"].to_list(), [1])
 
+	def test_projected_squad_features_exclude_current_match_stats(self):
+		rows = []
+		for game_id, date, player_id, team_id, team, position, xg in [
+			(1, "2024-09-01", 1, 1, "Team_A", "FW", 0.1),
+			(2, "2024-09-02", 1, 1, "Team_A", "FW", 0.2),
+			(3, "2024-09-03", 1, 1, "Team_A", "FW", 0.3),
+			(4, "2024-09-04", 1, 1, "Team_A", "FW", 10.0),
+			(1, "2024-09-01", 2, 2, "Team_B", "DC", 0.1),
+			(2, "2024-09-02", 2, 2, "Team_B", "DC", 0.1),
+			(3, "2024-09-03", 2, 2, "Team_B", "DC", 0.1),
+			(4, "2024-09-04", 2, 2, "Team_B", "DC", 0.1),
+		]:
+			rows.append({
+				"player_id": player_id,
+				"player": f"Player_{player_id}",
+				"team_id": team_id,
+				"team": team,
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": game_id,
+				"match_id": f"{date} Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": xg,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.0,
+				"xg_buildup": 0.0,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": position,
+				"position_id": player_id,
+			})
+
+		raw = pl.DataFrame(rows)
+		rolling = compute_player_rolling_features(raw)
+		match_df = pl.DataFrame({
+			"game_id": [1, 2, 3, 4],
+			"league": ["ENG-Premier League"] * 4,
+			"season": ["2425"] * 4,
+			"date": ["2024-09-01", "2024-09-02", "2024-09-03", "2024-09-04"],
+			"home_team_id": [1] * 4,
+			"away_team_id": [2] * 4,
+		}).with_columns(pl.col("date").str.to_datetime("%Y-%m-%d"))
+
+		squads = build_projected_squads(raw, rolling, match_df=match_df, top_n=1)
+		team_a_game_4 = squads.filter((pl.col("game_id") == 4) & (pl.col("team_id") == 1))
+
+		self.assertEqual(team_a_game_4.height, 1)
+		expected_xg_per90 = (0.1 + 0.2 + 0.3) / (90.0 * 3) * 90.0
+		self.assertAlmostEqual(team_a_game_4["xg_per90_r10"][0], expected_xg_per90, places=6)
+		self.assertLess(team_a_game_4["xg_per90_r10"][0], 1.0)
+		self.assertEqual(team_a_game_4["minutes_last_match"][0], 90.0)
+		self.assertAlmostEqual(team_a_game_4[f"avg_minutes_r{RECENT_MINUTES_WINDOW}"][0], 90.0, places=6)
+		self.assertAlmostEqual(team_a_game_4[f"start_rate_r{START_RATE_WINDOW}"][0], 1.0, places=6)
+		self.assertAlmostEqual(team_a_game_4["log_team_cumulative_minutes"][0], np.log1p(270.0), places=6)
+
+	def test_projected_squad_absence_feature_uses_pre_match_team_gaps(self):
+		raw = pl.DataFrame([
+			{
+				"player_id": 1,
+				"player": "Known_Starter",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": game_id,
+				"match_id": f"{date} Team_A-Team_B",
+				"minutes": minutes,
+				"goals": 0.0,
+				"xg": 0.2,
+				"xa": 0.1,
+				"assists": 0.0,
+				"shots": 2.0,
+				"key_passes": 1.0,
+				"xg_chain": 0.3,
+				"xg_buildup": 0.2,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "FW",
+				"position_id": 1,
+			}
+			for game_id, date, minutes in [(1, "2024-09-01", 90.0), (4, "2024-09-22", 90.0)]
+		] + [
+			{
+				"player_id": 2,
+				"player": "Teammate",
+				"team_id": 1,
+				"team": "Team_A",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": game_id,
+				"match_id": f"{date} Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.1,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.1,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "MC",
+				"position_id": 2,
+			}
+			for game_id, date in [
+				(1, "2024-09-01"),
+				(2, "2024-09-08"),
+				(3, "2024-09-15"),
+				(4, "2024-09-22"),
+			]
+		] + [
+			{
+				"player_id": 3,
+				"player": "Opponent",
+				"team_id": 2,
+				"team": "Team_B",
+				"league": "ENG-Premier League",
+				"season": "2425",
+				"game_id": game_id,
+				"match_id": f"{date} Team_A-Team_B",
+				"minutes": 90.0,
+				"goals": 0.0,
+				"xg": 0.1,
+				"xa": 0.0,
+				"assists": 0.0,
+				"shots": 1.0,
+				"key_passes": 0.0,
+				"xg_chain": 0.1,
+				"xg_buildup": 0.1,
+				"yellow_cards": 0.0,
+				"red_cards": 0.0,
+				"position": "DC",
+				"position_id": 3,
+			}
+			for game_id, date in [
+				(1, "2024-09-01"),
+				(2, "2024-09-08"),
+				(3, "2024-09-15"),
+				(4, "2024-09-22"),
+			]
+		])
+		rolling = compute_player_rolling_features(raw)
+		match_df = pl.DataFrame({
+			"game_id": [1, 2, 3, 4],
+			"league": ["ENG-Premier League"] * 4,
+			"season": ["2425"] * 4,
+			"date": ["2024-09-01", "2024-09-08", "2024-09-15", "2024-09-22"],
+			"home_team_id": [1] * 4,
+			"away_team_id": [2] * 4,
+		}).with_columns(pl.col("date").str.to_datetime("%Y-%m-%d"))
+
+		squads = build_projected_squads(raw, rolling, match_df=match_df, top_n=2)
+		player_game_4 = squads.filter(
+			(pl.col("game_id") == 4)
+			& (pl.col("team_id") == 1)
+			& (pl.col("player_id") == 1)
+		)
+
+		self.assertEqual(player_game_4.height, 1)
+		self.assertEqual(player_game_4[CONSECUTIVE_MISSED_FEATURE_COL][0], 2.0)
+		self.assertAlmostEqual(player_game_4[ABSENCE_STREAK_SCORE_COL][0], np.log1p(2.0), places=6)
+
 
 class TestAssembleSquadTensors(unittest.TestCase):
 	def setUp(self):
@@ -413,6 +927,37 @@ class TestSetTransformerModel(unittest.TestCase):
 			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
 		self.assertEqual(logits.shape, (batch, 3))
 
+	def test_deep_sets_gated_residual_forward(self):
+		import torch
+		from training.models.set_transformer import PlayerMatchModel
+
+		model = PlayerMatchModel(
+			input_dim=NUM_FEATURES,
+			team_encoder_type="deep_sets",
+			hidden_dim=32,
+			team_output_dim=16,
+			dropout=0.0,
+			use_implied=True,
+			head_type="gated_residual",
+		)
+		model.eval()
+
+		batch = 4
+		max_p = 16
+		home_feat = torch.randn(batch, max_p, NUM_FEATURES)
+		home_pos = torch.randint(0, 18, (batch, max_p))
+		home_mask = torch.ones(batch, max_p, dtype=torch.bool)
+		away_feat = torch.randn(batch, max_p, NUM_FEATURES)
+		away_pos = torch.randint(0, 18, (batch, max_p))
+		away_mask = torch.ones(batch, max_p, dtype=torch.bool)
+		implied = torch.rand(batch, 3)
+		implied = implied / implied.sum(dim=1, keepdim=True)
+		raw_margin = torch.rand(batch, 1)
+
+		with torch.no_grad():
+			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, raw_margin)
+		self.assertEqual(logits.shape, (batch, 3))
+
 	def test_set_transformer_forward(self):
 		import torch
 		from training.models.set_transformer import PlayerMatchModel
@@ -434,6 +979,129 @@ class TestSetTransformerModel(unittest.TestCase):
 
 		with torch.no_grad():
 			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
+		self.assertEqual(logits.shape, (batch, 3))
+
+	def test_weighted_deep_sets_forward_and_permutation_invariance(self):
+		import torch
+		from training.models.set_transformer import PlayerMatchModel
+
+		model = PlayerMatchModel(
+			input_dim=NUM_FEATURES, team_encoder_type="weighted_deep_sets",
+			hidden_dim=32, team_output_dim=16, dropout=0.0)
+		model.eval()
+
+		batch = 4
+		max_p = 16
+		home_feat = torch.randn(batch, max_p, NUM_FEATURES)
+		home_pos = torch.randint(1, 18, (batch, max_p))
+		home_mask = torch.ones(batch, max_p, dtype=torch.bool)
+		away_feat = torch.randn(batch, max_p, NUM_FEATURES)
+		away_pos = torch.randint(1, 18, (batch, max_p))
+		away_mask = torch.ones(batch, max_p, dtype=torch.bool)
+		implied = torch.rand(batch, 3)
+		perm = torch.randperm(max_p)
+
+		with torch.no_grad():
+			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
+			logits_perm = model(
+				home_feat[:, perm], home_pos[:, perm], home_mask[:, perm],
+				away_feat[:, perm], away_pos[:, perm], away_mask[:, perm],
+				implied,
+			)
+		self.assertEqual(logits.shape, (batch, 3))
+		self.assertTrue(torch.allclose(logits, logits_perm, atol=1e-6, rtol=1e-6))
+
+	def test_stats_deep_sets_forward_and_permutation_invariance(self):
+		import torch
+		from training.models.set_transformer import PlayerMatchModel
+
+		model = PlayerMatchModel(
+			input_dim=NUM_FEATURES, team_encoder_type="deep_sets_stats",
+			hidden_dim=32, team_output_dim=16, dropout=0.0)
+		model.eval()
+
+		batch = 4
+		max_p = 16
+		home_feat = torch.randn(batch, max_p, NUM_FEATURES)
+		home_pos = torch.randint(1, 18, (batch, max_p))
+		home_mask = torch.ones(batch, max_p, dtype=torch.bool)
+		away_feat = torch.randn(batch, max_p, NUM_FEATURES)
+		away_pos = torch.randint(1, 18, (batch, max_p))
+		away_mask = torch.ones(batch, max_p, dtype=torch.bool)
+		implied = torch.rand(batch, 3)
+		perm = torch.randperm(max_p)
+
+		with torch.no_grad():
+			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
+			logits_perm = model(
+				home_feat[:, perm], home_pos[:, perm], home_mask[:, perm],
+				away_feat[:, perm], away_pos[:, perm], away_mask[:, perm],
+				implied,
+			)
+		self.assertEqual(logits.shape, (batch, 3))
+		self.assertTrue(torch.allclose(logits, logits_perm, atol=1e-6, rtol=1e-6))
+
+	def test_role_aware_deep_sets_forward_and_permutation_invariance(self):
+		import torch
+		from training.models.set_transformer import PlayerMatchModel
+
+		model = PlayerMatchModel(
+			input_dim=NUM_FEATURES, team_encoder_type="deep_sets_role_pool",
+			hidden_dim=32, team_output_dim=16, dropout=0.0)
+		model.eval()
+
+		batch = 4
+		max_p = 16
+		home_feat = torch.randn(batch, max_p, NUM_FEATURES)
+		home_pos = torch.randint(1, 18, (batch, max_p))
+		home_mask = torch.ones(batch, max_p, dtype=torch.bool)
+		away_feat = torch.randn(batch, max_p, NUM_FEATURES)
+		away_pos = torch.randint(1, 18, (batch, max_p))
+		away_mask = torch.ones(batch, max_p, dtype=torch.bool)
+		implied = torch.rand(batch, 3)
+		perm = torch.randperm(max_p)
+
+		with torch.no_grad():
+			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
+			logits_perm = model(
+				home_feat[:, perm], home_pos[:, perm], home_mask[:, perm],
+				away_feat[:, perm], away_pos[:, perm], away_mask[:, perm],
+				implied,
+			)
+		self.assertEqual(logits.shape, (batch, 3))
+		self.assertTrue(torch.allclose(logits, logits_perm, atol=1e-6, rtol=1e-6))
+
+	def test_role_aware_deep_sets_mlp_market_features_forward(self):
+		import torch
+		from training.models.set_transformer import PlayerMatchModel
+
+		model = PlayerMatchModel(
+			input_dim=NUM_FEATURES,
+			team_encoder_type="deep_sets_role_pool",
+			hidden_dim=32,
+			team_output_dim=16,
+			dropout=0.0,
+			use_implied=True,
+			head_type="mlp",
+			mlp_market_features=True,
+			market_feature_stats=4,
+		)
+		model.eval()
+
+		batch = 4
+		max_p = 16
+		home_feat = torch.randn(batch, max_p, NUM_FEATURES)
+		home_pos = torch.randint(1, 18, (batch, max_p))
+		home_mask = torch.ones(batch, max_p, dtype=torch.bool)
+		away_feat = torch.randn(batch, max_p, NUM_FEATURES)
+		away_pos = torch.randint(1, 18, (batch, max_p))
+		away_mask = torch.ones(batch, max_p, dtype=torch.bool)
+		implied = torch.rand(batch, 3)
+		implied = implied / implied.sum(dim=1, keepdim=True)
+		raw_margin = torch.rand(batch)
+
+		with torch.no_grad():
+			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, raw_margin)
 		self.assertEqual(logits.shape, (batch, 3))
 
 	def test_masking_changes_output(self):

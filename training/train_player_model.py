@@ -5,7 +5,7 @@ Evaluates whether player-set representations add predictive value beyond
 team-level aggregates and bookmaker implied probabilities.
 
 Usage:
-    python -m training.train_player_model [--encoder deep_sets|set_transformer]
+    python -m training.train_player_model [--encoder deep_sets|deep_sets_role_pool|deep_sets_stats|weighted_deep_sets|set_transformer]
 """
 
 import argparse
@@ -61,6 +61,22 @@ DEFAULT_CONFIG = {
 	"position_embed_dim": 4,
 	"dropout": 0.15,
 	"use_implied": True,
+	"head_type": "mlp",
+	"mlp_market_features": False,
+	"linear_residual_head": False,
+	"gate_hidden_dim": 32,
+	"gate_target_budget": 0.2,
+	"gate_use_market_features": True,
+	"shared_gate": False,
+	"linear_gate": False,
+	"market_feature_stats": 3,
+	"market_logit_scale": 1.0,
+	"learn_market_bias": False,
+	"learn_market_class_scale": False,
+	"gate_mean_weight": 0.0,
+	"gate_sat_weight": 0.0,
+	"lambda_repulsion": 0.0,
+	"lambda_logit_delta": 0.0,
 	"lr": 1e-3,
 	"weight_decay": 1e-4,
 	"batch_size": 256,
@@ -84,6 +100,18 @@ def build_player_model(config: dict) -> PlayerMatchModel:
 		position_embed_dim=config["position_embed_dim"],
 		dropout=config["dropout"],
 		use_implied=config["use_implied"],
+		head_type=config["head_type"],
+		mlp_market_features=config["mlp_market_features"],
+		linear_residual_head=config["linear_residual_head"],
+		gate_hidden_dim=config["gate_hidden_dim"],
+		gate_target_budget=config["gate_target_budget"],
+		gate_use_market_features=config["gate_use_market_features"],
+		shared_gate=config["shared_gate"],
+		linear_gate=config["linear_gate"],
+		market_feature_stats=config["market_feature_stats"],
+		market_logit_scale=config["market_logit_scale"],
+		learn_market_bias=config["learn_market_bias"],
+		learn_market_class_scale=config["learn_market_class_scale"],
 	)
 
 
@@ -169,6 +197,9 @@ def set_seed(seed: int = 42):
 	np.random.seed(seed)
 	torch.manual_seed(seed)
 	torch.cuda.manual_seed_all(seed)
+	torch.backends.cudnn.deterministic = True
+	torch.backends.cudnn.benchmark = False
+	torch.use_deterministic_algorithms(True, warn_only=True)
 
 
 def prepare_match_data(df: pl.DataFrame) -> pl.DataFrame:
@@ -261,6 +292,7 @@ def train_one_epoch(
 	loader: DataLoader,
 	optimizer: torch.optim.Optimizer,
 	device: torch.device,
+	config: dict,
 ) -> float:
 	model.train()
 	total_loss = 0.0
@@ -271,8 +303,36 @@ def train_one_epoch(
 		 implied, labels, raw_margin) = [t.to(device) for t in batch]
 
 		optimizer.zero_grad()
-		logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
-		loss = F.cross_entropy(logits, labels)
+		if getattr(model, "head_type", "mlp") == "gated_residual":
+			logits, components = model(
+				home_feat,
+				home_pos,
+				home_mask,
+				away_feat,
+				away_pos,
+				away_mask,
+				implied,
+				raw_margin,
+				return_components=True,
+			)
+			loss = F.cross_entropy(logits, labels)
+			gate_mean_weight = float(config.get("gate_mean_weight", 0.0))
+			gate_sat_weight = float(config.get("gate_sat_weight", 0.0))
+			lambda_repulsion = float(config.get("lambda_repulsion", 0.0))
+			lambda_logit_delta = float(config.get("lambda_logit_delta", 0.0))
+			if gate_mean_weight > 0:
+				loss = loss + gate_mean_weight * (components["gate"].mean() - float(config["gate_target_budget"])).pow(2)
+			if gate_sat_weight > 0:
+				loss = loss + gate_sat_weight * (-torch.log(components["gate"] * (1.0 - components["gate"]) + 1e-6)).mean()
+			if lambda_repulsion > 0:
+				implied_norm = implied / implied.sum(dim=-1, keepdim=True).clamp(min=1e-6)
+				pred_probs = F.softmax(logits, dim=-1)
+				loss = loss - lambda_repulsion * ((pred_probs - implied_norm) ** 2).mean()
+			if lambda_logit_delta > 0:
+				loss = loss + lambda_logit_delta * (logits - components["anchor_logits"]).pow(2).mean()
+		else:
+			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, raw_margin)
+			loss = F.cross_entropy(logits, labels)
 		loss.backward()
 		optimizer.step()
 
@@ -298,7 +358,7 @@ def evaluate(
 		(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask,
 		 implied, labels, raw_margin) = [t.to(device) for t in batch]
 
-		logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
+		logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, raw_margin)
 		# Clamp logits to avoid NaN from attention layers
 		logits = logits.clamp(-20, 20)
 		loss = F.cross_entropy(logits, labels)
@@ -409,7 +469,7 @@ def train_player_model(config: dict = None):
 	print("-" * 65)
 
 	for epoch in range(1, config["max_epochs"] + 1):
-		train_loss = train_one_epoch(model, train_loader, optimizer, DEVICE)
+		train_loss = train_one_epoch(model, train_loader, optimizer, DEVICE, config)
 		val_loss, val_probs = evaluate(model, val_loader, DEVICE)
 		val_metrics = compute_metrics(val_probs, val_data)
 		scheduler.step()
@@ -456,13 +516,75 @@ def train_player_model(config: dict = None):
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Train player-level set model")
-	parser.add_argument("--encoder", choices=["deep_sets", "set_transformer"], default="deep_sets")
+	parser.add_argument("--encoder", choices=["deep_sets", "deep_sets_role_pool", "deep_sets_stats", "weighted_deep_sets", "set_transformer"], default="deep_sets")
+	parser.add_argument("--head-type", choices=["mlp", "gated_residual"], default="mlp")
+	parser.add_argument("--mlp-market-features", action="store_true")
+	parser.add_argument("--linear-residual-head", action="store_true")
 	parser.add_argument("--no-implied", action="store_true", help="Don't use implied probabilities as input")
+	parser.add_argument("--hidden-dim", type=int)
+	parser.add_argument("--team-output-dim", type=int)
+	parser.add_argument("--dropout", type=float)
+	parser.add_argument("--lr", type=float)
+	parser.add_argument("--weight-decay", type=float)
+	parser.add_argument("--gate-hidden-dim", type=int)
+	parser.add_argument("--gate-target-budget", type=float)
+	parser.add_argument("--player-only-gate", action="store_true")
+	parser.add_argument("--shared-gate", action="store_true")
+	parser.add_argument("--linear-gate", action="store_true")
+	parser.add_argument("--market-feature-stats", type=int, choices=[3, 4, 5])
+	parser.add_argument("--market-logit-scale", type=float)
+	parser.add_argument("--learn-market-bias", action="store_true")
+	parser.add_argument("--learn-market-class-scale", action="store_true")
+	parser.add_argument("--gate-mean-weight", type=float)
+	parser.add_argument("--gate-sat-weight", type=float)
+	parser.add_argument("--lambda-repulsion", type=float)
+	parser.add_argument("--lambda-logit-delta", type=float)
 	args = parser.parse_args()
 
 	config = DEFAULT_CONFIG.copy()
 	config["encoder_type"] = args.encoder
+	config["head_type"] = args.head_type
+	if args.mlp_market_features:
+		config["mlp_market_features"] = True
+	if args.linear_residual_head:
+		config["linear_residual_head"] = True
 	if args.no_implied:
 		config["use_implied"] = False
+	if args.hidden_dim is not None:
+		config["hidden_dim"] = args.hidden_dim
+	if args.team_output_dim is not None:
+		config["team_output_dim"] = args.team_output_dim
+	if args.dropout is not None:
+		config["dropout"] = args.dropout
+	if args.lr is not None:
+		config["lr"] = args.lr
+	if args.weight_decay is not None:
+		config["weight_decay"] = args.weight_decay
+	if args.gate_hidden_dim is not None:
+		config["gate_hidden_dim"] = args.gate_hidden_dim
+	if args.gate_target_budget is not None:
+		config["gate_target_budget"] = args.gate_target_budget
+	if args.player_only_gate:
+		config["gate_use_market_features"] = False
+	if args.shared_gate:
+		config["shared_gate"] = True
+	if args.linear_gate:
+		config["linear_gate"] = True
+	if args.market_feature_stats is not None:
+		config["market_feature_stats"] = args.market_feature_stats
+	if args.market_logit_scale is not None:
+		config["market_logit_scale"] = args.market_logit_scale
+	if args.learn_market_bias:
+		config["learn_market_bias"] = True
+	if args.learn_market_class_scale:
+		config["learn_market_class_scale"] = True
+	if args.gate_mean_weight is not None:
+		config["gate_mean_weight"] = args.gate_mean_weight
+	if args.gate_sat_weight is not None:
+		config["gate_sat_weight"] = args.gate_sat_weight
+	if args.lambda_repulsion is not None:
+		config["lambda_repulsion"] = args.lambda_repulsion
+	if args.lambda_logit_delta is not None:
+		config["lambda_logit_delta"] = args.lambda_logit_delta
 
 	train_player_model(config)
