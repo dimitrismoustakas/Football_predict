@@ -26,6 +26,7 @@ import polars as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, Dataset
 
 from preprocessing.lineup_builder import (
@@ -318,6 +319,44 @@ def clone_squad_tensors(squad_tensors: dict) -> dict:
 	return cloned
 
 
+def fit_player_scaler(
+	squad_tensors: dict,
+	train_indices: np.ndarray,
+) -> StandardScaler:
+	"""Fit a StandardScaler on valid (non-padding) player features from training matches."""
+
+	home = squad_tensors["home_players"][train_indices]
+	away = squad_tensors["away_players"][train_indices]
+	home_mask = squad_tensors["home_mask"][train_indices]
+	away_mask = squad_tensors["away_mask"][train_indices]
+
+	# Collect all valid player feature rows: (N_valid, D)
+	valid_features = np.concatenate([
+		home[home_mask],
+		away[away_mask],
+	], axis=0)
+
+	scaler = StandardScaler()
+	scaler.fit(valid_features)
+	return scaler
+
+
+def apply_player_scaler(
+	squad_tensors: dict,
+	scaler: StandardScaler,
+) -> dict:
+	"""Apply a fitted scaler to all player features in-place (padding stays zero)."""
+
+	scaled = clone_squad_tensors(squad_tensors)
+	for side in ["home", "away"]:
+		features = scaled[f"{side}_players"]
+		mask = scaled[f"{side}_mask"]
+		valid = features[mask]  # (N_valid, D)
+		features[mask] = scaler.transform(valid).astype(np.float32)
+		# Padding slots remain zero — the model masks them out anyway
+	return scaled
+
+
 def shuffle_squad_features(squad_tensors: dict, seed: int = 42) -> dict:
 	"""Shuffle valid player feature slots across matches while preserving masks."""
 
@@ -484,16 +523,34 @@ def build_loader(dataset: PlayerMatchDataset, batch_size: int, shuffle: bool, se
 # Training loop
 # ---------------------------------------------------------------------------
 
+def _collect_grad_norms(model: nn.Module) -> dict[str, float]:
+	"""Collect per-component gradient norms after backward (before optimizer step)."""
+
+	norms: dict[str, list[float]] = {}
+	for name, param in model.named_parameters():
+		if param.grad is None:
+			continue
+		# Group by top-level component
+		component = name.split(".")[0]
+		grad_norm = param.grad.data.norm(2).item()
+		norms.setdefault(component, []).append(grad_norm ** 2)
+	# Total L2 norm per component
+	return {k: float(np.sqrt(sum(v))) for k, v in norms.items()}
+
+
 def train_one_epoch(
 	model: nn.Module,
 	loader: DataLoader,
 	optimizer: torch.optim.Optimizer,
 	device: torch.device,
 	config: dict,
-) -> float:
+	collect_grad_stats: bool = False,
+) -> float | tuple[float, dict]:
 	model.train()
 	total_loss = 0.0
 	n_batches = 0
+	grad_norms_accum: dict[str, list[float]] = {}
+	total_grad_norms: list[float] = []
 
 	for batch in loader:
 		(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask,
@@ -518,12 +575,32 @@ def train_one_epoch(
 			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, raw_margin)
 			loss = F.cross_entropy(logits, labels)
 		loss.backward()
+
+		if collect_grad_stats:
+			component_norms = _collect_grad_norms(model)
+			for k, v in component_norms.items():
+				grad_norms_accum.setdefault(k, []).append(v)
+			total_norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), float("inf")))
+			total_grad_norms.append(total_norm)
+
 		optimizer.step()
 
 		total_loss += loss.item()
 		n_batches += 1
 
-	return total_loss / max(n_batches, 1)
+	avg_loss = total_loss / max(n_batches, 1)
+	if not collect_grad_stats:
+		return avg_loss
+
+	grad_stats = {
+		"total_grad_norm_mean": float(np.mean(total_grad_norms)),
+		"total_grad_norm_max": float(np.max(total_grad_norms)),
+		"total_grad_norm_p95": float(np.percentile(total_grad_norms, 95)),
+	}
+	for component, norms in grad_norms_accum.items():
+		grad_stats[f"grad_norm_{component}_mean"] = float(np.mean(norms))
+		grad_stats[f"grad_norm_{component}_max"] = float(np.max(norms))
+	return avg_loss, grad_stats
 
 
 @torch.no_grad()
@@ -604,6 +681,42 @@ def compute_metrics(probs: np.ndarray, data: dict) -> dict:
 # Canonical evaluation
 # ---------------------------------------------------------------------------
 
+def scale_squad_tensors(
+	squad_tensors: dict,
+	train_idx: np.ndarray,
+) -> tuple[dict, StandardScaler]:
+	"""Fit a StandardScaler on training player features and apply to all matches."""
+
+	scaler = fit_player_scaler(squad_tensors, train_idx)
+	scaled = apply_player_scaler(squad_tensors, scaler)
+	return scaled, scaler
+
+
+def _smoothed_best_epoch(
+	val_losses: list[float],
+	smooth_window: int = 5,
+	min_epoch: int = 1,
+) -> tuple[int, float]:
+	"""Pick the best epoch using a rolling average of val losses.
+
+	Returns (best_epoch_1indexed, smoothed_val_loss).
+	Falls back to raw minimum if not enough epochs for smoothing.
+	"""
+	arr = np.array(val_losses)
+	usable = arr[min_epoch - 1:]
+	if len(usable) < smooth_window:
+		# Not enough data for smoothing — fall back to raw minimum
+		raw_best = int(np.argmin(usable))
+		return raw_best + min_epoch, float(usable[raw_best])
+	kernel = np.ones(smooth_window) / smooth_window
+	smoothed = np.convolve(usable, kernel, mode="valid")
+	# smoothed[i] is the average of usable[i:i+window], centered at i + window//2
+	center_offset = smooth_window // 2
+	best_smooth_idx = int(np.argmin(smoothed))
+	best_epoch = best_smooth_idx + center_offset + min_epoch
+	return best_epoch, float(smoothed[best_smooth_idx])
+
+
 def train_with_early_stopping_split(
 	config: dict,
 	squad_tensors: dict,
@@ -613,12 +726,15 @@ def train_with_early_stopping_split(
 	val_data: dict,
 	seed: int,
 	verbose: bool = True,
-) -> tuple[nn.Module, int, float]:
+	collect_grad_stats: bool = False,
+) -> tuple[nn.Module, int, float] | tuple[nn.Module, int, float, list[dict]]:
 	set_seed(seed)
+	scaled_tensors, _ = scale_squad_tensors(squad_tensors, train_idx)
 	min_selection_epoch = max(1, int(config.get("min_selection_epoch", 1)))
+	smooth_window = int(config.get("epoch_smooth_window", 5))
 	model = build_player_model(config).to(DEVICE)
-	train_dataset = PlayerMatchDataset(squad_tensors, train_data["y"], train_data["implied"], train_data["raw_margin"], train_idx)
-	val_dataset = PlayerMatchDataset(squad_tensors, val_data["y"], val_data["implied"], val_data["raw_margin"], val_idx)
+	train_dataset = PlayerMatchDataset(scaled_tensors, train_data["y"], train_data["implied"], train_data["raw_margin"], train_idx)
+	val_dataset = PlayerMatchDataset(scaled_tensors, val_data["y"], val_data["implied"], val_data["raw_margin"], val_idx)
 	train_loader = build_loader(train_dataset, config["batch_size"], shuffle=True, seed=seed)
 	val_loader = build_loader(val_dataset, config["batch_size"], shuffle=False, seed=seed)
 	optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
@@ -628,35 +744,73 @@ def train_with_early_stopping_split(
 		eta_min=config["lr"] * 0.01,
 	)
 
-	best_val_loss = float("inf")
-	best_epoch = 1
+	all_val_losses: list[float] = []
+	best_raw_val = float("inf")
+	best_raw_epoch = 1
 	patience_counter = 0
 	best_state = None
+	epoch_grad_stats = []
 
 	for epoch in range(1, config["max_epochs"] + 1):
-		train_loss = train_one_epoch(model, train_loader, optimizer, DEVICE, config)
+		result = train_one_epoch(model, train_loader, optimizer, DEVICE, config, collect_grad_stats=collect_grad_stats)
+		if collect_grad_stats:
+			train_loss, grad_stats = result
+			epoch_grad_stats.append({"epoch": epoch, **grad_stats})
+		else:
+			train_loss = result
 		val_loss, _ = evaluate(model, val_loader, DEVICE)
 		scheduler.step()
+		all_val_losses.append(val_loss)
 		if verbose:
-			print(f"Epoch {epoch:>2}: train_loss={train_loss:.5f} val_loss={val_loss:.5f}")
-		if epoch < min_selection_epoch:
-			continue
-		if val_loss < best_val_loss:
-			best_val_loss = val_loss
-			best_epoch = epoch
-			patience_counter = 0
+			extra = ""
+			if collect_grad_stats:
+				gs = epoch_grad_stats[-1]
+				extra = f" grad_norm: mean={gs['total_grad_norm_mean']:.3f} max={gs['total_grad_norm_max']:.3f} p95={gs['total_grad_norm_p95']:.3f}"
+			print(f"Epoch {epoch:>2}: train_loss={train_loss:.5f} val_loss={val_loss:.5f}{extra}")
+
+		# Checkpoint at raw best for the model state we keep
+		if epoch >= min_selection_epoch and val_loss < best_raw_val:
+			best_raw_val = val_loss
+			best_raw_epoch = epoch
 			best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
-		else:
-			patience_counter += 1
-			if patience_counter >= config["patience"]:
+
+		# Patience based on smoothed val loss: once we have enough history,
+		# check whether the smoothed loss is still improving.
+		if epoch >= min_selection_epoch + smooth_window:
+			current_smooth_epoch, current_smooth_val = _smoothed_best_epoch(
+				all_val_losses, smooth_window, min_selection_epoch,
+			)
+			# Count patience from the smoothed best: if we're far past it, stop.
+			epochs_since_smooth_best = epoch - current_smooth_epoch
+			if epochs_since_smooth_best >= config["patience"]:
 				if verbose:
-					print(f"Early stopping at epoch {epoch} (best={best_epoch})")
+					print(f"Early stopping at epoch {epoch} (smoothed best={current_smooth_epoch}, raw best={best_raw_epoch})")
 				break
+		elif epoch >= min_selection_epoch:
+			# Before we have enough for smoothing, use raw patience
+			if val_loss < best_raw_val + 1e-9:
+				patience_counter = 0
+			else:
+				patience_counter += 1
+				if patience_counter >= config["patience"]:
+					if verbose:
+						print(f"Early stopping at epoch {epoch} (raw best={best_raw_epoch}, pre-smooth)")
+					break
+
+	# Determine the epoch count to return (for reuse in fixed-epoch training).
+	# Use smoothed estimator if we have enough data, otherwise raw.
+	selected_epoch, selected_val = _smoothed_best_epoch(
+		all_val_losses, smooth_window, min_selection_epoch,
+	)
+	if verbose and selected_epoch != best_raw_epoch:
+		print(f"Epoch selection: smoothed={selected_epoch} (val={selected_val:.5f}), raw={best_raw_epoch} (val={best_raw_val:.5f})")
 
 	if best_state is not None:
 		model.load_state_dict(best_state)
 		model.to(DEVICE)
-	return model, best_epoch, float(best_val_loss)
+	if collect_grad_stats:
+		return model, selected_epoch, float(best_raw_val), epoch_grad_stats
+	return model, selected_epoch, float(best_raw_val)
 
 
 def train_fixed_epochs_split(
@@ -669,8 +823,9 @@ def train_fixed_epochs_split(
 	verbose: bool = True,
 ) -> nn.Module:
 	set_seed(seed)
+	scaled_tensors, _ = scale_squad_tensors(squad_tensors, train_idx)
 	model = build_player_model(config).to(DEVICE)
-	train_dataset = PlayerMatchDataset(squad_tensors, train_data["y"], train_data["implied"], train_data["raw_margin"], train_idx)
+	train_dataset = PlayerMatchDataset(scaled_tensors, train_data["y"], train_data["implied"], train_data["raw_margin"], train_idx)
 	train_loader = build_loader(train_dataset, config["batch_size"], shuffle=True, seed=seed)
 	optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
 	scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -689,11 +844,13 @@ def train_fixed_epochs_split(
 def evaluate_on_split(
 	model: nn.Module,
 	squad_tensors: dict,
+	train_idx: np.ndarray,
 	split_idx: np.ndarray,
 	split_data: dict,
 	batch_size: int,
 ) -> dict:
-	dataset = PlayerMatchDataset(squad_tensors, split_data["y"], split_data["implied"], split_data["raw_margin"], split_idx)
+	scaled_tensors, _ = scale_squad_tensors(squad_tensors, train_idx)
+	dataset = PlayerMatchDataset(scaled_tensors, split_data["y"], split_data["implied"], split_data["raw_margin"], split_idx)
 	loader = build_loader(dataset, batch_size=batch_size, shuffle=False, seed=0)
 	_, probs = evaluate(model, loader, DEVICE)
 	return compute_metrics(probs, split_data)
@@ -773,6 +930,7 @@ def evaluate_cv_objective(
 			evaluate_on_split(
 				model,
 				prepared["squad_tensors"],
+				train_idx,
 				val_idx,
 				val_data,
 				batch_size=config["batch_size"],
@@ -851,6 +1009,7 @@ def train_player_model(
 	validation_metrics = evaluate_on_split(
 		early_stop_model,
 		prepared["squad_tensors"],
+		train_idx,
 		val_idx,
 		val_data,
 		batch_size=config["batch_size"],
@@ -878,6 +1037,7 @@ def train_player_model(
 	test_metrics = evaluate_on_split(
 		model,
 		prepared["squad_tensors"],
+		all_train_idx,
 		test_idx,
 		test_data,
 		batch_size=config["batch_size"],
