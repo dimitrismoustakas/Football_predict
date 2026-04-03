@@ -23,6 +23,7 @@ downloaded_files/
 artifacts/models/*
 !artifacts/models/README.md
 artifacts/experiment_metrics/*
+!artifacts/experiment_metrics/set_transformer_runs.tsv
 
 # Data
 data/

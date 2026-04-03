@@ -1,8 +1,5 @@
 """
 Set Transformer model for player-level match prediction.
-
-This branch keeps only the Set Transformer path. Deep Sets work lives on its
-own branch.
 """
 
 import math
