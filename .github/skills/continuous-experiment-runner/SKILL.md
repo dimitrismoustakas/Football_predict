@@ -35,11 +35,6 @@ Read these first:
 - Name experiment branches `experiment/<name>`.
 - Use CV `log_loss` as the decision metric as long as the test set `log_loss` is not getting worse. If CV `log_loss` is staying the same but test set `log_loss` is improving, that is still a win. But you should always try to improve CV `log_loss` as your primary objective. The relevant digits for `log_loss` are up to the 6th decimal place, for changes smaller than that consider the change to be practically zero.
 - Compare against the latest kept row in `artifacts/experiment_metrics/result_main_runs.tsv`.
-- Cheap local prescreens are allowed when they help rank nearby ideas, but they do not replace the canonical trainer and must not append to the TSV ledger.
-- When ranking nearby candidates, prefer a stricter local support scorer: use the epoch-selection split only to choose `best_epoch`, then evaluate that fixed epoch count across the objective folds without appending a ledger row.
-- Do not trust the epoch-selection season by itself for close calls; in this repo it is noisy enough to produce false positives.
-- If a prescreened direction looks good, confirm the exact candidate with the canonical trainer before treating it as a real improvement.
-- If a branch improves canonically and nearby variants still look promising, keep iterating on that same branch until the local neighborhood looks exhausted.
 - Do not pause for user confirmation between iterations.
 - Running out of local ideas is not enough reason to stop; if the current search space is exhausted, actively look for papers, repo references, or other credible external sources of new experiment ideas and try to translate them into candidates.
 
@@ -52,21 +47,7 @@ Default commands:
 1. refresh any required data inputs
 2. run `uv run python training/train_main_model.py --description "short text of what this experiment tried"`
 
-The `--description` flag is **mandatory** for every canonical run. Write a concise description of what the experiment tried (e.g. "remove season_progress feature", "resnet backbone with cross-attention", "increase LR to 0.04"). Do not use commas in the description (the TSV uses tabs but commas in descriptions still cause readability issues).
-
-Before spending a full canonical run, it is reasonable to do narrow branch-local support work such as:
-
-- a tiny prescreen script that mirrors the canonical split closely enough to rank nearby candidates
-- a narrow ablation or small parameter sweep
-- a smoke check for newly introduced model plumbing
-
-For nearby architecture or hyperparameter variants, the preferred support path is:
-
-1. choose `best_epoch` on the fixed epoch-selection season
-2. retrain each candidate for that fixed epoch count on each objective fold
-3. compare mean CV `log_loss` locally without writing to the TSV ledger
-
-Keep those helpers lean and avoid turning them into permanent experiment infrastructure unless they clearly belong in the canonical path.
+The `--description` flag is **mandatory** for every canonical run. Write a concise description of what the experiment tried (e.g. "remove season_progress feature", "resnet backbone with cross-attention", "increase LR to 0.04"). Do not use commas in the description.
 
 The trainer is the default experiment harness and writes the main outputs to:
 

@@ -2,7 +2,8 @@
 Canonical training entry point for the player-level Set Transformer model.
 
 Uses the same rolling CV, epoch-selection, and fixed held-out test protocol as
-the main model while writing to a separate append-only ledger.
+the main model. Training hyperparameters come only from the source-controlled
+player config, and experiment outcomes are recorded in the ledger.
 """
 
 import argparse
@@ -49,12 +50,12 @@ from training.train_utils import (
 	load_frame,
 	resolve_test_season,
 )
-from utils.paths import EXPERIMENT_METRICS_DIR, MODELS_DIR, PROJECT_ROOT
+from utils.paths import EXPERIMENT_METRICS_DIR, PROJECT_ROOT
 from utils.portfolio import DEFAULT_BANKROLL, DEFAULT_KELLY_FRACTION, evaluate_bankroll_strategy
 
 DEFAULT_PARQUET = Path(os.environ.get("PARQUET_PATH", "data/training/understat_df.parquet"))
+TRAINING_CONFIG_PATH = PROJECT_ROOT / "training" / "configs" / "player_models" / "set_transformer.json"
 EVALUATION_CONFIG_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "evaluation.json"
-LATEST_SET_TRANSFORMER_METRICS_PATH = MODELS_DIR / "latest_set_transformer_metrics.json"
 EXPERIMENT_LOG_PATH = EXPERIMENT_METRICS_DIR / "set_transformer_runs.tsv"
 DISPLAY_NAME = "Player Set Transformer"
 MODEL_NAME = "set_transformer"
@@ -77,31 +78,46 @@ EXPERIMENT_LOG_COLUMNS = [
 	"test_metrics_json",
 ]
 
-# Training hyperparameters
-DEFAULT_CONFIG = {
-	"encoder_type": "set_transformer",
-	"hidden_dim": 64,
-	"team_output_dim": 32,
-	"num_heads": 4,
-	"num_sab_layers": 2,
-	"position_embed_dim": 4,
-	"dropout": 0.15,
-	"use_implied": True,
-	"head_type": "mlp",
-	"gate_hidden_dim": 32,
-	"gate_target_budget": 0.2,
-	"market_feature_stats": 3,
-	"market_logit_scale": 1.0,
-	"learn_market_class_scale": False,
-	"aux_context_loss_weight": 0.0,
-	"lr": 1e-3,
-	"weight_decay": 1e-4,
-	"batch_size": 256,
-	"max_epochs": 50,
-	"patience": 5,
-	"min_selection_epoch": 1,
-	"top_n_players": 16,
-	"seed": 42,
+TRAINING_CONFIG_KEYS = [
+	"encoder_type",
+	"hidden_dim",
+	"team_output_dim",
+	"num_heads",
+	"num_sab_layers",
+	"position_embed_dim",
+	"dropout",
+	"use_implied",
+	"head_type",
+	"gate_hidden_dim",
+	"gate_target_budget",
+	"market_feature_stats",
+	"market_logit_scale",
+	"learn_market_class_scale",
+	"aux_context_loss_weight",
+	"label_smoothing",
+	"market_target_mix",
+	"market_target_entropy_scale",
+	"market_target_entropy_mode",
+	"confidence_penalty_weight",
+	"brier_aux_weight",
+	"gce_mix_weight",
+	"gce_q",
+	"lr",
+	"weight_decay",
+	"schedule",
+	"batch_size",
+	"max_epochs",
+	"patience",
+	"epoch_smooth_window",
+	"min_selection_epoch",
+	"top_n_players",
+]
+
+SCHEDULE_REQUIRED_KEYS = {
+	"cosine": [],
+	"cosine_warmup": ["warmup_fraction", "start_factor"],
+	"onecycle": ["max_lr", "pct_start"],
+	"warm_restarts": ["t_0", "t_mult"],
 }
 
 
@@ -139,12 +155,6 @@ def mean_metric(metrics_list: list[Dict[str, float]]) -> Dict[str, float]:
 def load_json(path: Path) -> dict:
 	with open(path, "r", encoding="utf-8") as file:
 		return json.load(file)
-
-
-def write_json(path: Path, payload: dict):
-	path.parent.mkdir(parents=True, exist_ok=True)
-	with open(path, "w", encoding="utf-8") as file:
-		json.dump(payload, file, indent=2)
 
 
 def serialize_log_value(value):
@@ -186,6 +196,16 @@ def load_evaluation_config() -> dict:
 	config["test_role"] = str(config["test_role"])
 	if config["test_role"] not in {"held_out", "acceptance"}:
 		raise ValueError(f"Unsupported test_role: {config['test_role']}")
+	return config
+
+
+def load_training_config() -> dict:
+	raw = load_json(TRAINING_CONFIG_PATH)
+	missing = [key for key in TRAINING_CONFIG_KEYS if key not in raw]
+	if missing:
+		raise ValueError(f"Missing player training config keys: {missing}")
+	config = dict(raw)
+	config["schedule"] = normalize_schedule_config(config)
 	return config
 
 
@@ -357,23 +377,6 @@ def apply_player_scaler(
 	return scaled
 
 
-def shuffle_squad_features(squad_tensors: dict, seed: int = 42) -> dict:
-	"""Shuffle valid player feature slots across matches while preserving masks."""
-
-	shuffled = clone_squad_tensors(squad_tensors)
-	rng = np.random.RandomState(seed)
-	for side in ["home", "away"]:
-		features = shuffled[f"{side}_players"]
-		mask = shuffled[f"{side}_mask"]
-		for feature_idx in range(features.shape[2]):
-			column = features[:, :, feature_idx].copy()
-			valid_values = column[mask].copy()
-			rng.shuffle(valid_values)
-			column[mask] = valid_values
-			features[:, :, feature_idx] = column
-	return shuffled
-
-
 # ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
@@ -523,6 +526,116 @@ def build_loader(dataset: PlayerMatchDataset, batch_size: int, shuffle: bool, se
 # Training loop
 # ---------------------------------------------------------------------------
 
+def normalize_schedule_config(config: dict) -> dict:
+	"""Return a normalized LR-schedule config with explicit required keys."""
+
+	schedule = config["schedule"]
+	if not isinstance(schedule, dict):
+		raise ValueError("Player training config must define schedule as an object.")
+	schedule = dict(schedule)
+	if "name" not in schedule:
+		raise ValueError("Player training config schedule is missing 'name'.")
+	name = str(schedule["name"])
+	if name not in SCHEDULE_REQUIRED_KEYS:
+		raise ValueError(f"Unsupported schedule: {name}")
+	missing = [key for key in SCHEDULE_REQUIRED_KEYS[name] if key not in schedule]
+	if missing:
+		raise ValueError(f"Schedule '{name}' is missing keys: {missing}")
+	if name == "cosine":
+		return {"name": "cosine"}
+	if name == "cosine_warmup":
+		return {
+			"name": "cosine_warmup",
+			"warmup_fraction": float(schedule["warmup_fraction"]),
+			"start_factor": float(schedule["start_factor"]),
+		}
+	if name == "onecycle":
+		return {
+			"name": "onecycle",
+			"max_lr": float(schedule["max_lr"]),
+			"pct_start": float(schedule["pct_start"]),
+		}
+	if name == "warm_restarts":
+		return {
+			"name": "warm_restarts",
+			"t_0": int(schedule["t_0"]),
+			"t_mult": int(schedule["t_mult"]),
+		}
+	raise ValueError(f"Unsupported schedule: {name}")
+
+
+def build_optimizer_and_scheduler(
+	model: nn.Module,
+	config: dict,
+	steps_per_epoch: int,
+	epochs: int,
+) -> tuple[torch.optim.Optimizer, object, str]:
+	"""Build the optimizer and LR scheduler for a training split."""
+
+	optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
+	schedule = normalize_schedule_config(config)
+	name = schedule["name"]
+	if name == "cosine":
+		return (
+			optimizer,
+			torch.optim.lr_scheduler.CosineAnnealingLR(
+				optimizer,
+				T_max=max(1, epochs),
+				eta_min=config["lr"] * 0.01,
+			),
+			"epoch",
+		)
+	if name == "cosine_warmup":
+		warmup_epochs = max(1, int(round(epochs * schedule["warmup_fraction"])))
+		cosine_epochs = max(1, epochs - warmup_epochs)
+		return (
+			optimizer,
+			torch.optim.lr_scheduler.SequentialLR(
+				optimizer,
+				schedulers=[
+					torch.optim.lr_scheduler.LinearLR(
+						optimizer,
+						start_factor=schedule["start_factor"],
+						end_factor=1.0,
+						total_iters=warmup_epochs,
+					),
+					torch.optim.lr_scheduler.CosineAnnealingLR(
+						optimizer,
+						T_max=cosine_epochs,
+						eta_min=config["lr"] * 0.01,
+					),
+				],
+				milestones=[warmup_epochs],
+			),
+			"epoch",
+		)
+	if name == "onecycle":
+		return (
+			optimizer,
+			torch.optim.lr_scheduler.OneCycleLR(
+				optimizer,
+				max_lr=schedule["max_lr"],
+				epochs=max(1, epochs),
+				steps_per_epoch=max(1, steps_per_epoch),
+				pct_start=schedule["pct_start"],
+				anneal_strategy="cos",
+			),
+			"batch",
+		)
+	if name == "warm_restarts":
+		return (
+			optimizer,
+			torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+				optimizer,
+				T_0=max(1, schedule["t_0"]),
+				T_mult=max(1, schedule["t_mult"]),
+				eta_min=config["lr"] * 0.01,
+			),
+			"fractional_batch",
+		)
+	raise ValueError(f"Unsupported schedule: {name}")
+
+
 def _collect_grad_norms(model: nn.Module) -> dict[str, float]:
 	"""Collect per-component gradient norms after backward (before optimizer step)."""
 
@@ -538,12 +651,89 @@ def _collect_grad_norms(model: nn.Module) -> dict[str, float]:
 	return {k: float(np.sqrt(sum(v))) for k, v in norms.items()}
 
 
+def _target_distribution(labels: torch.Tensor, num_classes: int, label_smoothing: float) -> torch.Tensor:
+	"""Build one-hot or label-smoothed class targets."""
+
+	target = F.one_hot(labels.view(-1).long(), num_classes=num_classes).float()
+	if label_smoothing <= 0:
+		return target
+	smooth = float(label_smoothing) / num_classes
+	return target * (1.0 - float(label_smoothing)) + smooth
+
+
+def _normalized_market_entropy(implied: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+	"""Return normalized entropy for a 3-way implied-probability vector."""
+
+	entropy = -torch.sum(implied * torch.log(implied.clamp_min(eps)), dim=-1)
+	return entropy / np.log(implied.shape[-1])
+
+
+def compute_player_loss(
+	logits: torch.Tensor,
+	labels: torch.Tensor,
+	config: dict,
+	implied: torch.Tensor | None = None,
+) -> torch.Tensor:
+	"""Training loss for the Set Transformer with optional low-risk extras."""
+
+	labels = labels.view(-1).long()
+	num_classes = logits.shape[-1]
+	label_smoothing = float(config["label_smoothing"])
+	market_target_mix = float(config["market_target_mix"])
+	market_target_entropy_scale = float(config["market_target_entropy_scale"])
+	market_target_entropy_mode = str(config["market_target_entropy_mode"])
+	confidence_penalty_weight = float(config["confidence_penalty_weight"])
+	brier_aux_weight = float(config["brier_aux_weight"])
+	gce_mix_weight = float(config["gce_mix_weight"])
+	gce_q = float(config["gce_q"])
+	eps = 1e-6
+
+	log_probs = F.log_softmax(logits, dim=-1)
+	probs = log_probs.exp()
+	target_distribution = _target_distribution(labels, num_classes, label_smoothing)
+	if market_target_mix > 0 and implied is not None:
+		mix = logits.new_full((target_distribution.shape[0], 1), market_target_mix)
+		if abs(market_target_entropy_scale) > eps:
+			normalized_entropy = _normalized_market_entropy(implied, eps=eps).unsqueeze(-1)
+			if market_target_entropy_mode == "linear":
+				centered_entropy = 2.0 * (normalized_entropy - 0.5)
+			elif market_target_entropy_mode == "edge":
+				edge_signal = 2.0 * torch.abs(normalized_entropy - 0.5)
+				centered_entropy = 2.0 * (edge_signal - 0.5)
+			else:
+				raise ValueError(f"Unsupported market_target_entropy_mode: {market_target_entropy_mode}")
+			mix = (mix * (1.0 + market_target_entropy_scale * centered_entropy)).clamp(0.0, 1.0)
+		target_distribution = (1.0 - mix) * target_distribution + mix * implied
+	base_loss = -(target_distribution * log_probs).sum(dim=-1)
+
+	if gce_mix_weight > 0:
+		true_class_probs = probs.gather(1, labels.unsqueeze(1)).squeeze(1).clamp_min(eps)
+		if abs(gce_q) <= eps:
+			gce_loss = -torch.log(true_class_probs)
+		else:
+			gce_loss = (1.0 - true_class_probs.pow(gce_q)) / gce_q
+		base_loss = (1.0 - gce_mix_weight) * base_loss + gce_mix_weight * gce_loss
+
+	if confidence_penalty_weight > 0:
+		confidence_penalty = (probs * log_probs).sum(dim=-1)
+		base_loss = base_loss + confidence_penalty_weight * confidence_penalty
+
+	if brier_aux_weight > 0:
+		brier_aux = ((probs - target_distribution) ** 2).sum(dim=-1)
+		base_loss = base_loss + brier_aux_weight * brier_aux
+
+	return base_loss.mean()
+
+
 def train_one_epoch(
 	model: nn.Module,
 	loader: DataLoader,
 	optimizer: torch.optim.Optimizer,
 	device: torch.device,
 	config: dict,
+	scheduler=None,
+	scheduler_step_mode: str = "epoch",
+	epoch_index: int = 0,
 	collect_grad_stats: bool = False,
 ) -> float | tuple[float, dict]:
 	model.train()
@@ -551,13 +741,14 @@ def train_one_epoch(
 	n_batches = 0
 	grad_norms_accum: dict[str, list[float]] = {}
 	total_grad_norms: list[float] = []
+	steps_per_epoch = max(1, len(loader))
 
-	for batch in loader:
+	for batch_idx, batch in enumerate(loader):
 		(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask,
 		 implied, labels, raw_margin) = [t.to(device) for t in batch]
 
 		optimizer.zero_grad()
-		if config.get("aux_context_loss_weight", 0.0) > 0 and config.get("head_type") == "gated_residual":
+		if config["aux_context_loss_weight"] > 0 and config["head_type"] == "gated_residual":
 			logits, components = model(
 				home_feat,
 				home_pos,
@@ -569,11 +760,16 @@ def train_one_epoch(
 				raw_margin,
 				return_components=True,
 			)
-			loss = F.cross_entropy(logits, labels)
-			loss = loss + config["aux_context_loss_weight"] * F.cross_entropy(components["residual_logits"], labels)
+			loss = compute_player_loss(logits, labels, config, implied=implied)
+			loss = loss + config["aux_context_loss_weight"] * compute_player_loss(
+				components["residual_logits"],
+				labels,
+				config,
+				implied=None,
+			)
 		else:
 			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, raw_margin)
-			loss = F.cross_entropy(logits, labels)
+			loss = compute_player_loss(logits, labels, config, implied=implied)
 		loss.backward()
 
 		if collect_grad_stats:
@@ -584,6 +780,12 @@ def train_one_epoch(
 			total_grad_norms.append(total_norm)
 
 		optimizer.step()
+		if scheduler is not None:
+			if scheduler_step_mode == "batch":
+				scheduler.step()
+			elif scheduler_step_mode == "fractional_batch":
+				progress = epoch_index + ((batch_idx + 1) / steps_per_epoch)
+				scheduler.step(progress)
 
 		total_loss += loss.item()
 		n_batches += 1
@@ -730,18 +932,18 @@ def train_with_early_stopping_split(
 ) -> tuple[nn.Module, int, float] | tuple[nn.Module, int, float, list[dict]]:
 	set_seed(seed)
 	scaled_tensors, _ = scale_squad_tensors(squad_tensors, train_idx)
-	min_selection_epoch = max(1, int(config.get("min_selection_epoch", 1)))
-	smooth_window = int(config.get("epoch_smooth_window", 5))
+	min_selection_epoch = max(1, int(config["min_selection_epoch"]))
+	smooth_window = int(config["epoch_smooth_window"])
 	model = build_player_model(config).to(DEVICE)
 	train_dataset = PlayerMatchDataset(scaled_tensors, train_data["y"], train_data["implied"], train_data["raw_margin"], train_idx)
 	val_dataset = PlayerMatchDataset(scaled_tensors, val_data["y"], val_data["implied"], val_data["raw_margin"], val_idx)
 	train_loader = build_loader(train_dataset, config["batch_size"], shuffle=True, seed=seed)
 	val_loader = build_loader(val_dataset, config["batch_size"], shuffle=False, seed=seed)
-	optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
-	scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-		optimizer,
-		T_max=config["max_epochs"],
-		eta_min=config["lr"] * 0.01,
+	optimizer, scheduler, scheduler_step_mode = build_optimizer_and_scheduler(
+		model=model,
+		config=config,
+		steps_per_epoch=len(train_loader),
+		epochs=config["max_epochs"],
 	)
 
 	all_val_losses: list[float] = []
@@ -752,14 +954,25 @@ def train_with_early_stopping_split(
 	epoch_grad_stats = []
 
 	for epoch in range(1, config["max_epochs"] + 1):
-		result = train_one_epoch(model, train_loader, optimizer, DEVICE, config, collect_grad_stats=collect_grad_stats)
+		result = train_one_epoch(
+			model,
+			train_loader,
+			optimizer,
+			DEVICE,
+			config,
+			scheduler=scheduler,
+			scheduler_step_mode=scheduler_step_mode,
+			epoch_index=epoch - 1,
+			collect_grad_stats=collect_grad_stats,
+		)
 		if collect_grad_stats:
 			train_loss, grad_stats = result
 			epoch_grad_stats.append({"epoch": epoch, **grad_stats})
 		else:
 			train_loss = result
 		val_loss, _ = evaluate(model, val_loader, DEVICE)
-		scheduler.step()
+		if scheduler_step_mode == "epoch":
+			scheduler.step()
 		all_val_losses.append(val_loss)
 		if verbose:
 			extra = ""
@@ -827,15 +1040,25 @@ def train_fixed_epochs_split(
 	model = build_player_model(config).to(DEVICE)
 	train_dataset = PlayerMatchDataset(scaled_tensors, train_data["y"], train_data["implied"], train_data["raw_margin"], train_idx)
 	train_loader = build_loader(train_dataset, config["batch_size"], shuffle=True, seed=seed)
-	optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
-	scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-		optimizer,
-		T_max=max(1, epochs),
-		eta_min=config["lr"] * 0.01,
+	optimizer, scheduler, scheduler_step_mode = build_optimizer_and_scheduler(
+		model=model,
+		config=config,
+		steps_per_epoch=len(train_loader),
+		epochs=max(1, epochs),
 	)
 	for epoch in range(1, max(1, epochs) + 1):
-		train_loss = train_one_epoch(model, train_loader, optimizer, DEVICE, config)
-		scheduler.step()
+		train_loss = train_one_epoch(
+			model,
+			train_loader,
+			optimizer,
+			DEVICE,
+			config,
+			scheduler=scheduler,
+			scheduler_step_mode=scheduler_step_mode,
+			epoch_index=epoch - 1,
+		)
+		if scheduler_step_mode == "epoch":
+			scheduler.step()
 		if verbose:
 			print(f"Epoch {epoch:>2}: train_loss={train_loss:.5f}")
 	return model
@@ -950,30 +1173,19 @@ def evaluate_cv_objective(
 	return fold_metrics, mean_fold_metrics, mean_baseline_metrics
 
 
-def train_player_model(
-	config: dict | None = None,
-	description: str = "",
-	record_run: bool = True,
-	prepared: dict | None = None,
-) -> dict:
-	if config is None:
-		config = dict(DEFAULT_CONFIG)
-	else:
-		config = dict(config)
-
+def train_player_model(description: str = "") -> dict:
+	config = load_training_config()
 	evaluation_config = load_evaluation_config()
 	comparison_metric = evaluation_config["comparison_metric"]
 	training_seed = evaluation_config["training_seed"]
-	config["seed"] = training_seed
 
 	print_header(f"TRAIN PLAYER MODEL: {DISPLAY_NAME}")
 	print(f"Device: {DEVICE}")
+	print(f"Training config: {TRAINING_CONFIG_PATH}")
 	print(f"Evaluation config: {EVALUATION_CONFIG_PATH}")
 	print(f"Config: {json.dumps(config, sort_keys=True)}")
 
-	if prepared is None:
-		prepared = prepare_experiment_context(config, evaluation_config)
-
+	prepared = prepare_experiment_context(config, evaluation_config)
 	git_metadata = get_git_metadata()
 
 	train_idx, val_idx, train_data, val_data = split_by_seasons(
@@ -1060,6 +1272,7 @@ def train_player_model(
 		"model_name": MODEL_NAME,
 		"model_config": config,
 		"training_entry_point": "training/train_player_model.py",
+		"training_config_source": str(TRAINING_CONFIG_PATH.relative_to(PROJECT_ROOT)),
 		"evaluation_config_source": str(EVALUATION_CONFIG_PATH.relative_to(PROJECT_ROOT)),
 		"objective_fold_count": len(prepared["objective_folds"]),
 		"objective_val_seasons": prepared["objective_val_seasons"],
@@ -1080,33 +1293,24 @@ def train_player_model(
 		**git_metadata,
 	}
 
-	if record_run:
-		write_json(
-			LATEST_SET_TRANSFORMER_METRICS_PATH,
-			{
-				"schema_version": 1,
-				"description": "Latest evaluated set-transformer candidate. Runtime-generated; compare with prior kept rows in artifacts/experiment_metrics/set_transformer_runs.tsv.",
-				"model": run_record,
-			},
-		)
-		append_tsv_row(
-			EXPERIMENT_LOG_PATH,
-			{
-				"recorded_at_utc": run_record["recorded_at_utc"],
-				"git_commit": git_metadata["git_commit"][:7],
-				"git_branch": git_metadata["git_branch"],
-				"cv_log_loss": f"{run_record['objective_value']:.6f}",
-				"delta": f"{delta:.6f}" if delta is not None else "",
-				"best_epoch": best_epoch,
-				"status": "",
-				"description": description,
-				"cv_rps": f"{cv_metrics.get('rps', 0):.6f}",
-				"val_log_loss": f"{run_record['val_metrics'].get('log_loss', 0):.6f}",
-				"test_log_loss": f"{run_record['test_metrics'].get('log_loss', 0):.6f}",
-				"cv_metrics_json": run_record["objective_metrics"],
-				"test_metrics_json": run_record["test_metrics"],
-			},
-		)
+	append_tsv_row(
+		EXPERIMENT_LOG_PATH,
+		{
+			"recorded_at_utc": run_record["recorded_at_utc"],
+			"git_commit": git_metadata["git_commit"][:7],
+			"git_branch": git_metadata["git_branch"],
+			"cv_log_loss": f"{run_record['objective_value']:.6f}",
+			"delta": f"{delta:.6f}" if delta is not None else "",
+			"best_epoch": best_epoch,
+			"status": "",
+			"description": description,
+			"cv_rps": f"{cv_metrics.get('rps', 0):.6f}",
+			"val_log_loss": f"{run_record['val_metrics'].get('log_loss', 0):.6f}",
+			"test_log_loss": f"{run_record['test_metrics'].get('log_loss', 0):.6f}",
+			"cv_metrics_json": run_record["objective_metrics"],
+			"test_metrics_json": run_record["test_metrics"],
+		},
+	)
 
 	print_header("DONE")
 	print(f"CV objective ({comparison_metric}): {run_record['objective_value']:.5f}")
@@ -1120,73 +1324,8 @@ def train_player_model(
 def main():
 	parser = argparse.ArgumentParser(description="Train player-level set transformer model")
 	parser.add_argument("--description", type=str, default="", help="Short text description of what this experiment tried")
-	parser.add_argument("--encoder", choices=["set_transformer"], default="set_transformer")
-	parser.add_argument("--head-type", choices=["mlp", "gated_residual"], default="mlp")
-	parser.add_argument("--no-implied", action="store_true", help="Don't use implied probabilities as input")
-	parser.add_argument("--hidden-dim", type=int)
-	parser.add_argument("--team-output-dim", type=int)
-	parser.add_argument("--num-heads", type=int)
-	parser.add_argument("--num-sab-layers", type=int)
-	parser.add_argument("--dropout", type=float)
-	parser.add_argument("--lr", type=float)
-	parser.add_argument("--weight-decay", type=float)
-	parser.add_argument("--gate-hidden-dim", type=int)
-	parser.add_argument("--gate-target-budget", type=float)
-	parser.add_argument("--market-feature-stats", type=int, choices=[3, 4, 5])
-	parser.add_argument("--market-logit-scale", type=float)
-	parser.add_argument("--learn-market-class-scale", action="store_true")
-	parser.add_argument("--aux-context-loss-weight", type=float)
-	parser.add_argument("--batch-size", type=int)
-	parser.add_argument("--max-epochs", type=int)
-	parser.add_argument("--patience", type=int)
-	parser.add_argument("--min-selection-epoch", type=int)
-	parser.add_argument("--top-n-players", type=int)
-	parser.add_argument("--no-ledger", action="store_true", help="Run the canonical evaluation without appending a ledger row")
 	args = parser.parse_args()
-
-	config = dict(DEFAULT_CONFIG)
-	config["encoder_type"] = args.encoder
-	config["head_type"] = args.head_type
-	if args.no_implied:
-		config["use_implied"] = False
-	if args.hidden_dim is not None:
-		config["hidden_dim"] = args.hidden_dim
-	if args.team_output_dim is not None:
-		config["team_output_dim"] = args.team_output_dim
-	if args.num_heads is not None:
-		config["num_heads"] = args.num_heads
-	if args.num_sab_layers is not None:
-		config["num_sab_layers"] = args.num_sab_layers
-	if args.dropout is not None:
-		config["dropout"] = args.dropout
-	if args.lr is not None:
-		config["lr"] = args.lr
-	if args.weight_decay is not None:
-		config["weight_decay"] = args.weight_decay
-	if args.gate_hidden_dim is not None:
-		config["gate_hidden_dim"] = args.gate_hidden_dim
-	if args.gate_target_budget is not None:
-		config["gate_target_budget"] = args.gate_target_budget
-	if args.market_feature_stats is not None:
-		config["market_feature_stats"] = args.market_feature_stats
-	if args.market_logit_scale is not None:
-		config["market_logit_scale"] = args.market_logit_scale
-	if args.learn_market_class_scale:
-		config["learn_market_class_scale"] = True
-	if args.aux_context_loss_weight is not None:
-		config["aux_context_loss_weight"] = args.aux_context_loss_weight
-	if args.batch_size is not None:
-		config["batch_size"] = args.batch_size
-	if args.max_epochs is not None:
-		config["max_epochs"] = args.max_epochs
-	if args.patience is not None:
-		config["patience"] = args.patience
-	if args.min_selection_epoch is not None:
-		config["min_selection_epoch"] = args.min_selection_epoch
-	if args.top_n_players is not None:
-		config["top_n_players"] = args.top_n_players
-
-	train_player_model(config=config, description=args.description, record_run=not args.no_ledger)
+	train_player_model(description=args.description)
 
 
 if __name__ == "__main__":
