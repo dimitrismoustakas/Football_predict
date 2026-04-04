@@ -398,8 +398,16 @@ def assemble_squad_tensors(
 		- away_mask: (N, max_players) bool
 		- game_ids: list of game_id values (for alignment with match data)
 	"""
-	# Get ordered list of matches
-	matches = match_df.select(["game_id", "league", "home_team_id", "away_team_id"]).unique()
+	# Build a deterministic match index so identical seeds see identical batch orders.
+	match_cols = [col for col in ["season", "date", "game_id", "league", "home_team_id", "away_team_id"] if col in match_df.columns]
+	sort_cols = [col for col in ["season", "date", "league", "game_id", "home_team_id", "away_team_id"] if col in match_cols]
+	matches = (
+		match_df
+		.select(match_cols)
+		.unique()
+		.sort(sort_cols)
+		.select(["game_id", "league", "home_team_id", "away_team_id"])
+	)
 	game_ids = matches["game_id"].to_list()
 	n_matches = len(game_ids)
 

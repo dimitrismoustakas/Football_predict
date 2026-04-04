@@ -2,8 +2,6 @@
 Set Transformer model for player-level match prediction.
 """
 
-import math
-
 import torch
 import torch.nn as nn
 
@@ -28,7 +26,13 @@ class PositionEmbedding(nn.Module):
 class PlayerEncoder(nn.Module):
 	"""Per-player MLP over numeric features plus position embedding."""
 
-	def __init__(self, input_dim: int, hidden_dim: int = 64, position_embed_dim: int = 4, dropout: float = 0.1):
+	def __init__(
+		self,
+		input_dim: int,
+		hidden_dim: int = 64,
+		position_embed_dim: int = 4,
+		dropout: float = 0.1,
+	):
 		super().__init__()
 		self.position_embed = PositionEmbedding(position_embed_dim)
 		total_in = input_dim + position_embed_dim
@@ -43,8 +47,7 @@ class PlayerEncoder(nn.Module):
 
 	def forward(self, features: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
 		pos_emb = self.position_embed(positions)
-		x = torch.cat([features, pos_emb], dim=-1)
-		return self.mlp(x)
+		return self.mlp(torch.cat([features, pos_emb], dim=-1))
 
 
 class MAB(nn.Module):
@@ -81,26 +84,39 @@ class SAB(nn.Module):
 
 
 class PMA(nn.Module):
-	"""Pooling by multihead attention with one learnable seed."""
+	"""Pooling by multihead attention with a single learnable seed."""
 
 	def __init__(self, dim: int, num_heads: int = 4, dropout: float = 0.1):
 		super().__init__()
-		self.seeds = nn.Parameter(torch.randn(1, 1, dim) * 0.02)
+		self.seed = nn.Parameter(torch.randn(1, 1, dim) * 0.02)
 		self.mab = MAB(dim, num_heads, dropout)
 
 	def forward(self, x: torch.Tensor, key_padding_mask: torch.Tensor | None = None) -> torch.Tensor:
-		seeds = self.seeds.expand(x.size(0), -1, -1)
-		return self.mab(seeds, x, key_padding_mask=key_padding_mask)
+		seed = self.seed.expand(x.size(0), -1, -1)
+		return self.mab(seed, x, key_padding_mask=key_padding_mask)
 
 
 class SetTransformerTeamEncoder(nn.Module):
 	"""Self-attention over players followed by PMA pooling."""
 
-	def __init__(self, input_dim: int, hidden_dim: int = 64, output_dim: int = 32,
-				 num_heads: int = 4, num_sab_layers: int = 2,
-				 position_embed_dim: int = 4, dropout: float = 0.1):
+	def __init__(
+		self,
+		input_dim: int,
+		hidden_dim: int = 64,
+		output_dim: int = 32,
+		num_heads: int = 4,
+		num_sab_layers: int = 2,
+		position_embed_dim: int = 4,
+		dropout: float = 0.1,
+	):
 		super().__init__()
-		self.encoder = PlayerEncoder(input_dim, hidden_dim, position_embed_dim, dropout)
+		self.output_dim = output_dim
+		self.encoder = PlayerEncoder(
+			input_dim=input_dim,
+			hidden_dim=hidden_dim,
+			position_embed_dim=position_embed_dim,
+			dropout=dropout,
+		)
 		self.sab_layers = nn.ModuleList([
 			SAB(hidden_dim, num_heads, dropout) for _ in range(num_sab_layers)
 		])
@@ -110,13 +126,54 @@ class SetTransformerTeamEncoder(nn.Module):
 			nn.GELU(),
 		)
 
-	def forward(self, features: torch.Tensor, positions: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+	def encode_players(self, features: torch.Tensor, positions: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 		encoded = self.encoder(features, positions)
 		attn_mask = ~mask
 		for sab in self.sab_layers:
 			encoded = sab(encoded, key_padding_mask=attn_mask)
-		pooled = self.pma(encoded, key_padding_mask=attn_mask).squeeze(1)
-		return self.decoder(pooled)
+		return encoded
+
+	def pool_players(self, encoded: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+		if encoded.size(1) == 0:
+			return encoded.new_zeros((encoded.size(0), self.output_dim))
+		safe_encoded = encoded
+		safe_mask = mask
+		empty_rows = ~mask.any(dim=1)
+		if empty_rows.any():
+			safe_encoded = encoded.clone()
+			safe_mask = mask.clone()
+			safe_encoded[empty_rows, 0] = 0.0
+			safe_mask[empty_rows, 0] = True
+		pooled = self.pma(safe_encoded, key_padding_mask=~safe_mask).squeeze(1)
+		decoded = self.decoder(pooled)
+		if empty_rows.any():
+			decoded = decoded.clone()
+			decoded[empty_rows] = 0.0
+		return decoded
+
+	def forward(self, features: torch.Tensor, positions: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+		encoded = self.encode_players(features, positions, mask)
+		return self.pool_players(encoded, mask)
+
+
+class CrossTeamInteractionBlock(nn.Module):
+	"""Bidirectional cross-attention between home and away player sets."""
+
+	def __init__(self, dim: int, num_heads: int = 4, dropout: float = 0.1):
+		super().__init__()
+		self.home_to_away = MAB(dim, num_heads, dropout)
+		self.away_to_home = MAB(dim, num_heads, dropout)
+
+	def forward(
+		self,
+		home_encoded: torch.Tensor,
+		away_encoded: torch.Tensor,
+		home_key_padding_mask: torch.Tensor | None = None,
+		away_key_padding_mask: torch.Tensor | None = None,
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		home_updated = self.home_to_away(home_encoded, away_encoded, key_padding_mask=away_key_padding_mask)
+		away_updated = self.away_to_home(away_encoded, home_encoded, key_padding_mask=home_key_padding_mask)
+		return home_updated, away_updated
 
 
 class PlayerMatchModel(nn.Module):
@@ -125,32 +182,17 @@ class PlayerMatchModel(nn.Module):
 	def __init__(
 		self,
 		input_dim: int,
-		team_encoder_type: str = "set_transformer",
 		hidden_dim: int = 64,
 		team_output_dim: int = 32,
 		num_heads: int = 4,
 		num_sab_layers: int = 2,
 		position_embed_dim: int = 4,
+		num_cross_team_layers: int = 0,
 		dropout: float = 0.1,
-		use_implied: bool = True,
-		head_type: str = "mlp",
-		gate_hidden_dim: int = 32,
-		gate_target_budget: float = 0.2,
-		market_feature_stats: int = 3,
-		market_logit_scale: float = 1.0,
-		learn_market_class_scale: bool = False,
 	):
 		super().__init__()
-		if team_encoder_type != "set_transformer":
-			raise ValueError(f"Unknown team_encoder_type: {team_encoder_type}")
-		if market_feature_stats not in {3, 4, 5}:
-			raise ValueError(f"Unsupported market_feature_stats: {market_feature_stats}")
-
-		self.use_implied = use_implied
-		self.head_type = head_type
-		self.market_feature_stats = market_feature_stats
-		self.market_logit_scale = market_logit_scale
-		self.market_feature_dim = 6 + max(0, market_feature_stats - 3)
+		if num_cross_team_layers < 0:
+			raise ValueError(f"num_cross_team_layers must be >= 0, got {num_cross_team_layers}")
 
 		self.team_encoder = SetTransformerTeamEncoder(
 			input_dim=input_dim,
@@ -161,98 +203,19 @@ class PlayerMatchModel(nn.Module):
 			position_embed_dim=position_embed_dim,
 			dropout=dropout,
 		)
-
-		context_dim = team_output_dim * 3
-		if head_type == "mlp":
-			head_input_dim = context_dim + (3 if use_implied else 0)
-			self.head = nn.Sequential(
-				nn.Linear(head_input_dim, 64),
-				nn.GELU(),
-				nn.Dropout(dropout),
-				nn.Linear(64, 32),
-				nn.GELU(),
-				nn.Dropout(dropout),
-				nn.Linear(32, 3),
-			)
-			self.residual_head = None
-			self.gate_head = None
-			self.gate_bias = None
-			self.market_class_scale = None
-		elif head_type == "gated_residual":
-			if not use_implied:
-				raise ValueError("gated_residual head requires use_implied=True")
-			self.head = None
-			self.residual_head = nn.Sequential(
-				nn.Linear(context_dim, 64),
-				nn.GELU(),
-				nn.Dropout(dropout),
-				nn.Linear(64, 32),
-				nn.GELU(),
-				nn.Dropout(dropout),
-				nn.Linear(32, 3),
-			)
-			self.gate_head = nn.Sequential(
-				nn.Linear(context_dim + self.market_feature_dim, gate_hidden_dim),
-				nn.GELU(),
-				nn.Dropout(dropout * 0.5),
-				nn.Linear(gate_hidden_dim, 3),
-			)
-			init_bias = math.log(gate_target_budget / (1.0 - gate_target_budget))
-			self.gate_bias = nn.Parameter(torch.full((3,), init_bias))
-			if learn_market_class_scale:
-				self.market_class_scale = nn.Parameter(torch.zeros(3))
-			else:
-				self.market_class_scale = None
-		else:
-			raise ValueError(f"Unknown head_type: {head_type}")
-
-	def forward(
-		self,
-		home_features: torch.Tensor,
-		home_positions: torch.Tensor,
-		home_mask: torch.Tensor,
-		away_features: torch.Tensor,
-		away_positions: torch.Tensor,
-		away_mask: torch.Tensor,
-		implied: torch.Tensor | None = None,
-		raw_margin: torch.Tensor | None = None,
-		return_components: bool = False,
-	) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
-		combined = self.encode_match_context(
-			home_features,
-			home_positions,
-			home_mask,
-			away_features,
-			away_positions,
-			away_mask,
+		self.cross_team_layers = nn.ModuleList([
+			CrossTeamInteractionBlock(hidden_dim, num_heads, dropout)
+			for _ in range(num_cross_team_layers)
+		])
+		self.head = nn.Sequential(
+			nn.Linear(team_output_dim * 3 + 3, 64),
+			nn.GELU(),
+			nn.Dropout(dropout),
+			nn.Linear(64, 32),
+			nn.GELU(),
+			nn.Dropout(dropout),
+			nn.Linear(32, 3),
 		)
-
-		if self.use_implied and implied is not None:
-			if self.head_type == "mlp":
-				combined = torch.cat([combined, implied], dim=-1)
-			elif self.head_type == "gated_residual":
-				if raw_margin is None:
-					raise ValueError("raw_margin is required for gated_residual head")
-				anchor_logits = self._compute_implied_logits(implied)
-				residual_logits = self.residual_head(combined)
-				if raw_margin.ndim == 1:
-					raw_margin = raw_margin.unsqueeze(-1)
-				gate = self._compute_gate(combined, implied, raw_margin)
-				logits = anchor_logits + gate * residual_logits
-				if return_components:
-					return logits, {
-						"gate": gate,
-						"anchor_logits": anchor_logits,
-						"residual_logits": residual_logits,
-					}
-				return logits
-
-		if self.head is None:
-			raise ValueError("head is not available for the current PlayerMatchModel configuration")
-		logits = self.head(combined)
-		if return_components:
-			return logits, {}
-		return logits
 
 	def encode_match_context(
 		self,
@@ -263,35 +226,37 @@ class PlayerMatchModel(nn.Module):
 		away_positions: torch.Tensor,
 		away_mask: torch.Tensor,
 	) -> torch.Tensor:
-		home_repr = self.team_encoder(home_features, home_positions, home_mask)
-		away_repr = self.team_encoder(away_features, away_positions, away_mask)
-		diff = home_repr - away_repr
-		return torch.cat([home_repr, away_repr, diff], dim=-1)
+		home_encoded = self.team_encoder.encode_players(home_features, home_positions, home_mask)
+		away_encoded = self.team_encoder.encode_players(away_features, away_positions, away_mask)
+		home_padding_mask = ~home_mask
+		away_padding_mask = ~away_mask
+		for cross_team_layer in self.cross_team_layers:
+			home_encoded, away_encoded = cross_team_layer(
+				home_encoded,
+				away_encoded,
+				home_key_padding_mask=home_padding_mask,
+				away_key_padding_mask=away_padding_mask,
+			)
+		home_repr = self.team_encoder.pool_players(home_encoded, home_mask)
+		away_repr = self.team_encoder.pool_players(away_encoded, away_mask)
+		return torch.cat([home_repr, away_repr, home_repr - away_repr], dim=-1)
 
-	@staticmethod
-	def _normalized_market_entropy(implied: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-		entropy = -torch.sum(implied * torch.log(implied + eps), dim=-1, keepdim=True)
-		return entropy / math.log(implied.size(-1))
-
-	def _compute_market_features(self, implied: torch.Tensor, raw_margin: torch.Tensor) -> torch.Tensor:
-		entropy = self._normalized_market_entropy(implied)
-		max_prob = implied.max(dim=-1, keepdim=True)[0]
-		min_prob = implied.min(dim=-1, keepdim=True)[0]
-		sorted_probs = torch.sort(implied, dim=-1, descending=True)[0]
-		top2_gap = sorted_probs[:, :1] - sorted_probs[:, 1:2]
-		feature_parts = [implied, entropy, max_prob, raw_margin]
-		if self.market_feature_stats >= 4:
-			feature_parts.append(min_prob)
-		if self.market_feature_stats >= 5:
-			feature_parts.append(top2_gap)
-		return torch.cat(feature_parts, dim=-1)
-
-	def _compute_implied_logits(self, implied: torch.Tensor) -> torch.Tensor:
-		log_implied = implied.clamp(min=1e-6).log() * self.market_logit_scale
-		if self.market_class_scale is not None:
-			log_implied = log_implied * torch.exp(self.market_class_scale)
-		return log_implied
-
-	def _compute_gate(self, combined: torch.Tensor, implied: torch.Tensor, raw_margin: torch.Tensor) -> torch.Tensor:
-		gate_input = torch.cat([combined, self._compute_market_features(implied, raw_margin)], dim=-1)
-		return torch.sigmoid(self.gate_head(gate_input) + self.gate_bias)
+	def forward(
+		self,
+		home_features: torch.Tensor,
+		home_positions: torch.Tensor,
+		home_mask: torch.Tensor,
+		away_features: torch.Tensor,
+		away_positions: torch.Tensor,
+		away_mask: torch.Tensor,
+		implied: torch.Tensor,
+	) -> torch.Tensor:
+		combined = self.encode_match_context(
+			home_features,
+			home_positions,
+			home_mask,
+			away_features,
+			away_positions,
+			away_mask,
+		)
+		return self.head(torch.cat([combined, implied], dim=-1))

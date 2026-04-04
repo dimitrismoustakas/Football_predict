@@ -79,27 +79,15 @@ EXPERIMENT_LOG_COLUMNS = [
 ]
 
 TRAINING_CONFIG_KEYS = [
-	"encoder_type",
 	"hidden_dim",
 	"team_output_dim",
 	"num_heads",
 	"num_sab_layers",
 	"position_embed_dim",
+	"num_cross_team_layers",
 	"dropout",
-	"use_implied",
-	"head_type",
-	"gate_hidden_dim",
-	"gate_target_budget",
-	"market_feature_stats",
-	"market_logit_scale",
-	"learn_market_class_scale",
-	"aux_context_loss_weight",
 	"label_smoothing",
 	"market_target_mix",
-	"market_target_entropy_scale",
-	"market_target_entropy_mode",
-	"confidence_penalty_weight",
-	"brier_aux_weight",
 	"gce_mix_weight",
 	"gce_q",
 	"lr",
@@ -108,7 +96,6 @@ TRAINING_CONFIG_KEYS = [
 	"batch_size",
 	"max_epochs",
 	"patience",
-	"epoch_smooth_window",
 	"min_selection_epoch",
 	"top_n_players",
 ]
@@ -308,20 +295,13 @@ def build_player_model(config: dict) -> PlayerMatchModel:
 
 	return PlayerMatchModel(
 		input_dim=NUM_FEATURES,
-		team_encoder_type=config["encoder_type"],
 		hidden_dim=config["hidden_dim"],
 		team_output_dim=config["team_output_dim"],
 		num_heads=config["num_heads"],
 		num_sab_layers=config["num_sab_layers"],
 		position_embed_dim=config["position_embed_dim"],
+		num_cross_team_layers=config["num_cross_team_layers"],
 		dropout=config["dropout"],
-		use_implied=config["use_implied"],
-		head_type=config["head_type"],
-		gate_hidden_dim=config["gate_hidden_dim"],
-		gate_target_budget=config["gate_target_budget"],
-		market_feature_stats=config["market_feature_stats"],
-		market_logit_scale=config["market_logit_scale"],
-		learn_market_class_scale=config["learn_market_class_scale"],
 	)
 
 
@@ -377,10 +357,6 @@ def apply_player_scaler(
 	return scaled
 
 
-# ---------------------------------------------------------------------------
-# Dataset
-# ---------------------------------------------------------------------------
-
 class PlayerMatchDataset(Dataset):
 	"""PyTorch dataset for player-set match prediction."""
 
@@ -389,7 +365,6 @@ class PlayerMatchDataset(Dataset):
 		squad_tensors: dict,
 		labels: np.ndarray,
 		implied: np.ndarray,
-		raw_margin: np.ndarray,
 		match_indices: np.ndarray,
 	):
 		self.home_players = torch.tensor(squad_tensors["home_players"][match_indices], dtype=torch.float32)
@@ -400,7 +375,6 @@ class PlayerMatchDataset(Dataset):
 		self.away_mask = torch.tensor(squad_tensors["away_mask"][match_indices], dtype=torch.bool)
 		self.labels = torch.tensor(labels, dtype=torch.long)
 		self.implied = torch.tensor(implied, dtype=torch.float32)
-		self.raw_margin = torch.tensor(raw_margin, dtype=torch.float32)
 
 	def __len__(self):
 		return len(self.labels)
@@ -415,7 +389,6 @@ class PlayerMatchDataset(Dataset):
 			self.away_mask[idx],
 			self.implied[idx],
 			self.labels[idx],
-			self.raw_margin[idx],
 		)
 
 
@@ -423,14 +396,29 @@ class PlayerMatchDataset(Dataset):
 # Data preparation
 # ---------------------------------------------------------------------------
 
+def _configure_torch_determinism() -> None:
+	"""Force deterministic CUDA backends for reproducible player-model runs."""
+
+	torch.backends.cudnn.deterministic = True
+	torch.backends.cudnn.benchmark = False
+	torch.backends.cudnn.allow_tf32 = False
+	if torch.cuda.is_available():
+		torch.backends.cuda.matmul.allow_tf32 = False
+		if hasattr(torch.backends.cuda, "enable_flash_sdp"):
+			torch.backends.cuda.enable_flash_sdp(False)
+		if hasattr(torch.backends.cuda, "enable_mem_efficient_sdp"):
+			torch.backends.cuda.enable_mem_efficient_sdp(False)
+		if hasattr(torch.backends.cuda, "enable_math_sdp"):
+			torch.backends.cuda.enable_math_sdp(True)
+	torch.use_deterministic_algorithms(True)
+
+
 def set_seed(seed: int = 42):
 	random.seed(seed)
 	np.random.seed(seed)
 	torch.manual_seed(seed)
 	torch.cuda.manual_seed_all(seed)
-	torch.backends.cudnn.deterministic = True
-	torch.backends.cudnn.benchmark = False
-	torch.use_deterministic_algorithms(True, warn_only=True)
+	_configure_torch_determinism()
 
 
 def prepare_match_data(df: pl.DataFrame) -> pl.DataFrame:
@@ -447,8 +435,6 @@ def prepare_match_data(df: pl.DataFrame) -> pl.DataFrame:
 		pl.col("implied_away").is_finite()
 	)
 	return df
-
-
 def build_squad_data(match_df: pl.DataFrame, top_n: int = 16) -> Tuple[dict, pl.DataFrame]:
 	"""
 	Build squad tensors aligned with match_df rows.
@@ -504,7 +490,6 @@ def split_by_seasons(
 				part["implied_draw"].to_numpy(),
 				part["implied_away"].to_numpy(),
 			], axis=1).astype(np.float64),
-			"raw_margin": part["raw_margin"].to_numpy().astype(np.float64),
 			"odds_home": part["odds_home"].to_numpy(),
 			"odds_draw": part["odds_draw"].to_numpy(),
 			"odds_away": part["odds_away"].to_numpy(),
@@ -661,29 +646,18 @@ def _target_distribution(labels: torch.Tensor, num_classes: int, label_smoothing
 	return target * (1.0 - float(label_smoothing)) + smooth
 
 
-def _normalized_market_entropy(implied: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-	"""Return normalized entropy for a 3-way implied-probability vector."""
-
-	entropy = -torch.sum(implied * torch.log(implied.clamp_min(eps)), dim=-1)
-	return entropy / np.log(implied.shape[-1])
-
-
 def compute_player_loss(
 	logits: torch.Tensor,
 	labels: torch.Tensor,
 	config: dict,
 	implied: torch.Tensor | None = None,
 ) -> torch.Tensor:
-	"""Training loss for the Set Transformer with optional low-risk extras."""
+	"""Training loss for the Set Transformer."""
 
 	labels = labels.view(-1).long()
 	num_classes = logits.shape[-1]
 	label_smoothing = float(config["label_smoothing"])
 	market_target_mix = float(config["market_target_mix"])
-	market_target_entropy_scale = float(config["market_target_entropy_scale"])
-	market_target_entropy_mode = str(config["market_target_entropy_mode"])
-	confidence_penalty_weight = float(config["confidence_penalty_weight"])
-	brier_aux_weight = float(config["brier_aux_weight"])
 	gce_mix_weight = float(config["gce_mix_weight"])
 	gce_q = float(config["gce_q"])
 	eps = 1e-6
@@ -693,16 +667,6 @@ def compute_player_loss(
 	target_distribution = _target_distribution(labels, num_classes, label_smoothing)
 	if market_target_mix > 0 and implied is not None:
 		mix = logits.new_full((target_distribution.shape[0], 1), market_target_mix)
-		if abs(market_target_entropy_scale) > eps:
-			normalized_entropy = _normalized_market_entropy(implied, eps=eps).unsqueeze(-1)
-			if market_target_entropy_mode == "linear":
-				centered_entropy = 2.0 * (normalized_entropy - 0.5)
-			elif market_target_entropy_mode == "edge":
-				edge_signal = 2.0 * torch.abs(normalized_entropy - 0.5)
-				centered_entropy = 2.0 * (edge_signal - 0.5)
-			else:
-				raise ValueError(f"Unsupported market_target_entropy_mode: {market_target_entropy_mode}")
-			mix = (mix * (1.0 + market_target_entropy_scale * centered_entropy)).clamp(0.0, 1.0)
 		target_distribution = (1.0 - mix) * target_distribution + mix * implied
 	base_loss = -(target_distribution * log_probs).sum(dim=-1)
 
@@ -713,14 +677,6 @@ def compute_player_loss(
 		else:
 			gce_loss = (1.0 - true_class_probs.pow(gce_q)) / gce_q
 		base_loss = (1.0 - gce_mix_weight) * base_loss + gce_mix_weight * gce_loss
-
-	if confidence_penalty_weight > 0:
-		confidence_penalty = (probs * log_probs).sum(dim=-1)
-		base_loss = base_loss + confidence_penalty_weight * confidence_penalty
-
-	if brier_aux_weight > 0:
-		brier_aux = ((probs - target_distribution) ** 2).sum(dim=-1)
-		base_loss = base_loss + brier_aux_weight * brier_aux
 
 	return base_loss.mean()
 
@@ -744,32 +700,21 @@ def train_one_epoch(
 	steps_per_epoch = max(1, len(loader))
 
 	for batch_idx, batch in enumerate(loader):
-		(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask,
-		 implied, labels, raw_margin) = [t.to(device) for t in batch]
+		(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, labels) = [
+			t.to(device) for t in batch
+		]
 
 		optimizer.zero_grad()
-		if config["aux_context_loss_weight"] > 0 and config["head_type"] == "gated_residual":
-			logits, components = model(
-				home_feat,
-				home_pos,
-				home_mask,
-				away_feat,
-				away_pos,
-				away_mask,
-				implied,
-				raw_margin,
-				return_components=True,
-			)
-			loss = compute_player_loss(logits, labels, config, implied=implied)
-			loss = loss + config["aux_context_loss_weight"] * compute_player_loss(
-				components["residual_logits"],
-				labels,
-				config,
-				implied=None,
-			)
-		else:
-			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, raw_margin)
-			loss = compute_player_loss(logits, labels, config, implied=implied)
+		logits = model(
+			home_feat,
+			home_pos,
+			home_mask,
+			away_feat,
+			away_pos,
+			away_mask,
+			implied,
+		)
+		loss = compute_player_loss(logits, labels, config, implied=implied)
 		loss.backward()
 
 		if collect_grad_stats:
@@ -818,10 +763,19 @@ def evaluate(
 	all_probs = []
 
 	for batch in loader:
-		(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask,
-		 implied, labels, raw_margin) = [t.to(device) for t in batch]
+		(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, labels) = [
+			t.to(device) for t in batch
+		]
 
-		logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, raw_margin)
+		logits = model(
+			home_feat,
+			home_pos,
+			home_mask,
+			away_feat,
+			away_pos,
+			away_mask,
+			implied,
+		)
 		# Clamp logits to avoid NaN from attention layers
 		logits = logits.clamp(-20, 20)
 		loss = F.cross_entropy(logits, labels)
@@ -894,6 +848,16 @@ def scale_squad_tensors(
 	return scaled, scaler
 
 
+def scale_model_inputs(
+	squad_tensors: dict,
+	train_idx: np.ndarray,
+) -> dict:
+	"""Scale player tensors for a split."""
+
+	scaled_tensors, _ = scale_squad_tensors(squad_tensors, train_idx)
+	return scaled_tensors
+
+
 def _smoothed_best_epoch(
 	val_losses: list[float],
 	smooth_window: int = 5,
@@ -931,12 +895,21 @@ def train_with_early_stopping_split(
 	collect_grad_stats: bool = False,
 ) -> tuple[nn.Module, int, float] | tuple[nn.Module, int, float, list[dict]]:
 	set_seed(seed)
-	scaled_tensors, _ = scale_squad_tensors(squad_tensors, train_idx)
+	scaled_tensors = scale_model_inputs(squad_tensors, train_idx)
 	min_selection_epoch = max(1, int(config["min_selection_epoch"]))
-	smooth_window = int(config["epoch_smooth_window"])
 	model = build_player_model(config).to(DEVICE)
-	train_dataset = PlayerMatchDataset(scaled_tensors, train_data["y"], train_data["implied"], train_data["raw_margin"], train_idx)
-	val_dataset = PlayerMatchDataset(scaled_tensors, val_data["y"], val_data["implied"], val_data["raw_margin"], val_idx)
+	train_dataset = PlayerMatchDataset(
+		scaled_tensors,
+		train_data["y"],
+		train_data["implied"],
+		train_idx,
+	)
+	val_dataset = PlayerMatchDataset(
+		scaled_tensors,
+		val_data["y"],
+		val_data["implied"],
+		val_idx,
+	)
 	train_loader = build_loader(train_dataset, config["batch_size"], shuffle=True, seed=seed)
 	val_loader = build_loader(val_dataset, config["batch_size"], shuffle=False, seed=seed)
 	optimizer, scheduler, scheduler_step_mode = build_optimizer_and_scheduler(
@@ -946,7 +919,6 @@ def train_with_early_stopping_split(
 		epochs=config["max_epochs"],
 	)
 
-	all_val_losses: list[float] = []
 	best_raw_val = float("inf")
 	best_raw_epoch = 1
 	patience_counter = 0
@@ -973,7 +945,6 @@ def train_with_early_stopping_split(
 		val_loss, _ = evaluate(model, val_loader, DEVICE)
 		if scheduler_step_mode == "epoch":
 			scheduler.step()
-		all_val_losses.append(val_loss)
 		if verbose:
 			extra = ""
 			if collect_grad_stats:
@@ -981,49 +952,27 @@ def train_with_early_stopping_split(
 				extra = f" grad_norm: mean={gs['total_grad_norm_mean']:.3f} max={gs['total_grad_norm_max']:.3f} p95={gs['total_grad_norm_p95']:.3f}"
 			print(f"Epoch {epoch:>2}: train_loss={train_loss:.5f} val_loss={val_loss:.5f}{extra}")
 
-		# Checkpoint at raw best for the model state we keep
 		if epoch >= min_selection_epoch and val_loss < best_raw_val:
 			best_raw_val = val_loss
 			best_raw_epoch = epoch
 			best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
-
-		# Patience based on smoothed val loss: once we have enough history,
-		# check whether the smoothed loss is still improving.
-		if epoch >= min_selection_epoch + smooth_window:
-			current_smooth_epoch, current_smooth_val = _smoothed_best_epoch(
-				all_val_losses, smooth_window, min_selection_epoch,
-			)
-			# Count patience from the smoothed best: if we're far past it, stop.
-			epochs_since_smooth_best = epoch - current_smooth_epoch
-			if epochs_since_smooth_best >= config["patience"]:
-				if verbose:
-					print(f"Early stopping at epoch {epoch} (smoothed best={current_smooth_epoch}, raw best={best_raw_epoch})")
-				break
+			patience_counter = 0
 		elif epoch >= min_selection_epoch:
-			# Before we have enough for smoothing, use raw patience
-			if val_loss < best_raw_val + 1e-9:
-				patience_counter = 0
-			else:
-				patience_counter += 1
-				if patience_counter >= config["patience"]:
-					if verbose:
-						print(f"Early stopping at epoch {epoch} (raw best={best_raw_epoch}, pre-smooth)")
-					break
+			patience_counter += 1
+			if patience_counter >= config["patience"]:
+				if verbose:
+					print(f"Early stopping at epoch {epoch} (raw best={best_raw_epoch})")
+				break
 
-	# Determine the epoch count to return (for reuse in fixed-epoch training).
-	# Use smoothed estimator if we have enough data, otherwise raw.
-	selected_epoch, selected_val = _smoothed_best_epoch(
-		all_val_losses, smooth_window, min_selection_epoch,
-	)
-	if verbose and selected_epoch != best_raw_epoch:
-		print(f"Epoch selection: smoothed={selected_epoch} (val={selected_val:.5f}), raw={best_raw_epoch} (val={best_raw_val:.5f})")
+	if verbose:
+		print(f"Selected epoch={best_raw_epoch} (raw val_loss={best_raw_val:.5f})")
 
 	if best_state is not None:
 		model.load_state_dict(best_state)
 		model.to(DEVICE)
 	if collect_grad_stats:
-		return model, selected_epoch, float(best_raw_val), epoch_grad_stats
-	return model, selected_epoch, float(best_raw_val)
+		return model, best_raw_epoch, float(best_raw_val), epoch_grad_stats
+	return model, best_raw_epoch, float(best_raw_val)
 
 
 def train_fixed_epochs_split(
@@ -1036,9 +985,14 @@ def train_fixed_epochs_split(
 	verbose: bool = True,
 ) -> nn.Module:
 	set_seed(seed)
-	scaled_tensors, _ = scale_squad_tensors(squad_tensors, train_idx)
+	scaled_tensors = scale_model_inputs(squad_tensors, train_idx)
 	model = build_player_model(config).to(DEVICE)
-	train_dataset = PlayerMatchDataset(scaled_tensors, train_data["y"], train_data["implied"], train_data["raw_margin"], train_idx)
+	train_dataset = PlayerMatchDataset(
+		scaled_tensors,
+		train_data["y"],
+		train_data["implied"],
+		train_idx,
+	)
 	train_loader = build_loader(train_dataset, config["batch_size"], shuffle=True, seed=seed)
 	optimizer, scheduler, scheduler_step_mode = build_optimizer_and_scheduler(
 		model=model,
@@ -1072,8 +1026,13 @@ def evaluate_on_split(
 	split_data: dict,
 	batch_size: int,
 ) -> dict:
-	scaled_tensors, _ = scale_squad_tensors(squad_tensors, train_idx)
-	dataset = PlayerMatchDataset(scaled_tensors, split_data["y"], split_data["implied"], split_data["raw_margin"], split_idx)
+	scaled_tensors = scale_model_inputs(squad_tensors, train_idx)
+	dataset = PlayerMatchDataset(
+		scaled_tensors,
+		split_data["y"],
+		split_data["implied"],
+		split_idx,
+	)
 	loader = build_loader(dataset, batch_size=batch_size, shuffle=False, seed=0)
 	_, probs = evaluate(model, loader, DEVICE)
 	return compute_metrics(probs, split_data)

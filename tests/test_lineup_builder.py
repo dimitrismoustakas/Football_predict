@@ -879,6 +879,17 @@ class TestAssembleSquadTensors(unittest.TestCase):
 		self.assertEqual(tensors["home_mask"].shape, (n, max_p))
 		self.assertEqual(tensors["away_mask"].shape, (n, max_p))
 
+	def test_match_order_is_stable(self):
+		"""Tensor assembly should not depend on the incoming match-row order."""
+
+		reference = assemble_squad_tensors(self.squads, self.match_df, max_players=16)
+		reversed_match_df = self.match_df.sort("game_id", descending=True)
+		reordered = assemble_squad_tensors(self.squads, reversed_match_df, max_players=16)
+
+		self.assertEqual(reference["game_ids"], reordered["game_ids"])
+		for key in ["home_players", "away_players", "home_positions", "away_positions", "home_mask", "away_mask"]:
+			np.testing.assert_array_equal(reference[key], reordered[key])
+
 	def test_mask_consistency(self):
 		"""Where mask is False, features and positions should be zero (padding)."""
 		tensors = assemble_squad_tensors(self.squads, self.match_df, max_players=16)
@@ -910,7 +921,6 @@ class TestPlayerSetModel(unittest.TestCase):
 
 		model = PlayerMatchModel(
 			input_dim=NUM_FEATURES,
-			team_encoder_type="set_transformer",
 			hidden_dim=32,
 			team_output_dim=16,
 			num_heads=2,
@@ -933,20 +943,18 @@ class TestPlayerSetModel(unittest.TestCase):
 			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
 		self.assertEqual(logits.shape, (batch, 3))
 
-	def test_set_transformer_gated_residual_forward(self):
+	def test_set_transformer_cross_team_forward(self):
 		import torch
 		from training.models.set_transformer import PlayerMatchModel
 
 		model = PlayerMatchModel(
 			input_dim=NUM_FEATURES,
-			team_encoder_type="set_transformer",
 			hidden_dim=32,
 			team_output_dim=16,
 			num_heads=2,
 			num_sab_layers=1,
 			dropout=0.0,
-			use_implied=True,
-			head_type="gated_residual",
+			num_cross_team_layers=1,
 		)
 		model.eval()
 
@@ -960,10 +968,9 @@ class TestPlayerSetModel(unittest.TestCase):
 		away_mask = torch.ones(batch, max_p, dtype=torch.bool)
 		implied = torch.rand(batch, 3)
 		implied = implied / implied.sum(dim=1, keepdim=True)
-		raw_margin = torch.rand(batch, 1)
 
 		with torch.no_grad():
-			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied, raw_margin)
+			logits = model(home_feat, home_pos, home_mask, away_feat, away_pos, away_mask, implied)
 		self.assertEqual(logits.shape, (batch, 3))
 
 	def test_masking_changes_output(self):
@@ -973,7 +980,6 @@ class TestPlayerSetModel(unittest.TestCase):
 
 		model = PlayerMatchModel(
 			input_dim=NUM_FEATURES,
-			team_encoder_type="set_transformer",
 			hidden_dim=32,
 			team_output_dim=16,
 			num_heads=2,
