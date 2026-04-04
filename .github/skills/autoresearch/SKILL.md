@@ -1,5 +1,5 @@
 ---
-name: continuous-experiment-runner
+name: autoresearch
 description: Run experiment ideas continuously with no user feedback loop until blocked, exhausted, or explicitly stopped.
 ---
 
