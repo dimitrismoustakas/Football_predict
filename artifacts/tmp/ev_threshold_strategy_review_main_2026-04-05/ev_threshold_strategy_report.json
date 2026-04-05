@@ -1,0 +1,5983 @@
+{
+  "config": {
+    "parquet_path": "C:\\Users\\mouts\\Desktop\\Repositories\\Football_predict\\data\\training\\understat_df.parquet",
+    "output_dir": "C:\\Users\\mouts\\Desktop\\Repositories\\Football_predict\\artifacts\\tmp\\ev_threshold_strategy_review_main_2026-04-05",
+    "training_config": "training/configs/main_models/result.json",
+    "evaluation_config": "training/configs/main_models/evaluation.json",
+    "bundle_config": "C:\\Users\\mouts\\Desktop\\Repositories\\Football_predict\\artifacts\\models\\result_model_config.json",
+    "test_season": "2526",
+    "objective_fold_count": 3,
+    "final_train_epochs": 1,
+    "kelly_fraction": 0.5,
+    "initial_bankroll": 100.0,
+    "threshold_grid": [
+      0.0,
+      0.005,
+      0.01,
+      0.015,
+      0.02,
+      0.03,
+      0.05,
+      0.1
+    ],
+    "kelly_fractions_sweep": [
+      0.1,
+      0.25,
+      0.5,
+      0.7,
+      0.75,
+      1.0
+    ]
+  },
+  "cv_learning_pool": {
+    "record_count": 1933,
+    "raw_ev_bin_summary": [
+      {
+        "label": "[0.000, 0.010)",
+        "left": 0.0,
+        "right": 0.01,
+        "count": 355,
+        "mean_raw_ev": 0.004711486945689564,
+        "mean_realized_roi": -0.02535211267605635
+      },
+      {
+        "label": "[0.010, 0.020)",
+        "left": 0.01,
+        "right": 0.02,
+        "count": 281,
+        "mean_raw_ev": 0.014872892224809873,
+        "mean_realized_roi": 0.0049110320284697345
+      },
+      {
+        "label": "[0.020, 0.030)",
+        "left": 0.02,
+        "right": 0.03,
+        "count": 208,
+        "mean_raw_ev": 0.024356631325701112,
+        "mean_realized_roi": 0.21302884615384615
+      },
+      {
+        "label": "[0.030, 0.050)",
+        "left": 0.03,
+        "right": 0.05,
+        "count": 290,
+        "mean_raw_ev": 0.039007385536000645,
+        "mean_realized_roi": 0.07648275862068965
+      },
+      {
+        "label": "[0.050, 0.100)",
+        "left": 0.05,
+        "right": 0.1,
+        "count": 443,
+        "mean_raw_ev": 0.07146828278966466,
+        "mean_realized_roi": -0.028036117381489867
+      },
+      {
+        "label": "[0.100, inf]",
+        "left": 0.1,
+        "right": Infinity,
+        "count": 356,
+        "mean_raw_ev": 0.16366292778904853,
+        "mean_realized_roi": 0.2505337078651686
+      }
+    ],
+    "final_threshold_fit": {
+      "threshold_raw_ev": 0.005400717258453369,
+      "support_count": 1933,
+      "curve_preview": [
+        {
+          "raw_ev": 2.4487972259512603e-05,
+          "fitted_realized_roi": -0.2292405063291139
+        },
+        {
+          "raw_ev": 0.002371156215667636,
+          "fitted_realized_roi": -0.015118110236220453
+        },
+        {
+          "raw_ev": 0.005106025934219494,
+          "fitted_realized_roi": -0.015118110236220453
+        },
+        {
+          "raw_ev": 0.008600801229476929,
+          "fitted_realized_roi": 0.02408653846153845
+        },
+        {
+          "raw_ev": 0.011806815266609094,
+          "fitted_realized_roi": 0.02408653846153845
+        },
+        {
+          "raw_ev": 0.01529102921485892,
+          "fitted_realized_roi": 0.02408653846153845
+        },
+        {
+          "raw_ev": 0.018624484539031982,
+          "fitted_realized_roi": 0.02408653846153845
+        },
+        {
+          "raw_ev": 0.023122894018888562,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.027673032879829362,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.034014007449150174,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.04034967422485347,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.04912415146827698,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.05740432739257817,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.06704594790935503,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.07682067155838013,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.09090454578399654,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.11111994832754135,
+          "fitted_realized_roi": 0.112987012987013
+        },
+        {
+          "raw_ev": 0.13649004697799683,
+          "fitted_realized_roi": 0.112987012987013
+        },
+        {
+          "raw_ev": 0.17541395127773285,
+          "fitted_realized_roi": 0.27999999999999997
+        },
+        {
+          "raw_ev": 0.42456144094467163,
+          "fitted_realized_roi": 0.5460465116279068
+        }
+      ]
+    }
+  },
+  "cv_nested_evaluation": {
+    "baseline_mean": {
+      "bankroll_roi": 2.352141912947022,
+      "bankroll_bet_count": 644.3333333333334,
+      "max_drawdown": 0.384645073941178,
+      "final_bankroll": 335.2141912947022
+    },
+    "thresholded_mean": {
+      "bankroll_roi": 2.2050796368843675,
+      "bankroll_bet_count": 566.6666666666666,
+      "max_drawdown": 0.3856454025600419,
+      "final_bankroll": 320.50796368843675
+    },
+    "delta_mean_thresholded_minus_baseline": {
+      "bankroll_bet_count": -77.66666666666667,
+      "bankroll_roi": -0.1470622760626545,
+      "final_bankroll": -14.706227606265452,
+      "max_drawdown": 0.0010003286188639549
+    },
+    "folds": [
+      {
+        "fold_index": 1,
+        "val_season": "2122",
+        "threshold_fit_record_count": 1695,
+        "threshold": 0.0015494748950004578,
+        "baseline": {
+          "bankroll_roi": -0.3254611127212378,
+          "bankroll_bet_count": 238,
+          "max_drawdown": 0.4206156510693067,
+          "final_bankroll": 67.45388872787622
+        },
+        "thresholded": {
+          "bankroll_roi": -0.32314139870426545,
+          "bankroll_bet_count": 207,
+          "max_drawdown": 0.4200712192573188,
+          "final_bankroll": 67.68586012957346
+        },
+        "delta_thresholded_minus_baseline": {
+          "bankroll_bet_count": -31.0,
+          "bankroll_roi": 0.0023197140169723407,
+          "final_bankroll": 0.23197140169723696,
+          "max_drawdown": -0.0005444318119879332
+        },
+        "baseline_selection": {
+          "positive_count": 238,
+          "mean_raw_ev": 0.02390519037154041,
+          "mean_full_kelly": 0.02168759920480409
+        },
+        "thresholded_selection": {
+          "positive_count": 207,
+          "mean_raw_ev": 0.02736809296884398,
+          "mean_full_kelly": 0.024830436073180882
+        },
+        "threshold_fit": {
+          "threshold_raw_ev": 0.0015494748950004578,
+          "support_count": 1695,
+          "curve_preview": [
+            {
+              "raw_ev": 2.4487972259512603e-05,
+              "fitted_realized_roi": -0.22875
+            },
+            {
+              "raw_ev": 0.00341796875,
+              "fitted_realized_roi": 0.020494382022471936
+            },
+            {
+              "raw_ev": 0.007031255960464611,
+              "fitted_realized_roi": 0.020494382022471936
+            },
+            {
+              "raw_ev": 0.010173172950744602,
+              "fitted_realized_roi": 0.020494382022471936
+            },
+            {
+              "raw_ev": 0.014151194691658153,
+              "fitted_realized_roi": 0.020494382022471936
+            },
+            {
+              "raw_ev": 0.01779513657093057,
+              "fitted_realized_roi": 0.020494382022471936
+            },
+            {
+              "raw_ev": 0.02154699504375457,
+              "fitted_realized_roi": 0.048752941176470575
+            },
+            {
+              "raw_ev": 0.026871603727340654,
+              "fitted_realized_roi": 0.048752941176470575
+            },
+            {
+              "raw_ev": 0.03287657022476198,
+              "fitted_realized_roi": 0.048752941176470575
+            },
+            {
+              "raw_ev": 0.03931388258934021,
+              "fitted_realized_roi": 0.048752941176470575
+            },
+            {
+              "raw_ev": 0.04655818939208989,
+              "fitted_realized_roi": 0.048752941176470575
+            },
+            {
+              "raw_ev": 0.05533793389797226,
+              "fitted_realized_roi": 0.048752941176470575
+            },
+            {
+              "raw_ev": 0.06406875848770133,
+              "fitted_realized_roi": 0.048752941176470575
+            },
+            {
+              "raw_ev": 0.07294665649533272,
+              "fitted_realized_roi": 0.048752941176470575
+            },
+            {
+              "raw_ev": 0.0825560986995697,
+              "fitted_realized_roi": 0.048752941176470575
+            },
+            {
+              "raw_ev": 0.09835433959960938,
+              "fitted_realized_roi": 0.048752941176470575
+            },
+            {
+              "raw_ev": 0.11778558045625687,
+              "fitted_realized_roi": 0.1276315789473684
+            },
+            {
+              "raw_ev": 0.14286276325583458,
+              "fitted_realized_roi": 0.15250000000000002
+            },
+            {
+              "raw_ev": 0.18442651629447937,
+              "fitted_realized_roi": 0.27999999999999997
+            },
+            {
+              "raw_ev": 0.42456144094467163,
+              "fitted_realized_roi": 0.6092857142857142
+            }
+          ]
+        }
+      },
+      {
+        "fold_index": 2,
+        "val_season": "2223",
+        "threshold_fit_record_count": 1421,
+        "threshold": 0.005400717258453369,
+        "baseline": {
+          "bankroll_roi": 0.45675226590190876,
+          "bankroll_bet_count": 512,
+          "max_drawdown": 0.300135633639305,
+          "final_bankroll": 145.67522659019087
+        },
+        "thresholded": {
+          "bankroll_roi": 0.4470546340295297,
+          "bankroll_bet_count": 428,
+          "max_drawdown": 0.30071047234208514,
+          "final_bankroll": 144.70546340295297
+        },
+        "delta_thresholded_minus_baseline": {
+          "bankroll_bet_count": -84.0,
+          "bankroll_roi": -0.009697631872379042,
+          "final_bankroll": -0.969763187237902,
+          "max_drawdown": 0.0005748387027801338
+        },
+        "baseline_selection": {
+          "positive_count": 512,
+          "mean_raw_ev": 0.03036548157833749,
+          "mean_full_kelly": 0.02446951269105105
+        },
+        "thresholded_selection": {
+          "positive_count": 428,
+          "mean_raw_ev": 0.03579245578358385,
+          "mean_full_kelly": 0.028785806879162826
+        },
+        "threshold_fit": {
+          "threshold_raw_ev": 0.005400717258453369,
+          "support_count": 1421,
+          "curve_preview": [
+            {
+              "raw_ev": 2.4487972259512603e-05,
+              "fitted_realized_roi": -0.41500000000000004
+            },
+            {
+              "raw_ev": 0.0029372572898864746,
+              "fitted_realized_roi": -0.0583050847457627
+            },
+            {
+              "raw_ev": 0.006769621372223034,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.010389147698879109,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.015115565061569303,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.01928330957889557,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.023725885152816817,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.029261499643325806,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.036845624446868896,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.04524761736392979,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.052502989768981934,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.06206503510475159,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.07052472233772278,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.07906948626041399,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.09247694611549373,
+              "fitted_realized_roi": 0.04571428571428569
+            },
+            {
+              "raw_ev": 0.11005430221557622,
+              "fitted_realized_roi": 0.10235714285714285
+            },
+            {
+              "raw_ev": 0.12765372395515429,
+              "fitted_realized_roi": 0.10235714285714285
+            },
+            {
+              "raw_ev": 0.1529918611049652,
+              "fitted_realized_roi": 0.17203389830508478
+            },
+            {
+              "raw_ev": 0.19583902359008798,
+              "fitted_realized_roi": 0.5124096385542168
+            },
+            {
+              "raw_ev": 0.42456144094467163,
+              "fitted_realized_roi": 0.5124096385542168
+            }
+          ]
+        }
+      },
+      {
+        "fold_index": 3,
+        "val_season": "2324",
+        "threshold_fit_record_count": 750,
+        "threshold": 0.00953926146030426,
+        "baseline": {
+          "bankroll_roi": 6.925134585660395,
+          "bankroll_bet_count": 1183,
+          "max_drawdown": 0.4331839371149222,
+          "final_bankroll": 792.5134585660395
+        },
+        "thresholded": {
+          "bankroll_roi": 6.491325675327838,
+          "bankroll_bet_count": 1065,
+          "max_drawdown": 0.43615451608072187,
+          "final_bankroll": 749.1325675327838
+        },
+        "delta_thresholded_minus_baseline": {
+          "bankroll_bet_count": -118.0,
+          "bankroll_roi": -0.43380891033255686,
+          "final_bankroll": -43.38089103325569,
+          "max_drawdown": 0.002970578965799664
+        },
+        "baseline_selection": {
+          "positive_count": 1183,
+          "mean_raw_ev": 0.07685382197317388,
+          "mean_full_kelly": 0.033646450817227835
+        },
+        "thresholded_selection": {
+          "positive_count": 1065,
+          "mean_raw_ev": 0.0848180084420202,
+          "mean_full_kelly": 0.03661335713289852
+        },
+        "threshold_fit": {
+          "threshold_raw_ev": 0.00953926146030426,
+          "support_count": 750,
+          "curve_preview": [
+            {
+              "raw_ev": 2.7298927307128906e-05,
+              "fitted_realized_roi": -0.25
+            },
+            {
+              "raw_ev": 0.0011222177743912543,
+              "fitted_realized_roi": -0.1695652173913043
+            },
+            {
+              "raw_ev": 0.002621434926986632,
+              "fitted_realized_roi": -0.08177142857142858
+            },
+            {
+              "raw_ev": 0.004348432421684256,
+              "fitted_realized_roi": -0.08177142857142858
+            },
+            {
+              "raw_ev": 0.006047999858856068,
+              "fitted_realized_roi": -0.08177142857142858
+            },
+            {
+              "raw_ev": 0.008438058197498322,
+              "fitted_realized_roi": -0.08177142857142858
+            },
+            {
+              "raw_ev": 0.01027059197425828,
+              "fitted_realized_roi": 0.06405099150141642
+            },
+            {
+              "raw_ev": 0.013074648380279497,
+              "fitted_realized_roi": 0.06405099150141642
+            },
+            {
+              "raw_ev": 0.015073612332344055,
+              "fitted_realized_roi": 0.06405099150141642
+            },
+            {
+              "raw_ev": 0.01695809841156004,
+              "fitted_realized_roi": 0.06405099150141642
+            },
+            {
+              "raw_ev": 0.020462751388549805,
+              "fitted_realized_roi": 0.06405099150141642
+            },
+            {
+              "raw_ev": 0.023725885152816817,
+              "fitted_realized_roi": 0.06405099150141642
+            },
+            {
+              "raw_ev": 0.026635348796844482,
+              "fitted_realized_roi": 0.06405099150141642
+            },
+            {
+              "raw_ev": 0.0322079062461853,
+              "fitted_realized_roi": 0.06405099150141642
+            },
+            {
+              "raw_ev": 0.03543772846460347,
+              "fitted_realized_roi": 0.06405099150141642
+            },
+            {
+              "raw_ev": 0.041671620309352786,
+              "fitted_realized_roi": 0.21210526315789474
+            },
+            {
+              "raw_ev": 0.05231758594512925,
+              "fitted_realized_roi": 0.21210526315789474
+            },
+            {
+              "raw_ev": 0.06673461198806763,
+              "fitted_realized_roi": 0.24471910112359552
+            },
+            {
+              "raw_ev": 0.08604797124862662,
+              "fitted_realized_roi": 0.24471910112359552
+            },
+            {
+              "raw_ev": 0.3575552999973297,
+              "fitted_realized_roi": 0.48599999999999993
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "cv_fixed_threshold_grid": {
+    "rows": [
+      {
+        "threshold": 0.0,
+        "mean_metrics": {
+          "bankroll_roi": 2.352141912947022,
+          "bankroll_bet_count": 644.3333333333334,
+          "max_drawdown": 0.384645073941178,
+          "final_bankroll": 335.2141912947022
+        },
+        "mean_positive_count": 644.3333333333334,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.38928599792475554,
+            "bankroll_bet_count": 617,
+            "max_drawdown": 0.33927690228764856,
+            "final_bankroll": 138.92859979247555
+          },
+          "selection": {
+            "positive_count": 617,
+            "mean_raw_ev": 0.03506560318449714,
+            "mean_full_kelly": 0.0248294435824482
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": 0.0,
+            "bankroll_roi": 0.0,
+            "final_bankroll": 0.0,
+            "max_drawdown": 0.0
+          }
+        }
+      },
+      {
+        "threshold": 0.005,
+        "mean_metrics": {
+          "bankroll_roi": 2.342416373777112,
+          "bankroll_bet_count": 577.6666666666666,
+          "max_drawdown": 0.38265621890904816,
+          "final_bankroll": 334.24163737771124
+        },
+        "mean_positive_count": 577.6666666666666,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.39841828282532843,
+            "bankroll_bet_count": 539,
+            "max_drawdown": 0.3385097092295316,
+            "final_bankroll": 139.84182828253284
+          },
+          "selection": {
+            "positive_count": 539,
+            "mean_raw_ev": 0.03979285276306582,
+            "mean_full_kelly": 0.028025676597685414
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -78.0,
+            "bankroll_roi": 0.009132284900572885,
+            "final_bankroll": 0.9132284900572927,
+            "max_drawdown": -0.000767193058116955
+          }
+        }
+      },
+      {
+        "threshold": 0.01,
+        "mean_metrics": {
+          "bankroll_roi": 2.207516566434817,
+          "bankroll_bet_count": 526.0,
+          "max_drawdown": 0.37255841908607773,
+          "final_bankroll": 320.7516566434817
+        },
+        "mean_positive_count": 526.0,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.44581191144748145,
+            "bankroll_bet_count": 481,
+            "max_drawdown": 0.32582632731264105,
+            "final_bankroll": 144.58119114474815
+          },
+          "selection": {
+            "positive_count": 481,
+            "mean_raw_ev": 0.04369493910620713,
+            "mean_full_kelly": 0.03033849888134035
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -136.0,
+            "bankroll_roi": 0.0565259135227259,
+            "final_bankroll": 5.652591352272594,
+            "max_drawdown": -0.013450574975007512
+          }
+        }
+      },
+      {
+        "threshold": 0.015,
+        "mean_metrics": {
+          "bankroll_roi": 2.1476758909489004,
+          "bankroll_bet_count": 479.6666666666667,
+          "max_drawdown": 0.3816196503976928,
+          "final_bankroll": 314.76758909489007
+        },
+        "mean_positive_count": 479.6666666666667,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.38850127464257384,
+            "bankroll_bet_count": 431,
+            "max_drawdown": 0.3364984216156941,
+            "final_bankroll": 138.85012746425738
+          },
+          "selection": {
+            "positive_count": 431,
+            "mean_raw_ev": 0.04736706543342143,
+            "mean_full_kelly": 0.03217109940767458
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -186.0,
+            "bankroll_roi": -0.0007847232821817096,
+            "final_bankroll": -0.07847232821816874,
+            "max_drawdown": -0.002778480671954464
+          }
+        }
+      },
+      {
+        "threshold": 0.02,
+        "mean_metrics": {
+          "bankroll_roi": 2.271579150634429,
+          "bankroll_bet_count": 432.3333333333333,
+          "max_drawdown": 0.37497292484029776,
+          "final_bankroll": 327.1579150634429
+        },
+        "mean_positive_count": 432.3333333333333,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.3353618801051056,
+            "bankroll_bet_count": 381,
+            "max_drawdown": 0.3394680747030402,
+            "final_bankroll": 133.53618801051056
+          },
+          "selection": {
+            "positive_count": 381,
+            "mean_raw_ev": 0.05127097573023768,
+            "mean_full_kelly": 0.03410560260019368
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -236.0,
+            "bankroll_roi": -0.05392411781964995,
+            "final_bankroll": -5.392411781964995,
+            "max_drawdown": 0.00019117241539162722
+          }
+        }
+      },
+      {
+        "threshold": 0.03,
+        "mean_metrics": {
+          "bankroll_roi": 1.9843834922875063,
+          "bankroll_bet_count": 363.0,
+          "max_drawdown": 0.39167161658156635,
+          "final_bankroll": 298.43834922875067
+        },
+        "mean_positive_count": 363.0,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.4396196855315614,
+            "bankroll_bet_count": 293,
+            "max_drawdown": 0.34966805747785235,
+            "final_bankroll": 143.96196855315614
+          },
+          "selection": {
+            "positive_count": 293,
+            "mean_raw_ev": 0.059182305376684306,
+            "mean_full_kelly": 0.03703777379029468
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -324.0,
+            "bankroll_roi": 0.050333687606805844,
+            "final_bankroll": 5.033368760680588,
+            "max_drawdown": 0.010391155190203782
+          }
+        }
+      },
+      {
+        "threshold": 0.05,
+        "mean_metrics": {
+          "bankroll_roi": 1.5154895993758977,
+          "bankroll_bet_count": 266.3333333333333,
+          "max_drawdown": 0.39720010677098466,
+          "final_bankroll": 251.54895993758976
+        },
+        "mean_positive_count": 266.3333333333333,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.1435952925759162,
+            "bankroll_bet_count": 153,
+            "max_drawdown": 0.3204446184416904,
+            "final_bankroll": 114.35952925759162
+          },
+          "selection": {
+            "positive_count": 153,
+            "mean_raw_ev": 0.07782410461333841,
+            "mean_full_kelly": 0.04588832495252416
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -464.0,
+            "bankroll_roi": -0.24569070534883936,
+            "final_bankroll": -24.569070534883934,
+            "max_drawdown": -0.018832283845958142
+          }
+        }
+      },
+      {
+        "threshold": 0.1,
+        "mean_metrics": {
+          "bankroll_roi": 3.003804982162628,
+          "bankroll_bet_count": 118.66666666666667,
+          "max_drawdown": 0.29668187073625524,
+          "final_bankroll": 400.3804982162628
+        },
+        "mean_positive_count": 118.66666666666667,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": -0.11533323972903489,
+            "bankroll_bet_count": 26,
+            "max_drawdown": 0.24440190424747021,
+            "final_bankroll": 88.46667602709651
+          },
+          "selection": {
+            "positive_count": 26,
+            "mean_raw_ev": 0.13121093665178007,
+            "mean_full_kelly": 0.07003949166737147
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -591.0,
+            "bankroll_roi": -0.5046192376537905,
+            "final_bankroll": -50.46192376537904,
+            "max_drawdown": -0.09487499804017835
+          }
+        }
+      }
+    ],
+    "best_by_mean_roi": {
+      "threshold": 0.1,
+      "mean_metrics": {
+        "bankroll_roi": 3.003804982162628,
+        "bankroll_bet_count": 118.66666666666667,
+        "max_drawdown": 0.29668187073625524,
+        "final_bankroll": 400.3804982162628
+      },
+      "mean_positive_count": 118.66666666666667,
+      "held_out_test": {
+        "metrics": {
+          "bankroll_roi": -0.11533323972903489,
+          "bankroll_bet_count": 26,
+          "max_drawdown": 0.24440190424747021,
+          "final_bankroll": 88.46667602709651
+        },
+        "selection": {
+          "positive_count": 26,
+          "mean_raw_ev": 0.13121093665178007,
+          "mean_full_kelly": 0.07003949166737147
+        },
+        "delta_minus_baseline": {
+          "bankroll_bet_count": -591.0,
+          "bankroll_roi": -0.5046192376537905,
+          "final_bankroll": -50.46192376537904,
+          "max_drawdown": -0.09487499804017835
+        }
+      }
+    },
+    "best_by_test_roi": {
+      "threshold": 0.01,
+      "mean_metrics": {
+        "bankroll_roi": 2.207516566434817,
+        "bankroll_bet_count": 526.0,
+        "max_drawdown": 0.37255841908607773,
+        "final_bankroll": 320.7516566434817
+      },
+      "mean_positive_count": 526.0,
+      "held_out_test": {
+        "metrics": {
+          "bankroll_roi": 0.44581191144748145,
+          "bankroll_bet_count": 481,
+          "max_drawdown": 0.32582632731264105,
+          "final_bankroll": 144.58119114474815
+        },
+        "selection": {
+          "positive_count": 481,
+          "mean_raw_ev": 0.04369493910620713,
+          "mean_full_kelly": 0.03033849888134035
+        },
+        "delta_minus_baseline": {
+          "bankroll_bet_count": -136.0,
+          "bankroll_roi": 0.0565259135227259,
+          "final_bankroll": 5.652591352272594,
+          "max_drawdown": -0.013450574975007512
+        }
+      }
+    }
+  },
+  "kelly_fraction_sweep": [
+    {
+      "kelly_fraction": 0.1,
+      "grid_rows": [
+        {
+          "threshold": 0.0,
+          "mean_metrics": {
+            "bankroll_roi": 0.23987426354397437,
+            "bankroll_bet_count": 644.3333333333334,
+            "max_drawdown": 0.08455268853452465,
+            "final_bankroll": 123.98742635439744
+          },
+          "mean_positive_count": 644.3333333333334,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.08907085850243206,
+              "bankroll_bet_count": 617,
+              "max_drawdown": 0.07509883396666377,
+              "final_bankroll": 108.9070858502432
+            },
+            "selection": {
+              "positive_count": 617,
+              "mean_raw_ev": 0.03506560318449714,
+              "mean_full_kelly": 0.0248294435824482
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": 0.0,
+              "bankroll_roi": 0.0,
+              "final_bankroll": 0.0,
+              "max_drawdown": 0.0
+            }
+          }
+        },
+        {
+          "threshold": 0.005,
+          "mean_metrics": {
+            "bankroll_roi": 0.2394750385666021,
+            "bankroll_bet_count": 577.6666666666666,
+            "max_drawdown": 0.08389409336206356,
+            "final_bankroll": 123.9475038566602
+          },
+          "mean_positive_count": 577.6666666666666,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.09048704440239178,
+              "bankroll_bet_count": 539,
+              "max_drawdown": 0.0748908224886158,
+              "final_bankroll": 109.04870444023918
+            },
+            "selection": {
+              "positive_count": 539,
+              "mean_raw_ev": 0.03979285276306582,
+              "mean_full_kelly": 0.028025676597685414
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -78.0,
+              "bankroll_roi": 0.0014161858999597182,
+              "final_bankroll": 0.14161858999597143,
+              "max_drawdown": -0.00020801147804797027
+            }
+          }
+        },
+        {
+          "threshold": 0.01,
+          "mean_metrics": {
+            "bankroll_roi": 0.23423227701767083,
+            "bankroll_bet_count": 526.0,
+            "max_drawdown": 0.0811953581911748,
+            "final_bankroll": 123.42322770176709
+          },
+          "mean_positive_count": 526.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.0974223829135255,
+              "bankroll_bet_count": 481,
+              "max_drawdown": 0.07157294857631379,
+              "final_bankroll": 109.74223829135255
+            },
+            "selection": {
+              "positive_count": 481,
+              "mean_raw_ev": 0.04369493910620713,
+              "mean_full_kelly": 0.03033849888134035
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -136.0,
+              "bankroll_roi": 0.008351524411093436,
+              "final_bankroll": 0.8351524411093436,
+              "max_drawdown": -0.003525885390349981
+            }
+          }
+        },
+        {
+          "threshold": 0.015,
+          "mean_metrics": {
+            "bankroll_roi": 0.2269159861406954,
+            "bankroll_bet_count": 479.6666666666667,
+            "max_drawdown": 0.08379175074976675,
+            "final_bankroll": 122.69159861406955
+          },
+          "mean_positive_count": 479.6666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.08831637410937475,
+              "bankroll_bet_count": 431,
+              "max_drawdown": 0.07438183318792402,
+              "final_bankroll": 108.83163741093747
+            },
+            "selection": {
+              "positive_count": 431,
+              "mean_raw_ev": 0.04736706543342143,
+              "mean_full_kelly": 0.03217109940767458
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -186.0,
+              "bankroll_roi": -0.0007544843930573086,
+              "final_bankroll": -0.07544843930573109,
+              "max_drawdown": -0.0007170007787397487
+            }
+          }
+        },
+        {
+          "threshold": 0.02,
+          "mean_metrics": {
+            "bankroll_roi": 0.23293585959141574,
+            "bankroll_bet_count": 432.3333333333333,
+            "max_drawdown": 0.08198247062779587,
+            "final_bankroll": 123.29358595914157
+          },
+          "mean_positive_count": 432.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.07878915318650939,
+              "bankroll_bet_count": 381,
+              "max_drawdown": 0.07513109727618218,
+              "final_bankroll": 107.87891531865094
+            },
+            "selection": {
+              "positive_count": 381,
+              "mean_raw_ev": 0.05127097573023768,
+              "mean_full_kelly": 0.03410560260019368
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -236.0,
+              "bankroll_roi": -0.010281705315922665,
+              "final_bankroll": -1.0281705315922665,
+              "max_drawdown": 3.2263309518415495e-05
+            }
+          }
+        },
+        {
+          "threshold": 0.03,
+          "mean_metrics": {
+            "bankroll_roi": 0.21199472504083272,
+            "bankroll_bet_count": 363.0,
+            "max_drawdown": 0.0871755184185799,
+            "final_bankroll": 121.19947250408329
+          },
+          "mean_positive_count": 363.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.09428331064539336,
+              "bankroll_bet_count": 293,
+              "max_drawdown": 0.07841449830815102,
+              "final_bankroll": 109.42833106453934
+            },
+            "selection": {
+              "positive_count": 293,
+              "mean_raw_ev": 0.059182305376684306,
+              "mean_full_kelly": 0.03703777379029468
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -324.0,
+              "bankroll_roi": 0.005212452142961302,
+              "final_bankroll": 0.5212452142961297,
+              "max_drawdown": 0.003315664341487251
+            }
+          }
+        },
+        {
+          "threshold": 0.05,
+          "mean_metrics": {
+            "bankroll_roi": 0.18788791198771806,
+            "bankroll_bet_count": 266.3333333333333,
+            "max_drawdown": 0.0891069504233905,
+            "final_bankroll": 118.78879119877179
+          },
+          "mean_positive_count": 266.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.04116038008676,
+              "bankroll_bet_count": 153,
+              "max_drawdown": 0.07135202432407296,
+              "final_bankroll": 104.116038008676
+            },
+            "selection": {
+              "positive_count": 153,
+              "mean_raw_ev": 0.07782410461333841,
+              "mean_full_kelly": 0.04588832495252416
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -464.0,
+              "bankroll_roi": -0.04791047841567206,
+              "final_bankroll": -4.791047841567206,
+              "max_drawdown": -0.0037468096425908037
+            }
+          }
+        },
+        {
+          "threshold": 0.1,
+          "mean_metrics": {
+            "bankroll_roi": 0.2324054954032582,
+            "bankroll_bet_count": 118.66666666666667,
+            "max_drawdown": 0.06378848856909468,
+            "final_bankroll": 123.24054954032583
+          },
+          "mean_positive_count": 118.66666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": -0.01830825089630238,
+              "bankroll_bet_count": 26,
+              "max_drawdown": 0.05317168268861273,
+              "final_bankroll": 98.16917491036976
+            },
+            "selection": {
+              "positive_count": 26,
+              "mean_raw_ev": 0.13121093665178007,
+              "mean_full_kelly": 0.07003949166737147
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -591.0,
+              "bankroll_roi": -0.10737910939873443,
+              "final_bankroll": -10.737910939873444,
+              "max_drawdown": -0.02192715127805104
+            }
+          }
+        }
+      ],
+      "best_by_mean_roi": {
+        "threshold": 0.0,
+        "mean_metrics": {
+          "bankroll_roi": 0.23987426354397437,
+          "bankroll_bet_count": 644.3333333333334,
+          "max_drawdown": 0.08455268853452465,
+          "final_bankroll": 123.98742635439744
+        },
+        "mean_positive_count": 644.3333333333334,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.08907085850243206,
+            "bankroll_bet_count": 617,
+            "max_drawdown": 0.07509883396666377,
+            "final_bankroll": 108.9070858502432
+          },
+          "selection": {
+            "positive_count": 617,
+            "mean_raw_ev": 0.03506560318449714,
+            "mean_full_kelly": 0.0248294435824482
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": 0.0,
+            "bankroll_roi": 0.0,
+            "final_bankroll": 0.0,
+            "max_drawdown": 0.0
+          }
+        }
+      },
+      "best_by_test_roi": {
+        "threshold": 0.01,
+        "mean_metrics": {
+          "bankroll_roi": 0.23423227701767083,
+          "bankroll_bet_count": 526.0,
+          "max_drawdown": 0.0811953581911748,
+          "final_bankroll": 123.42322770176709
+        },
+        "mean_positive_count": 526.0,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.0974223829135255,
+            "bankroll_bet_count": 481,
+            "max_drawdown": 0.07157294857631379,
+            "final_bankroll": 109.74223829135255
+          },
+          "selection": {
+            "positive_count": 481,
+            "mean_raw_ev": 0.04369493910620713,
+            "mean_full_kelly": 0.03033849888134035
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -136.0,
+            "bankroll_roi": 0.008351524411093436,
+            "final_bankroll": 0.8351524411093436,
+            "max_drawdown": -0.003525885390349981
+          }
+        }
+      },
+      "held_out_test": {
+        "baseline": {
+          "bankroll_roi": 0.08907085850243206,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.07509883396666377,
+          "final_bankroll": 108.9070858502432
+        },
+        "baseline_wealth_path": {
+          "starting_bankroll": 100.0,
+          "groups": [
+            "2025-09-23",
+            "2025-09-24",
+            "2025-09-25",
+            "2025-09-26",
+            "2025-09-27",
+            "2025-09-28",
+            "2025-09-29",
+            "2025-10-03",
+            "2025-10-04",
+            "2025-10-05",
+            "2025-10-17",
+            "2025-10-18",
+            "2025-10-19",
+            "2025-10-20",
+            "2025-10-24",
+            "2025-10-25",
+            "2025-10-26",
+            "2025-10-27",
+            "2025-10-28",
+            "2025-10-29",
+            "2025-10-30",
+            "2025-10-31",
+            "2025-11-01",
+            "2025-11-02",
+            "2025-11-03",
+            "2025-11-07",
+            "2025-11-08",
+            "2025-11-09",
+            "2025-11-21",
+            "2025-11-22",
+            "2025-11-23",
+            "2025-11-24",
+            "2025-11-28",
+            "2025-11-29",
+            "2025-11-30",
+            "2025-12-01",
+            "2025-12-02",
+            "2025-12-03",
+            "2025-12-04",
+            "2025-12-05",
+            "2025-12-06",
+            "2025-12-07",
+            "2025-12-08",
+            "2025-12-12",
+            "2025-12-13",
+            "2025-12-14",
+            "2025-12-15",
+            "2025-12-19",
+            "2025-12-20",
+            "2025-12-21",
+            "2025-12-22",
+            "2025-12-26",
+            "2025-12-27",
+            "2025-12-28",
+            "2025-12-29",
+            "2025-12-30",
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-10",
+            "2026-01-11",
+            "2026-01-12",
+            "2026-01-13",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-16",
+            "2026-01-17",
+            "2026-01-18",
+            "2026-01-19",
+            "2026-01-23",
+            "2026-01-24",
+            "2026-01-25",
+            "2026-01-26",
+            "2026-01-27",
+            "2026-01-30",
+            "2026-01-31",
+            "2026-02-01",
+            "2026-02-02",
+            "2026-02-03",
+            "2026-02-06",
+            "2026-02-07",
+            "2026-02-08",
+            "2026-02-09",
+            "2026-02-10",
+            "2026-02-11",
+            "2026-02-12",
+            "2026-02-13",
+            "2026-02-14",
+            "2026-02-15",
+            "2026-02-16",
+            "2026-02-18",
+            "2026-02-20",
+            "2026-02-21",
+            "2026-02-22",
+            "2026-02-23",
+            "2026-02-27",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05"
+          ],
+          "bankroll_after_group": [
+            99.55539199868163,
+            100.24500542048953,
+            100.8278555220724,
+            100.8278555220724,
+            102.52278408948484,
+            102.7093712367467,
+            102.07542926734118,
+            102.13269777517579,
+            103.90867875061777,
+            105.5226329655493,
+            105.48499513648821,
+            105.7107860597565,
+            108.49548603424431,
+            109.29661861790977,
+            109.11072544572849,
+            106.3863053796999,
+            106.91489045270704,
+            106.87488598649755,
+            107.02276071566074,
+            105.96431328837352,
+            105.11382360709179,
+            105.54819371690432,
+            107.83451050858972,
+            106.72905827612315,
+            106.31956623217896,
+            105.92489271273415,
+            105.42320787825119,
+            104.83451088753685,
+            105.94873187408609,
+            106.31505642741111,
+            102.82100660730092,
+            104.46748783033844,
+            105.30707494286882,
+            104.95060217259265,
+            106.14513775313836,
+            105.84423404905408,
+            105.88148366205067,
+            106.44585445569606,
+            106.32788438998648,
+            106.32788438998648,
+            107.22275227665507,
+            105.20212189000439,
+            104.61586881753398,
+            103.50490410306853,
+            102.58192799784995,
+            104.11360495966434,
+            103.7182121155107,
+            103.7157971714655,
+            104.38913695168951,
+            106.6794799118847,
+            106.63113362549164,
+            106.89112668889489,
+            107.14923238450457,
+            107.64760962810213,
+            107.27111930386648,
+            106.9314764617273,
+            106.9314764617273,
+            107.55622715362425,
+            109.47467065237443,
+            109.7285539694658,
+            110.30715226002322,
+            111.29037058192023,
+            112.39275942093579,
+            112.78717186801144,
+            113.41899186806413,
+            112.45430802763161,
+            111.70846365068239,
+            111.0172620566176,
+            109.66569528903139,
+            109.81374493587847,
+            109.84787579393429,
+            110.57226968751749,
+            111.65983883531071,
+            111.47613105535824,
+            112.32031381347336,
+            109.66231369744891,
+            109.44576914170412,
+            109.01991938837683,
+            109.01991938837683,
+            108.4233589132722,
+            106.45589444697758,
+            107.02869832872419,
+            107.19735531997031,
+            107.19259609498025,
+            107.95308492817014,
+            108.45434862747261,
+            105.68350038430869,
+            105.59191508892673,
+            105.4397031156515,
+            105.36862532435079,
+            105.36862532435079,
+            105.70226624719261,
+            105.79589943964439,
+            105.60994592637435,
+            105.07607444237988,
+            104.90135782909799,
+            105.69396845908781,
+            106.53301538881931,
+            107.90378380484991,
+            108.05151523603712,
+            107.71578845210793,
+            108.66505725698691,
+            108.68060386116713,
+            109.0870483471864,
+            109.07194205576032,
+            108.9070858502432,
+            108.9070858502432
+          ],
+          "bankroll_roi": 0.08907085850243206,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.07509883396666377,
+          "final_bankroll": 108.9070858502432
+        },
+        "best_threshold": 0.0,
+        "thresholded": {
+          "bankroll_roi": 0.08907085850243206,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.07509883396666377,
+          "final_bankroll": 108.9070858502432
+        },
+        "thresholded_wealth_path": {
+          "starting_bankroll": 100.0,
+          "groups": [
+            "2025-09-23",
+            "2025-09-24",
+            "2025-09-25",
+            "2025-09-26",
+            "2025-09-27",
+            "2025-09-28",
+            "2025-09-29",
+            "2025-10-03",
+            "2025-10-04",
+            "2025-10-05",
+            "2025-10-17",
+            "2025-10-18",
+            "2025-10-19",
+            "2025-10-20",
+            "2025-10-24",
+            "2025-10-25",
+            "2025-10-26",
+            "2025-10-27",
+            "2025-10-28",
+            "2025-10-29",
+            "2025-10-30",
+            "2025-10-31",
+            "2025-11-01",
+            "2025-11-02",
+            "2025-11-03",
+            "2025-11-07",
+            "2025-11-08",
+            "2025-11-09",
+            "2025-11-21",
+            "2025-11-22",
+            "2025-11-23",
+            "2025-11-24",
+            "2025-11-28",
+            "2025-11-29",
+            "2025-11-30",
+            "2025-12-01",
+            "2025-12-02",
+            "2025-12-03",
+            "2025-12-04",
+            "2025-12-05",
+            "2025-12-06",
+            "2025-12-07",
+            "2025-12-08",
+            "2025-12-12",
+            "2025-12-13",
+            "2025-12-14",
+            "2025-12-15",
+            "2025-12-19",
+            "2025-12-20",
+            "2025-12-21",
+            "2025-12-22",
+            "2025-12-26",
+            "2025-12-27",
+            "2025-12-28",
+            "2025-12-29",
+            "2025-12-30",
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-10",
+            "2026-01-11",
+            "2026-01-12",
+            "2026-01-13",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-16",
+            "2026-01-17",
+            "2026-01-18",
+            "2026-01-19",
+            "2026-01-23",
+            "2026-01-24",
+            "2026-01-25",
+            "2026-01-26",
+            "2026-01-27",
+            "2026-01-30",
+            "2026-01-31",
+            "2026-02-01",
+            "2026-02-02",
+            "2026-02-03",
+            "2026-02-06",
+            "2026-02-07",
+            "2026-02-08",
+            "2026-02-09",
+            "2026-02-10",
+            "2026-02-11",
+            "2026-02-12",
+            "2026-02-13",
+            "2026-02-14",
+            "2026-02-15",
+            "2026-02-16",
+            "2026-02-18",
+            "2026-02-20",
+            "2026-02-21",
+            "2026-02-22",
+            "2026-02-23",
+            "2026-02-27",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05"
+          ],
+          "bankroll_after_group": [
+            99.55539199868163,
+            100.24500542048953,
+            100.8278555220724,
+            100.8278555220724,
+            102.52278408948484,
+            102.7093712367467,
+            102.07542926734118,
+            102.13269777517579,
+            103.90867875061777,
+            105.5226329655493,
+            105.48499513648821,
+            105.7107860597565,
+            108.49548603424431,
+            109.29661861790977,
+            109.11072544572849,
+            106.3863053796999,
+            106.91489045270704,
+            106.87488598649755,
+            107.02276071566074,
+            105.96431328837352,
+            105.11382360709179,
+            105.54819371690432,
+            107.83451050858972,
+            106.72905827612315,
+            106.31956623217896,
+            105.92489271273415,
+            105.42320787825119,
+            104.83451088753685,
+            105.94873187408609,
+            106.31505642741111,
+            102.82100660730092,
+            104.46748783033844,
+            105.30707494286882,
+            104.95060217259265,
+            106.14513775313836,
+            105.84423404905408,
+            105.88148366205067,
+            106.44585445569606,
+            106.32788438998648,
+            106.32788438998648,
+            107.22275227665507,
+            105.20212189000439,
+            104.61586881753398,
+            103.50490410306853,
+            102.58192799784995,
+            104.11360495966434,
+            103.7182121155107,
+            103.7157971714655,
+            104.38913695168951,
+            106.6794799118847,
+            106.63113362549164,
+            106.89112668889489,
+            107.14923238450457,
+            107.64760962810213,
+            107.27111930386648,
+            106.9314764617273,
+            106.9314764617273,
+            107.55622715362425,
+            109.47467065237443,
+            109.7285539694658,
+            110.30715226002322,
+            111.29037058192023,
+            112.39275942093579,
+            112.78717186801144,
+            113.41899186806413,
+            112.45430802763161,
+            111.70846365068239,
+            111.0172620566176,
+            109.66569528903139,
+            109.81374493587847,
+            109.84787579393429,
+            110.57226968751749,
+            111.65983883531071,
+            111.47613105535824,
+            112.32031381347336,
+            109.66231369744891,
+            109.44576914170412,
+            109.01991938837683,
+            109.01991938837683,
+            108.4233589132722,
+            106.45589444697758,
+            107.02869832872419,
+            107.19735531997031,
+            107.19259609498025,
+            107.95308492817014,
+            108.45434862747261,
+            105.68350038430869,
+            105.59191508892673,
+            105.4397031156515,
+            105.36862532435079,
+            105.36862532435079,
+            105.70226624719261,
+            105.79589943964439,
+            105.60994592637435,
+            105.07607444237988,
+            104.90135782909799,
+            105.69396845908781,
+            106.53301538881931,
+            107.90378380484991,
+            108.05151523603712,
+            107.71578845210793,
+            108.66505725698691,
+            108.68060386116713,
+            109.0870483471864,
+            109.07194205576032,
+            108.9070858502432,
+            108.9070858502432
+          ],
+          "bankroll_roi": 0.08907085850243206,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.07509883396666377,
+          "final_bankroll": 108.9070858502432
+        },
+        "delta_thresholded_minus_baseline": {
+          "bankroll_bet_count": 0.0,
+          "bankroll_roi": 0.0,
+          "final_bankroll": 0.0,
+          "max_drawdown": 0.0
+        },
+        "thresholded_selection": {
+          "positive_count": 617,
+          "mean_raw_ev": 0.03506560318449714,
+          "mean_full_kelly": 0.0248294435824482
+        }
+      }
+    },
+    {
+      "kelly_fraction": 0.25,
+      "grid_rows": [
+        {
+          "threshold": 0.0,
+          "mean_metrics": {
+            "bankroll_roi": 0.8041783528899368,
+            "bankroll_bet_count": 644.3333333333334,
+            "max_drawdown": 0.20465859326424637,
+            "final_bankroll": 180.4178352889937
+          },
+          "mean_positive_count": 644.3333333333334,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.21546513228333863,
+              "bankroll_bet_count": 617,
+              "max_drawdown": 0.18090090416106747,
+              "final_bankroll": 121.54651322833386
+            },
+            "selection": {
+              "positive_count": 617,
+              "mean_raw_ev": 0.03506560318449714,
+              "mean_full_kelly": 0.0248294435824482
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": 0.0,
+              "bankroll_roi": 0.0,
+              "final_bankroll": 0.0,
+              "max_drawdown": 0.0
+            }
+          }
+        },
+        {
+          "threshold": 0.005,
+          "mean_metrics": {
+            "bankroll_roi": 0.8019965617296619,
+            "bankroll_bet_count": 577.6666666666666,
+            "max_drawdown": 0.20327427731961556,
+            "final_bankroll": 180.1996561729662
+          },
+          "mean_positive_count": 577.6666666666666,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.2194344777124968,
+              "bankroll_bet_count": 539,
+              "max_drawdown": 0.18043450141655842,
+              "final_bankroll": 121.94344777124968
+            },
+            "selection": {
+              "positive_count": 539,
+              "mean_raw_ev": 0.03979285276306582,
+              "mean_full_kelly": 0.028025676597685414
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -78.0,
+              "bankroll_roi": 0.0039693454291581665,
+              "final_bankroll": 0.3969345429158153,
+              "max_drawdown": -0.0004664027445090424
+            }
+          }
+        },
+        {
+          "threshold": 0.01,
+          "mean_metrics": {
+            "bankroll_roi": 0.7728631650293049,
+            "bankroll_bet_count": 526.0,
+            "max_drawdown": 0.1971933261870572,
+            "final_bankroll": 177.2863165029305
+          },
+          "mean_positive_count": 526.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.23927549524729913,
+              "bankroll_bet_count": 481,
+              "max_drawdown": 0.17290684597455563,
+              "final_bankroll": 123.92754952472991
+            },
+            "selection": {
+              "positive_count": 481,
+              "mean_raw_ev": 0.04369493910620713,
+              "mean_full_kelly": 0.03033849888134035
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -136.0,
+              "bankroll_roi": 0.023810362963960496,
+              "final_bankroll": 2.381036296396047,
+              "max_drawdown": -0.007994058186511832
+            }
+          }
+        },
+        {
+          "threshold": 0.015,
+          "mean_metrics": {
+            "bankroll_roi": 0.7511928894101851,
+            "bankroll_bet_count": 479.6666666666667,
+            "max_drawdown": 0.20288789170119084,
+            "final_bankroll": 175.11928894101848
+          },
+          "mean_positive_count": 479.6666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.21401818325809216,
+              "bankroll_bet_count": 431,
+              "max_drawdown": 0.17926291239975728,
+              "final_bankroll": 121.40181832580922
+            },
+            "selection": {
+              "positive_count": 431,
+              "mean_raw_ev": 0.04736706543342143,
+              "mean_full_kelly": 0.03217109940767458
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -186.0,
+              "bankroll_roi": -0.0014469490252464745,
+              "final_bankroll": -0.14469490252464823,
+              "max_drawdown": -0.0016379917613101869
+            }
+          }
+        },
+        {
+          "threshold": 0.02,
+          "mean_metrics": {
+            "bankroll_roi": 0.7778944844919482,
+            "bankroll_bet_count": 432.3333333333333,
+            "max_drawdown": 0.19879903991427597,
+            "final_bankroll": 177.7894484491948
+          },
+          "mean_positive_count": 432.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.18872078287388164,
+              "bankroll_bet_count": 381,
+              "max_drawdown": 0.18099138850124294,
+              "final_bankroll": 118.87207828738816
+            },
+            "selection": {
+              "positive_count": 381,
+              "mean_raw_ev": 0.05127097573023768,
+              "mean_full_kelly": 0.03410560260019368
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -236.0,
+              "bankroll_roi": -0.026744349409456997,
+              "final_bankroll": -2.6744349409457016,
+              "max_drawdown": 9.048434017547291e-05
+            }
+          }
+        },
+        {
+          "threshold": 0.03,
+          "mean_metrics": {
+            "bankroll_roi": 0.7014756853277558,
+            "bankroll_bet_count": 363.0,
+            "max_drawdown": 0.20992581183885262,
+            "final_bankroll": 170.14756853277558
+          },
+          "mean_positive_count": 363.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.23271825350719355,
+              "bankroll_bet_count": 293,
+              "max_drawdown": 0.18791686242235964,
+              "final_bankroll": 123.27182535071935
+            },
+            "selection": {
+              "positive_count": 293,
+              "mean_raw_ev": 0.059182305376684306,
+              "mean_full_kelly": 0.03703777379029468
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -324.0,
+              "bankroll_roi": 0.017253121223854917,
+              "final_bankroll": 1.725312122385489,
+              "max_drawdown": 0.007015958261292171
+            }
+          }
+        },
+        {
+          "threshold": 0.05,
+          "mean_metrics": {
+            "bankroll_roi": 0.5900852436564059,
+            "bankroll_bet_count": 266.3333333333333,
+            "max_drawdown": 0.21388497798794612,
+            "final_bankroll": 159.0085243656406
+          },
+          "mean_positive_count": 266.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.09240889251899802,
+              "bankroll_bet_count": 153,
+              "max_drawdown": 0.17140206230891755,
+              "final_bankroll": 109.2408892518998
+            },
+            "selection": {
+              "positive_count": 153,
+              "mean_raw_ev": 0.07782410461333841,
+              "mean_full_kelly": 0.04588832495252416
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -464.0,
+              "bankroll_roi": -0.12305623976434062,
+              "final_bankroll": -12.305623976434063,
+              "max_drawdown": -0.009498841852149914
+            }
+          }
+        },
+        {
+          "threshold": 0.1,
+          "mean_metrics": {
+            "bankroll_roi": 0.8458569078031495,
+            "bankroll_bet_count": 118.66666666666667,
+            "max_drawdown": 0.1554873750493768,
+            "final_bankroll": 184.58569078031496
+          },
+          "mean_positive_count": 118.66666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": -0.05045730426583162,
+              "bankroll_bet_count": 26,
+              "max_drawdown": 0.1287976600760332,
+              "final_bankroll": 94.95426957341684
+            },
+            "selection": {
+              "positive_count": 26,
+              "mean_raw_ev": 0.13121093665178007,
+              "mean_full_kelly": 0.07003949166737147
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -591.0,
+              "bankroll_roi": -0.26592243654917025,
+              "final_bankroll": -26.592243654917027,
+              "max_drawdown": -0.05210324408503428
+            }
+          }
+        }
+      ],
+      "best_by_mean_roi": {
+        "threshold": 0.1,
+        "mean_metrics": {
+          "bankroll_roi": 0.8458569078031495,
+          "bankroll_bet_count": 118.66666666666667,
+          "max_drawdown": 0.1554873750493768,
+          "final_bankroll": 184.58569078031496
+        },
+        "mean_positive_count": 118.66666666666667,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": -0.05045730426583162,
+            "bankroll_bet_count": 26,
+            "max_drawdown": 0.1287976600760332,
+            "final_bankroll": 94.95426957341684
+          },
+          "selection": {
+            "positive_count": 26,
+            "mean_raw_ev": 0.13121093665178007,
+            "mean_full_kelly": 0.07003949166737147
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -591.0,
+            "bankroll_roi": -0.26592243654917025,
+            "final_bankroll": -26.592243654917027,
+            "max_drawdown": -0.05210324408503428
+          }
+        }
+      },
+      "best_by_test_roi": {
+        "threshold": 0.01,
+        "mean_metrics": {
+          "bankroll_roi": 0.7728631650293049,
+          "bankroll_bet_count": 526.0,
+          "max_drawdown": 0.1971933261870572,
+          "final_bankroll": 177.2863165029305
+        },
+        "mean_positive_count": 526.0,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.23927549524729913,
+            "bankroll_bet_count": 481,
+            "max_drawdown": 0.17290684597455563,
+            "final_bankroll": 123.92754952472991
+          },
+          "selection": {
+            "positive_count": 481,
+            "mean_raw_ev": 0.04369493910620713,
+            "mean_full_kelly": 0.03033849888134035
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -136.0,
+            "bankroll_roi": 0.023810362963960496,
+            "final_bankroll": 2.381036296396047,
+            "max_drawdown": -0.007994058186511832
+          }
+        }
+      },
+      "held_out_test": {
+        "baseline": {
+          "bankroll_roi": 0.21546513228333863,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.18090090416106747,
+          "final_bankroll": 121.54651322833386
+        },
+        "baseline_wealth_path": {
+          "starting_bankroll": 100.0,
+          "groups": [
+            "2025-09-23",
+            "2025-09-24",
+            "2025-09-25",
+            "2025-09-26",
+            "2025-09-27",
+            "2025-09-28",
+            "2025-09-29",
+            "2025-10-03",
+            "2025-10-04",
+            "2025-10-05",
+            "2025-10-17",
+            "2025-10-18",
+            "2025-10-19",
+            "2025-10-20",
+            "2025-10-24",
+            "2025-10-25",
+            "2025-10-26",
+            "2025-10-27",
+            "2025-10-28",
+            "2025-10-29",
+            "2025-10-30",
+            "2025-10-31",
+            "2025-11-01",
+            "2025-11-02",
+            "2025-11-03",
+            "2025-11-07",
+            "2025-11-08",
+            "2025-11-09",
+            "2025-11-21",
+            "2025-11-22",
+            "2025-11-23",
+            "2025-11-24",
+            "2025-11-28",
+            "2025-11-29",
+            "2025-11-30",
+            "2025-12-01",
+            "2025-12-02",
+            "2025-12-03",
+            "2025-12-04",
+            "2025-12-05",
+            "2025-12-06",
+            "2025-12-07",
+            "2025-12-08",
+            "2025-12-12",
+            "2025-12-13",
+            "2025-12-14",
+            "2025-12-15",
+            "2025-12-19",
+            "2025-12-20",
+            "2025-12-21",
+            "2025-12-22",
+            "2025-12-26",
+            "2025-12-27",
+            "2025-12-28",
+            "2025-12-29",
+            "2025-12-30",
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-10",
+            "2026-01-11",
+            "2026-01-12",
+            "2026-01-13",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-16",
+            "2026-01-17",
+            "2026-01-18",
+            "2026-01-19",
+            "2026-01-23",
+            "2026-01-24",
+            "2026-01-25",
+            "2026-01-26",
+            "2026-01-27",
+            "2026-01-30",
+            "2026-01-31",
+            "2026-02-01",
+            "2026-02-02",
+            "2026-02-03",
+            "2026-02-06",
+            "2026-02-07",
+            "2026-02-08",
+            "2026-02-09",
+            "2026-02-10",
+            "2026-02-11",
+            "2026-02-12",
+            "2026-02-13",
+            "2026-02-14",
+            "2026-02-15",
+            "2026-02-16",
+            "2026-02-18",
+            "2026-02-20",
+            "2026-02-21",
+            "2026-02-22",
+            "2026-02-23",
+            "2026-02-27",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05"
+          ],
+          "bankroll_after_group": [
+            98.88847999670408,
+            100.60096441615204,
+            102.0632637617238,
+            102.0632637617238,
+            106.35250358878795,
+            106.83639627725289,
+            105.18785937539424,
+            105.33539614775913,
+            109.91457753810263,
+            114.18267857242037,
+            114.08086183374853,
+            114.69133783290262,
+            122.24451611871908,
+            124.50115527986843,
+            123.97177214368655,
+            116.23304659059278,
+            117.67681919832295,
+            117.56674102498977,
+            117.9734116339733,
+            115.05654018538424,
+            112.74787613720268,
+            113.91266839901569,
+            120.08142499671028,
+            117.00392506847986,
+            115.88163988205412,
+            114.80621660221752,
+            113.44684449669417,
+            111.8630894273557,
+            114.83539789727133,
+            115.82802482863029,
+            106.31128978385047,
+            110.56721831931331,
+            112.7887422952701,
+            111.83424528156581,
+            115.01645630148488,
+            114.20132528219473,
+            114.30180206320878,
+            115.82493426051083,
+            115.50402286439798,
+            115.50402286439798,
+            117.9342612123952,
+            112.37803488045724,
+            110.81243033172628,
+            107.87050810199673,
+            105.46574519972913,
+            109.40258513186606,
+            108.36388804444391,
+            108.35758026298467,
+            110.11626773561872,
+            116.1562644722514,
+            116.02466174900133,
+            116.73190376671249,
+            117.43657332523536,
+            118.80213877094351,
+            117.7633824088588,
+            116.83122354445918,
+            116.83122354445918,
+            118.5376992745192,
+            123.82348989185822,
+            124.54138925068342,
+            126.1831550517743,
+            128.99497612184467,
+            132.18938146936586,
+            133.34909001490223,
+            135.2166034179078,
+            132.34139552443693,
+            130.14703571242197,
+            128.13380780633116,
+            124.23393238995234,
+            124.65322462551156,
+            124.75008229843715,
+            126.80674923869078,
+            129.92487073049193,
+            129.39047515435033,
+            131.84008493080069,
+            124.04027229796091,
+            123.42793236198871,
+            122.22729767865994,
+            122.22729767865994,
+            120.5552185030604,
+            115.08619155608856,
+            116.63429318073825,
+            117.09377716193094,
+            117.0807806745459,
+            119.15738459887974,
+            120.54060749248636,
+            112.84152177745165,
+            112.59705069005966,
+            112.19127579583429,
+            112.00220308766217,
+            112.00220308766217,
+            112.88881706510223,
+            113.13881502420914,
+            112.64166531773674,
+            111.21812105551562,
+            110.7557976020198,
+            112.84791119161176,
+            115.0875066669341,
+            118.78960593266328,
+            119.19619404931208,
+            118.27030803102355,
+            120.87601503949976,
+            120.91924907461966,
+            122.0497857180936,
+            122.00753231451631,
+            121.54651322833386,
+            121.54651322833386
+          ],
+          "bankroll_roi": 0.21546513228333863,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.18090090416106747,
+          "final_bankroll": 121.54651322833386
+        },
+        "best_threshold": 0.1,
+        "thresholded": {
+          "bankroll_roi": -0.05045730426583162,
+          "bankroll_bet_count": 26,
+          "max_drawdown": 0.1287976600760332,
+          "final_bankroll": 94.95426957341684
+        },
+        "thresholded_wealth_path": {
+          "starting_bankroll": 100.0,
+          "groups": [
+            "2025-09-23",
+            "2025-09-24",
+            "2025-09-25",
+            "2025-09-26",
+            "2025-09-27",
+            "2025-09-28",
+            "2025-09-29",
+            "2025-10-03",
+            "2025-10-04",
+            "2025-10-05",
+            "2025-10-17",
+            "2025-10-18",
+            "2025-10-19",
+            "2025-10-20",
+            "2025-10-24",
+            "2025-10-25",
+            "2025-10-26",
+            "2025-10-27",
+            "2025-10-28",
+            "2025-10-29",
+            "2025-10-30",
+            "2025-10-31",
+            "2025-11-01",
+            "2025-11-02",
+            "2025-11-03",
+            "2025-11-07",
+            "2025-11-08",
+            "2025-11-09",
+            "2025-11-21",
+            "2025-11-22",
+            "2025-11-23",
+            "2025-11-24",
+            "2025-11-28",
+            "2025-11-29",
+            "2025-11-30",
+            "2025-12-01",
+            "2025-12-02",
+            "2025-12-03",
+            "2025-12-04",
+            "2025-12-05",
+            "2025-12-06",
+            "2025-12-07",
+            "2025-12-08",
+            "2025-12-12",
+            "2025-12-13",
+            "2025-12-14",
+            "2025-12-15",
+            "2025-12-19",
+            "2025-12-20",
+            "2025-12-21",
+            "2025-12-22",
+            "2025-12-26",
+            "2025-12-27",
+            "2025-12-28",
+            "2025-12-29",
+            "2025-12-30",
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-10",
+            "2026-01-11",
+            "2026-01-12",
+            "2026-01-13",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-16",
+            "2026-01-17",
+            "2026-01-18",
+            "2026-01-19",
+            "2026-01-23",
+            "2026-01-24",
+            "2026-01-25",
+            "2026-01-26",
+            "2026-01-27",
+            "2026-01-30",
+            "2026-01-31",
+            "2026-02-01",
+            "2026-02-02",
+            "2026-02-03",
+            "2026-02-06",
+            "2026-02-07",
+            "2026-02-08",
+            "2026-02-09",
+            "2026-02-10",
+            "2026-02-11",
+            "2026-02-12",
+            "2026-02-13",
+            "2026-02-14",
+            "2026-02-15",
+            "2026-02-16",
+            "2026-02-18",
+            "2026-02-20",
+            "2026-02-21",
+            "2026-02-22",
+            "2026-02-23",
+            "2026-02-27",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05"
+          ],
+          "bankroll_after_group": [
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            98.64800638622708,
+            98.64800638622708,
+            98.64800638622708,
+            101.18328572077256,
+            104.32209759847672,
+            104.32209759847672,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            103.15320887350036,
+            95.8603022259659,
+            100.45345143747102,
+            100.45345143747102,
+            100.45345143747102,
+            103.15032529041265,
+            103.15032529041265,
+            103.15032529041265,
+            103.15032529041265,
+            103.15032529041265,
+            103.15032529041265,
+            105.81034130936195,
+            104.32778266328128,
+            102.832039569965,
+            101.30214878855865,
+            99.78859306201734,
+            99.78859306201734,
+            99.78859306201734,
+            99.78859306201734,
+            99.78859306201734,
+            103.41244273885744,
+            103.41244273885744,
+            103.41244273885744,
+            103.41244273885744,
+            103.41244273885744,
+            103.41244273885744,
+            103.41244273885744,
+            103.41244273885744,
+            103.41244273885744,
+            106.0716625952459,
+            106.0716625952459,
+            106.0716625952459,
+            106.0716625952459,
+            106.0716625952459,
+            106.0716625952459,
+            106.0716625952459,
+            106.0716625952459,
+            106.0716625952459,
+            104.96344881180967,
+            102.90644671012504,
+            102.90644671012504,
+            102.90644671012504,
+            101.08362586095001,
+            101.08362586095001,
+            101.08362586095001,
+            101.08362586095001,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            95.97821467494435,
+            93.59268750212682,
+            92.40988065260373,
+            92.40988065260373,
+            92.40988065260373,
+            92.40988065260373,
+            92.40988065260373,
+            92.40988065260373,
+            94.95426957341684,
+            94.95426957341684,
+            94.95426957341684,
+            94.95426957341684,
+            94.95426957341684,
+            94.95426957341684,
+            94.95426957341684
+          ],
+          "bankroll_roi": -0.05045730426583162,
+          "bankroll_bet_count": 26,
+          "max_drawdown": 0.1287976600760332,
+          "final_bankroll": 94.95426957341684
+        },
+        "delta_thresholded_minus_baseline": {
+          "bankroll_bet_count": -591.0,
+          "bankroll_roi": -0.26592243654917025,
+          "final_bankroll": -26.592243654917027,
+          "max_drawdown": -0.05210324408503428
+        },
+        "thresholded_selection": {
+          "positive_count": 26,
+          "mean_raw_ev": 0.13121093665178007,
+          "mean_full_kelly": 0.07003949166737147
+        }
+      }
+    },
+    {
+      "kelly_fraction": 0.5,
+      "grid_rows": [
+        {
+          "threshold": 0.0,
+          "mean_metrics": {
+            "bankroll_roi": 2.352141912947022,
+            "bankroll_bet_count": 644.3333333333334,
+            "max_drawdown": 0.384645073941178,
+            "final_bankroll": 335.2141912947022
+          },
+          "mean_positive_count": 644.3333333333334,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.38928599792475554,
+              "bankroll_bet_count": 617,
+              "max_drawdown": 0.33927690228764856,
+              "final_bankroll": 138.92859979247555
+            },
+            "selection": {
+              "positive_count": 617,
+              "mean_raw_ev": 0.03506560318449714,
+              "mean_full_kelly": 0.0248294435824482
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": 0.0,
+              "bankroll_roi": 0.0,
+              "final_bankroll": 0.0,
+              "max_drawdown": 0.0
+            }
+          }
+        },
+        {
+          "threshold": 0.005,
+          "mean_metrics": {
+            "bankroll_roi": 2.342416373777112,
+            "bankroll_bet_count": 577.6666666666666,
+            "max_drawdown": 0.38265621890904816,
+            "final_bankroll": 334.24163737771124
+          },
+          "mean_positive_count": 577.6666666666666,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.39841828282532843,
+              "bankroll_bet_count": 539,
+              "max_drawdown": 0.3385097092295316,
+              "final_bankroll": 139.84182828253284
+            },
+            "selection": {
+              "positive_count": 539,
+              "mean_raw_ev": 0.03979285276306582,
+              "mean_full_kelly": 0.028025676597685414
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -78.0,
+              "bankroll_roi": 0.009132284900572885,
+              "final_bankroll": 0.9132284900572927,
+              "max_drawdown": -0.000767193058116955
+            }
+          }
+        },
+        {
+          "threshold": 0.01,
+          "mean_metrics": {
+            "bankroll_roi": 2.207516566434817,
+            "bankroll_bet_count": 526.0,
+            "max_drawdown": 0.37255841908607773,
+            "final_bankroll": 320.7516566434817
+          },
+          "mean_positive_count": 526.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.44581191144748145,
+              "bankroll_bet_count": 481,
+              "max_drawdown": 0.32582632731264105,
+              "final_bankroll": 144.58119114474815
+            },
+            "selection": {
+              "positive_count": 481,
+              "mean_raw_ev": 0.04369493910620713,
+              "mean_full_kelly": 0.03033849888134035
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -136.0,
+              "bankroll_roi": 0.0565259135227259,
+              "final_bankroll": 5.652591352272594,
+              "max_drawdown": -0.013450574975007512
+            }
+          }
+        },
+        {
+          "threshold": 0.015,
+          "mean_metrics": {
+            "bankroll_roi": 2.1476758909489004,
+            "bankroll_bet_count": 479.6666666666667,
+            "max_drawdown": 0.3816196503976928,
+            "final_bankroll": 314.76758909489007
+          },
+          "mean_positive_count": 479.6666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.38850127464257384,
+              "bankroll_bet_count": 431,
+              "max_drawdown": 0.3364984216156941,
+              "final_bankroll": 138.85012746425738
+            },
+            "selection": {
+              "positive_count": 431,
+              "mean_raw_ev": 0.04736706543342143,
+              "mean_full_kelly": 0.03217109940767458
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -186.0,
+              "bankroll_roi": -0.0007847232821817096,
+              "final_bankroll": -0.07847232821816874,
+              "max_drawdown": -0.002778480671954464
+            }
+          }
+        },
+        {
+          "threshold": 0.02,
+          "mean_metrics": {
+            "bankroll_roi": 2.271579150634429,
+            "bankroll_bet_count": 432.3333333333333,
+            "max_drawdown": 0.37497292484029776,
+            "final_bankroll": 327.1579150634429
+          },
+          "mean_positive_count": 432.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.3353618801051056,
+              "bankroll_bet_count": 381,
+              "max_drawdown": 0.3394680747030402,
+              "final_bankroll": 133.53618801051056
+            },
+            "selection": {
+              "positive_count": 381,
+              "mean_raw_ev": 0.05127097573023768,
+              "mean_full_kelly": 0.03410560260019368
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -236.0,
+              "bankroll_roi": -0.05392411781964995,
+              "final_bankroll": -5.392411781964995,
+              "max_drawdown": 0.00019117241539162722
+            }
+          }
+        },
+        {
+          "threshold": 0.03,
+          "mean_metrics": {
+            "bankroll_roi": 1.9843834922875063,
+            "bankroll_bet_count": 363.0,
+            "max_drawdown": 0.39167161658156635,
+            "final_bankroll": 298.43834922875067
+          },
+          "mean_positive_count": 363.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.4396196855315614,
+              "bankroll_bet_count": 293,
+              "max_drawdown": 0.34966805747785235,
+              "final_bankroll": 143.96196855315614
+            },
+            "selection": {
+              "positive_count": 293,
+              "mean_raw_ev": 0.059182305376684306,
+              "mean_full_kelly": 0.03703777379029468
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -324.0,
+              "bankroll_roi": 0.050333687606805844,
+              "final_bankroll": 5.033368760680588,
+              "max_drawdown": 0.010391155190203782
+            }
+          }
+        },
+        {
+          "threshold": 0.05,
+          "mean_metrics": {
+            "bankroll_roi": 1.5154895993758977,
+            "bankroll_bet_count": 266.3333333333333,
+            "max_drawdown": 0.39720010677098466,
+            "final_bankroll": 251.54895993758976
+          },
+          "mean_positive_count": 266.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.1435952925759162,
+              "bankroll_bet_count": 153,
+              "max_drawdown": 0.3204446184416904,
+              "final_bankroll": 114.35952925759162
+            },
+            "selection": {
+              "positive_count": 153,
+              "mean_raw_ev": 0.07782410461333841,
+              "mean_full_kelly": 0.04588832495252416
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -464.0,
+              "bankroll_roi": -0.24569070534883936,
+              "final_bankroll": -24.569070534883934,
+              "max_drawdown": -0.018832283845958142
+            }
+          }
+        },
+        {
+          "threshold": 0.1,
+          "mean_metrics": {
+            "bankroll_roi": 3.003804982162628,
+            "bankroll_bet_count": 118.66666666666667,
+            "max_drawdown": 0.29668187073625524,
+            "final_bankroll": 400.3804982162628
+          },
+          "mean_positive_count": 118.66666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": -0.11533323972903489,
+              "bankroll_bet_count": 26,
+              "max_drawdown": 0.24440190424747021,
+              "final_bankroll": 88.46667602709651
+            },
+            "selection": {
+              "positive_count": 26,
+              "mean_raw_ev": 0.13121093665178007,
+              "mean_full_kelly": 0.07003949166737147
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -591.0,
+              "bankroll_roi": -0.5046192376537905,
+              "final_bankroll": -50.46192376537904,
+              "max_drawdown": -0.09487499804017835
+            }
+          }
+        }
+      ],
+      "best_by_mean_roi": {
+        "threshold": 0.1,
+        "mean_metrics": {
+          "bankroll_roi": 3.003804982162628,
+          "bankroll_bet_count": 118.66666666666667,
+          "max_drawdown": 0.29668187073625524,
+          "final_bankroll": 400.3804982162628
+        },
+        "mean_positive_count": 118.66666666666667,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": -0.11533323972903489,
+            "bankroll_bet_count": 26,
+            "max_drawdown": 0.24440190424747021,
+            "final_bankroll": 88.46667602709651
+          },
+          "selection": {
+            "positive_count": 26,
+            "mean_raw_ev": 0.13121093665178007,
+            "mean_full_kelly": 0.07003949166737147
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -591.0,
+            "bankroll_roi": -0.5046192376537905,
+            "final_bankroll": -50.46192376537904,
+            "max_drawdown": -0.09487499804017835
+          }
+        }
+      },
+      "best_by_test_roi": {
+        "threshold": 0.01,
+        "mean_metrics": {
+          "bankroll_roi": 2.207516566434817,
+          "bankroll_bet_count": 526.0,
+          "max_drawdown": 0.37255841908607773,
+          "final_bankroll": 320.7516566434817
+        },
+        "mean_positive_count": 526.0,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.44581191144748145,
+            "bankroll_bet_count": 481,
+            "max_drawdown": 0.32582632731264105,
+            "final_bankroll": 144.58119114474815
+          },
+          "selection": {
+            "positive_count": 481,
+            "mean_raw_ev": 0.04369493910620713,
+            "mean_full_kelly": 0.03033849888134035
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -136.0,
+            "bankroll_roi": 0.0565259135227259,
+            "final_bankroll": 5.652591352272594,
+            "max_drawdown": -0.013450574975007512
+          }
+        }
+      },
+      "held_out_test": {
+        "baseline": {
+          "bankroll_roi": 0.38928599792475554,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.33927690228764856,
+          "final_bankroll": 138.92859979247555
+        },
+        "baseline_wealth_path": {
+          "starting_bankroll": 100.0,
+          "groups": [
+            "2025-09-23",
+            "2025-09-24",
+            "2025-09-25",
+            "2025-09-26",
+            "2025-09-27",
+            "2025-09-28",
+            "2025-09-29",
+            "2025-10-03",
+            "2025-10-04",
+            "2025-10-05",
+            "2025-10-17",
+            "2025-10-18",
+            "2025-10-19",
+            "2025-10-20",
+            "2025-10-24",
+            "2025-10-25",
+            "2025-10-26",
+            "2025-10-27",
+            "2025-10-28",
+            "2025-10-29",
+            "2025-10-30",
+            "2025-10-31",
+            "2025-11-01",
+            "2025-11-02",
+            "2025-11-03",
+            "2025-11-07",
+            "2025-11-08",
+            "2025-11-09",
+            "2025-11-21",
+            "2025-11-22",
+            "2025-11-23",
+            "2025-11-24",
+            "2025-11-28",
+            "2025-11-29",
+            "2025-11-30",
+            "2025-12-01",
+            "2025-12-02",
+            "2025-12-03",
+            "2025-12-04",
+            "2025-12-05",
+            "2025-12-06",
+            "2025-12-07",
+            "2025-12-08",
+            "2025-12-12",
+            "2025-12-13",
+            "2025-12-14",
+            "2025-12-15",
+            "2025-12-19",
+            "2025-12-20",
+            "2025-12-21",
+            "2025-12-22",
+            "2025-12-26",
+            "2025-12-27",
+            "2025-12-28",
+            "2025-12-29",
+            "2025-12-30",
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-10",
+            "2026-01-11",
+            "2026-01-12",
+            "2026-01-13",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-16",
+            "2026-01-17",
+            "2026-01-18",
+            "2026-01-19",
+            "2026-01-23",
+            "2026-01-24",
+            "2026-01-25",
+            "2026-01-26",
+            "2026-01-27",
+            "2026-01-30",
+            "2026-01-31",
+            "2026-02-01",
+            "2026-02-02",
+            "2026-02-03",
+            "2026-02-06",
+            "2026-02-07",
+            "2026-02-08",
+            "2026-02-09",
+            "2026-02-10",
+            "2026-02-11",
+            "2026-02-12",
+            "2026-02-13",
+            "2026-02-14",
+            "2026-02-15",
+            "2026-02-16",
+            "2026-02-18",
+            "2026-02-20",
+            "2026-02-21",
+            "2026-02-22",
+            "2026-02-23",
+            "2026-02-27",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05"
+          ],
+          "bankroll_after_group": [
+            97.77695999340816,
+            101.16343171539798,
+            104.10438205025321,
+            104.10438205025321,
+            112.85441894314175,
+            113.88137038001045,
+            110.36688190890033,
+            110.67648367529247,
+            120.2992261327971,
+            129.64192230623277,
+            129.41071880164873,
+            130.79573880573702,
+            148.0232566443405,
+            153.4882883416328,
+            152.18301352282762,
+            133.18348556365748,
+            136.49212581527414,
+            136.23676874518227,
+            137.1792715181353,
+            130.39580573737175,
+            125.1628983641014,
+            127.74900074536811,
+            141.58508240814638,
+            134.3278720450697,
+            131.7509639484902,
+            129.30557132347508,
+            126.24346559526495,
+            122.71866542132653,
+            129.2401682783601,
+            131.47444924042418,
+            109.86987641911165,
+            118.66665319024449,
+            123.43516992089698,
+            121.34598089940512,
+            128.2517102968498,
+            126.43384960627267,
+            126.65632804403619,
+            130.0318536744937,
+            129.3113058240979,
+            129.3113058240979,
+            134.75280104564976,
+            122.05560764696766,
+            118.6547506248016,
+            112.35449987709865,
+            107.34505034429765,
+            115.35903213359553,
+            113.16853379133829,
+            113.15535887869717,
+            116.82847360935817,
+            129.6448106294341,
+            129.35104067717896,
+            130.92798974339513,
+            132.50872244377405,
+            135.59037456458344,
+            133.21928317391468,
+            131.1102823422574,
+            131.1102823422574,
+            134.94036317151853,
+            146.974787829964,
+            148.679038066147,
+            152.59895836741748,
+            159.3998814578607,
+            167.29457393398118,
+            170.22995262864683,
+            174.99798993721,
+            167.55577368135684,
+            161.99927105297778,
+            156.98737890399516,
+            147.43125581437624,
+            148.42642323204564,
+            148.65708293616666,
+            153.55869265499547,
+            161.11057238844947,
+            159.78524065373296,
+            165.8353225808754,
+            146.2133017862698,
+            144.76970218437566,
+            141.95323232684012,
+            141.95323232684012,
+            138.069369258759,
+            125.54224500144798,
+            128.91975103968005,
+            129.93551679513052,
+            129.90667315636804,
+            134.51485403318577,
+            137.6378501656572,
+            120.05563238689658,
+            119.5354314797333,
+            118.67387290839224,
+            118.2738776256771,
+            118.2738776256771,
+            120.1463992400401,
+            120.67853971922914,
+            119.61797883946218,
+            116.59455962854983,
+            115.6252140047483,
+            119.99340215843824,
+            124.75621394121492,
+            132.7824524340438,
+            133.6914169319944,
+            131.61445441335383,
+            137.41385938643788,
+            137.51215772330366,
+            140.08350239206564,
+            139.98650910811568,
+            138.92859979247555,
+            138.92859979247555
+          ],
+          "bankroll_roi": 0.38928599792475554,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.33927690228764856,
+          "final_bankroll": 138.92859979247555
+        },
+        "best_threshold": 0.1,
+        "thresholded": {
+          "bankroll_roi": -0.11533323972903489,
+          "bankroll_bet_count": 26,
+          "max_drawdown": 0.24440190424747021,
+          "final_bankroll": 88.46667602709651
+        },
+        "thresholded_wealth_path": {
+          "starting_bankroll": 100.0,
+          "groups": [
+            "2025-09-23",
+            "2025-09-24",
+            "2025-09-25",
+            "2025-09-26",
+            "2025-09-27",
+            "2025-09-28",
+            "2025-09-29",
+            "2025-10-03",
+            "2025-10-04",
+            "2025-10-05",
+            "2025-10-17",
+            "2025-10-18",
+            "2025-10-19",
+            "2025-10-20",
+            "2025-10-24",
+            "2025-10-25",
+            "2025-10-26",
+            "2025-10-27",
+            "2025-10-28",
+            "2025-10-29",
+            "2025-10-30",
+            "2025-10-31",
+            "2025-11-01",
+            "2025-11-02",
+            "2025-11-03",
+            "2025-11-07",
+            "2025-11-08",
+            "2025-11-09",
+            "2025-11-21",
+            "2025-11-22",
+            "2025-11-23",
+            "2025-11-24",
+            "2025-11-28",
+            "2025-11-29",
+            "2025-11-30",
+            "2025-12-01",
+            "2025-12-02",
+            "2025-12-03",
+            "2025-12-04",
+            "2025-12-05",
+            "2025-12-06",
+            "2025-12-07",
+            "2025-12-08",
+            "2025-12-12",
+            "2025-12-13",
+            "2025-12-14",
+            "2025-12-15",
+            "2025-12-19",
+            "2025-12-20",
+            "2025-12-21",
+            "2025-12-22",
+            "2025-12-26",
+            "2025-12-27",
+            "2025-12-28",
+            "2025-12-29",
+            "2025-12-30",
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-10",
+            "2026-01-11",
+            "2026-01-12",
+            "2026-01-13",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-16",
+            "2026-01-17",
+            "2026-01-18",
+            "2026-01-19",
+            "2026-01-23",
+            "2026-01-24",
+            "2026-01-25",
+            "2026-01-26",
+            "2026-01-27",
+            "2026-01-30",
+            "2026-01-31",
+            "2026-02-01",
+            "2026-02-02",
+            "2026-02-03",
+            "2026-02-06",
+            "2026-02-07",
+            "2026-02-08",
+            "2026-02-09",
+            "2026-02-10",
+            "2026-02-11",
+            "2026-02-12",
+            "2026-02-13",
+            "2026-02-14",
+            "2026-02-15",
+            "2026-02-16",
+            "2026-02-18",
+            "2026-02-20",
+            "2026-02-21",
+            "2026-02-22",
+            "2026-02-23",
+            "2026-02-27",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05"
+          ],
+          "bankroll_after_group": [
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            97.29601277245415,
+            97.29601277245415,
+            97.29601277245415,
+            102.29707826890021,
+            108.64380405542875,
+            108.64380405542875,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            106.20918050927058,
+            91.19125431920648,
+            99.93011760559763,
+            99.93011760559763,
+            99.93011760559763,
+            105.29576542427259,
+            105.29576542427259,
+            105.29576542427259,
+            105.29576542427259,
+            105.29576542427259,
+            105.29576542427259,
+            110.7264496604594,
+            107.62356853820741,
+            104.53757926076575,
+            101.42704912851515,
+            98.39620540268118,
+            98.39620540268118,
+            98.39620540268118,
+            98.39620540268118,
+            98.39620540268118,
+            105.54277488941983,
+            105.54277488941983,
+            105.54277488941983,
+            105.54277488941983,
+            105.54277488941983,
+            105.54277488941983,
+            105.54277488941983,
+            105.54277488941983,
+            105.54277488941983,
+            110.97077630300261,
+            110.97077630300261,
+            110.97077630300261,
+            110.97077630300261,
+            110.97077630300261,
+            110.97077630300261,
+            110.97077630300261,
+            110.97077630300261,
+            110.97077630300261,
+            108.65197897582435,
+            104.39340417411071,
+            104.39340417411071,
+            104.39340417411071,
+            100.69508439476881,
+            100.69508439476881,
+            100.69508439476881,
+            100.69508439476881,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            90.52351000047443,
+            86.02360773377129,
+            83.84930725872873,
+            83.84930725872873,
+            83.84930725872873,
+            83.84930725872873,
+            83.84930725872873,
+            83.84930725872873,
+            88.46667602709651,
+            88.46667602709651,
+            88.46667602709651,
+            88.46667602709651,
+            88.46667602709651,
+            88.46667602709651,
+            88.46667602709651
+          ],
+          "bankroll_roi": -0.11533323972903489,
+          "bankroll_bet_count": 26,
+          "max_drawdown": 0.24440190424747021,
+          "final_bankroll": 88.46667602709651
+        },
+        "delta_thresholded_minus_baseline": {
+          "bankroll_bet_count": -591.0,
+          "bankroll_roi": -0.5046192376537905,
+          "final_bankroll": -50.46192376537904,
+          "max_drawdown": -0.09487499804017835
+        },
+        "thresholded_selection": {
+          "positive_count": 26,
+          "mean_raw_ev": 0.13121093665178007,
+          "mean_full_kelly": 0.07003949166737147
+        }
+      }
+    },
+    {
+      "kelly_fraction": 0.7,
+      "grid_rows": [
+        {
+          "threshold": 0.0,
+          "mean_metrics": {
+            "bankroll_roi": 3.8779300589302204,
+            "bankroll_bet_count": 644.3333333333334,
+            "max_drawdown": 0.5089421061197105,
+            "final_bankroll": 487.793005893022
+          },
+          "mean_positive_count": 644.3333333333334,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.4768807890395109,
+              "bankroll_bet_count": 617,
+              "max_drawdown": 0.4502945032217544,
+              "final_bankroll": 147.6880789039511
+            },
+            "selection": {
+              "positive_count": 617,
+              "mean_raw_ev": 0.03506560318449714,
+              "mean_full_kelly": 0.0248294435824482
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": 0.0,
+              "bankroll_roi": 0.0,
+              "final_bankroll": 0.0,
+              "max_drawdown": 0.0
+            }
+          }
+        },
+        {
+          "threshold": 0.005,
+          "mean_metrics": {
+            "bankroll_roi": 3.8578442662679695,
+            "bankroll_bet_count": 577.6666666666666,
+            "max_drawdown": 0.5068970238647522,
+            "final_bankroll": 485.784426626797
+          },
+          "mean_positive_count": 577.6666666666666,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.4905312138743287,
+              "bankroll_bet_count": 539,
+              "max_drawdown": 0.44938798618173437,
+              "final_bankroll": 149.05312138743287
+            },
+            "selection": {
+              "positive_count": 539,
+              "mean_raw_ev": 0.03979285276306582,
+              "mean_full_kelly": 0.028025676597685414
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -78.0,
+              "bankroll_roi": 0.013650424834817765,
+              "final_bankroll": 1.3650424834817727,
+              "max_drawdown": -0.0009065170400200384
+            }
+          }
+        },
+        {
+          "threshold": 0.01,
+          "mean_metrics": {
+            "bankroll_roi": 3.5836378517162664,
+            "bankroll_bet_count": 526.0,
+            "max_drawdown": 0.4948696057168007,
+            "final_bankroll": 458.3637851716266
+          },
+          "mean_positive_count": 526.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.563765321691128,
+              "bankroll_bet_count": 481,
+              "max_drawdown": 0.43405202387865527,
+              "final_bankroll": 156.3765321691128
+            },
+            "selection": {
+              "positive_count": 481,
+              "mean_raw_ev": 0.04369493910620713,
+              "mean_full_kelly": 0.03033849888134035
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -136.0,
+              "bankroll_roi": 0.08688453265161711,
+              "final_bankroll": 8.688453265161712,
+              "max_drawdown": -0.016242479343099137
+            }
+          }
+        },
+        {
+          "threshold": 0.015,
+          "mean_metrics": {
+            "bankroll_roi": 3.4802698393520903,
+            "bankroll_bet_count": 479.6666666666667,
+            "max_drawdown": 0.5053409767706558,
+            "final_bankroll": 448.02698393520905
+          },
+          "mean_positive_count": 479.6666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.47877887671282254,
+              "bankroll_bet_count": 431,
+              "max_drawdown": 0.4469323884295841,
+              "final_bankroll": 147.87788767128225
+            },
+            "selection": {
+              "positive_count": 431,
+              "mean_raw_ev": 0.04736706543342143,
+              "mean_full_kelly": 0.03217109940767458
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -186.0,
+              "bankroll_roi": 0.0018980876733116214,
+              "final_bankroll": 0.18980876733115792,
+              "max_drawdown": -0.003362114792170301
+            }
+          }
+        },
+        {
+          "threshold": 0.02,
+          "mean_metrics": {
+            "bankroll_roi": 3.7663450672679804,
+            "bankroll_bet_count": 432.3333333333333,
+            "max_drawdown": 0.4977560259380806,
+            "final_bankroll": 476.634506726798
+          },
+          "mean_positive_count": 432.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.40512130818672487,
+              "bankroll_bet_count": 381,
+              "max_drawdown": 0.4505528684270923,
+              "final_bankroll": 140.5121308186725
+            },
+            "selection": {
+              "positive_count": 381,
+              "mean_raw_ev": 0.05127097573023768,
+              "mean_full_kelly": 0.03410560260019368
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -236.0,
+              "bankroll_roi": -0.07175948085278605,
+              "final_bankroll": -7.1759480852786055,
+              "max_drawdown": 0.000258365205337896
+            }
+          }
+        },
+        {
+          "threshold": 0.03,
+          "mean_metrics": {
+            "bankroll_roi": 3.1760700346735433,
+            "bankroll_bet_count": 363.0,
+            "max_drawdown": 0.5157674649392489,
+            "final_bankroll": 417.60700346735433
+          },
+          "mean_positive_count": 363.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.5658204703610201,
+              "bankroll_bet_count": 293,
+              "max_drawdown": 0.4614658633503708,
+              "final_bankroll": 156.582047036102
+            },
+            "selection": {
+              "positive_count": 293,
+              "mean_raw_ev": 0.059182305376684306,
+              "mean_full_kelly": 0.03703777379029468
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -324.0,
+              "bankroll_roi": 0.0889396813215092,
+              "final_bankroll": 8.893968132150917,
+              "max_drawdown": 0.011171360128616414
+            }
+          }
+        },
+        {
+          "threshold": 0.05,
+          "mean_metrics": {
+            "bankroll_roi": 2.239743698194484,
+            "bankroll_bet_count": 266.3333333333333,
+            "max_drawdown": 0.521465988647387,
+            "final_bankroll": 323.97436981944844
+          },
+          "mean_positive_count": 266.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.1484445349294829,
+              "bankroll_bet_count": 153,
+              "max_drawdown": 0.42474706408823915,
+              "final_bankroll": 114.84445349294829
+            },
+            "selection": {
+              "positive_count": 153,
+              "mean_raw_ev": 0.07782410461333841,
+              "mean_full_kelly": 0.04588832495252416
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -464.0,
+              "bankroll_roi": -0.328436254110028,
+              "final_bankroll": -32.843625411002805,
+              "max_drawdown": -0.02554743913351526
+            }
+          }
+        },
+        {
+          "threshold": 0.1,
+          "mean_metrics": {
+            "bankroll_roi": 6.177348464005759,
+            "bankroll_bet_count": 118.66666666666667,
+            "max_drawdown": 0.3984732031801075,
+            "final_bankroll": 717.7348464005759
+          },
+          "mean_positive_count": 118.66666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": -0.17590148974281575,
+              "bankroll_bet_count": 26,
+              "max_drawdown": 0.32808983510508827,
+              "final_bankroll": 82.40985102571842
+            },
+            "selection": {
+              "positive_count": 26,
+              "mean_raw_ev": 0.13121093665178007,
+              "mean_full_kelly": 0.07003949166737147
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -591.0,
+              "bankroll_roi": -0.6527822787823266,
+              "final_bankroll": -65.27822787823267,
+              "max_drawdown": -0.12220466811666614
+            }
+          }
+        }
+      ],
+      "best_by_mean_roi": {
+        "threshold": 0.1,
+        "mean_metrics": {
+          "bankroll_roi": 6.177348464005759,
+          "bankroll_bet_count": 118.66666666666667,
+          "max_drawdown": 0.3984732031801075,
+          "final_bankroll": 717.7348464005759
+        },
+        "mean_positive_count": 118.66666666666667,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": -0.17590148974281575,
+            "bankroll_bet_count": 26,
+            "max_drawdown": 0.32808983510508827,
+            "final_bankroll": 82.40985102571842
+          },
+          "selection": {
+            "positive_count": 26,
+            "mean_raw_ev": 0.13121093665178007,
+            "mean_full_kelly": 0.07003949166737147
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -591.0,
+            "bankroll_roi": -0.6527822787823266,
+            "final_bankroll": -65.27822787823267,
+            "max_drawdown": -0.12220466811666614
+          }
+        }
+      },
+      "best_by_test_roi": {
+        "threshold": 0.03,
+        "mean_metrics": {
+          "bankroll_roi": 3.1760700346735433,
+          "bankroll_bet_count": 363.0,
+          "max_drawdown": 0.5157674649392489,
+          "final_bankroll": 417.60700346735433
+        },
+        "mean_positive_count": 363.0,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.5658204703610201,
+            "bankroll_bet_count": 293,
+            "max_drawdown": 0.4614658633503708,
+            "final_bankroll": 156.582047036102
+          },
+          "selection": {
+            "positive_count": 293,
+            "mean_raw_ev": 0.059182305376684306,
+            "mean_full_kelly": 0.03703777379029468
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -324.0,
+            "bankroll_roi": 0.0889396813215092,
+            "final_bankroll": 8.893968132150917,
+            "max_drawdown": 0.011171360128616414
+          }
+        }
+      },
+      "held_out_test": {
+        "baseline": {
+          "bankroll_roi": 0.4768807890395109,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.4502945032217544,
+          "final_bankroll": 147.6880789039511
+        },
+        "baseline_wealth_path": {
+          "starting_bankroll": 100.0,
+          "groups": [
+            "2025-09-23",
+            "2025-09-24",
+            "2025-09-25",
+            "2025-09-26",
+            "2025-09-27",
+            "2025-09-28",
+            "2025-09-29",
+            "2025-10-03",
+            "2025-10-04",
+            "2025-10-05",
+            "2025-10-17",
+            "2025-10-18",
+            "2025-10-19",
+            "2025-10-20",
+            "2025-10-24",
+            "2025-10-25",
+            "2025-10-26",
+            "2025-10-27",
+            "2025-10-28",
+            "2025-10-29",
+            "2025-10-30",
+            "2025-10-31",
+            "2025-11-01",
+            "2025-11-02",
+            "2025-11-03",
+            "2025-11-07",
+            "2025-11-08",
+            "2025-11-09",
+            "2025-11-21",
+            "2025-11-22",
+            "2025-11-23",
+            "2025-11-24",
+            "2025-11-28",
+            "2025-11-29",
+            "2025-11-30",
+            "2025-12-01",
+            "2025-12-02",
+            "2025-12-03",
+            "2025-12-04",
+            "2025-12-05",
+            "2025-12-06",
+            "2025-12-07",
+            "2025-12-08",
+            "2025-12-12",
+            "2025-12-13",
+            "2025-12-14",
+            "2025-12-15",
+            "2025-12-19",
+            "2025-12-20",
+            "2025-12-21",
+            "2025-12-22",
+            "2025-12-26",
+            "2025-12-27",
+            "2025-12-28",
+            "2025-12-29",
+            "2025-12-30",
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-10",
+            "2026-01-11",
+            "2026-01-12",
+            "2026-01-13",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-16",
+            "2026-01-17",
+            "2026-01-18",
+            "2026-01-19",
+            "2026-01-23",
+            "2026-01-24",
+            "2026-01-25",
+            "2026-01-26",
+            "2026-01-27",
+            "2026-01-30",
+            "2026-01-31",
+            "2026-02-01",
+            "2026-02-02",
+            "2026-02-03",
+            "2026-02-06",
+            "2026-02-07",
+            "2026-02-08",
+            "2026-02-09",
+            "2026-02-10",
+            "2026-02-11",
+            "2026-02-12",
+            "2026-02-13",
+            "2026-02-14",
+            "2026-02-15",
+            "2026-02-16",
+            "2026-02-18",
+            "2026-02-20",
+            "2026-02-21",
+            "2026-02-22",
+            "2026-02-23",
+            "2026-02-27",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05"
+          ],
+          "bankroll_after_group": [
+            96.88774399077143,
+            101.58568763062237,
+            105.72020382667216,
+            105.72020382667216,
+            118.16039060675169,
+            119.66571913239844,
+            114.49552049126552,
+            114.94517731480687,
+            128.93661363283042,
+            142.9555055554003,
+            142.5985798124428,
+            144.73520838844615,
+            171.42414925161142,
+            180.28474185584892,
+            178.138326707029,
+            147.0023828409469,
+            152.11509781795584,
+            151.71667826335573,
+            153.18611083869408,
+            142.58111329607902,
+            134.5704318422412,
+            138.46310360278247,
+            159.45819175668336,
+            148.01552936022117,
+            144.04024579241602,
+            140.29735904689363,
+            135.64599345335904,
+            130.34373858662528,
+            140.0411377959386,
+            143.4305464693557,
+            110.43358024922179,
+            122.81225417889017,
+            129.7213999435325,
+            126.64757961579637,
+            136.73799604376424,
+            134.0245906764808,
+            134.35476028143893,
+            139.3677361151044,
+            138.2865427938655,
+            138.2865427938655,
+            146.43339259815014,
+            127.11646316898313,
+            122.1578472181932,
+            113.07708905292621,
+            106.01875529535683,
+            117.09970705000487,
+            113.98673537194239,
+            113.96815713890672,
+            119.14745548894554,
+            137.44648359772245,
+            137.01045607437354,
+            139.34891360430225,
+            141.70427504305675,
+            146.31798333580164,
+            142.7358217230597,
+            139.57230107222776,
+            139.57230107222776,
+            145.28049160553755,
+            163.41971937451166,
+            166.0726324301063,
+            172.20253539788047,
+            182.94697753857145,
+            195.63227039732675,
+            200.43790574468713,
+            208.29770689622757,
+            195.8959918066613,
+            186.80113821119105,
+            178.71024982193578,
+            163.48043950701177,
+            165.02533965925548,
+            165.38437663707356,
+            173.0187894251998,
+            184.93126336911084,
+            182.80146284869124,
+            192.49165294982765,
+            160.60516928963818,
+            158.38519766008972,
+            154.07129786129167,
+            154.07129786129167,
+            148.1697164789682,
+            129.34876695732942,
+            134.22064684129757,
+            135.70119136524235,
+            135.6590184264194,
+            142.39614586574052,
+            147.02450949457042,
+            120.73069773935313,
+            119.9983213890483,
+            118.78746856086802,
+            118.22693913456898,
+            118.22693913456898,
+            120.84742900708463,
+            121.59677258177602,
+            120.10068974410939,
+            115.85082170090416,
+            114.50239444716017,
+            120.55847149071703,
+            127.25780843325921,
+            138.71985977009996,
+            140.04931253688088,
+            137.0032827213107,
+            145.45488123120106,
+            145.6005518511009,
+            149.412177619742,
+            149.2673442272955,
+            147.6880789039511,
+            147.6880789039511
+          ],
+          "bankroll_roi": 0.4768807890395109,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.4502945032217544,
+          "final_bankroll": 147.6880789039511
+        },
+        "best_threshold": 0.1,
+        "thresholded": {
+          "bankroll_roi": -0.17590148974281575,
+          "bankroll_bet_count": 26,
+          "max_drawdown": 0.32808983510508827,
+          "final_bankroll": 82.40985102571842
+        },
+        "thresholded_wealth_path": {
+          "starting_bankroll": 100.0,
+          "groups": [
+            "2025-09-23",
+            "2025-09-24",
+            "2025-09-25",
+            "2025-09-26",
+            "2025-09-27",
+            "2025-09-28",
+            "2025-09-29",
+            "2025-10-03",
+            "2025-10-04",
+            "2025-10-05",
+            "2025-10-17",
+            "2025-10-18",
+            "2025-10-19",
+            "2025-10-20",
+            "2025-10-24",
+            "2025-10-25",
+            "2025-10-26",
+            "2025-10-27",
+            "2025-10-28",
+            "2025-10-29",
+            "2025-10-30",
+            "2025-10-31",
+            "2025-11-01",
+            "2025-11-02",
+            "2025-11-03",
+            "2025-11-07",
+            "2025-11-08",
+            "2025-11-09",
+            "2025-11-21",
+            "2025-11-22",
+            "2025-11-23",
+            "2025-11-24",
+            "2025-11-28",
+            "2025-11-29",
+            "2025-11-30",
+            "2025-12-01",
+            "2025-12-02",
+            "2025-12-03",
+            "2025-12-04",
+            "2025-12-05",
+            "2025-12-06",
+            "2025-12-07",
+            "2025-12-08",
+            "2025-12-12",
+            "2025-12-13",
+            "2025-12-14",
+            "2025-12-15",
+            "2025-12-19",
+            "2025-12-20",
+            "2025-12-21",
+            "2025-12-22",
+            "2025-12-26",
+            "2025-12-27",
+            "2025-12-28",
+            "2025-12-29",
+            "2025-12-30",
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-10",
+            "2026-01-11",
+            "2026-01-12",
+            "2026-01-13",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-16",
+            "2026-01-17",
+            "2026-01-18",
+            "2026-01-19",
+            "2026-01-23",
+            "2026-01-24",
+            "2026-01-25",
+            "2026-01-26",
+            "2026-01-27",
+            "2026-01-30",
+            "2026-01-31",
+            "2026-02-01",
+            "2026-02-02",
+            "2026-02-03",
+            "2026-02-06",
+            "2026-02-07",
+            "2026-02-08",
+            "2026-02-09",
+            "2026-02-10",
+            "2026-02-11",
+            "2026-02-12",
+            "2026-02-13",
+            "2026-02-14",
+            "2026-02-15",
+            "2026-02-16",
+            "2026-02-18",
+            "2026-02-20",
+            "2026-02-21",
+            "2026-02-22",
+            "2026-02-23",
+            "2026-02-27",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05"
+          ],
+          "bankroll_after_group": [
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            96.21441788143582,
+            96.21441788143582,
+            96.21441788143582,
+            103.13807722309804,
+            112.0965416045518,
+            112.0965416045518,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            108.57974619400318,
+            87.08537396777983,
+            98.76892910957751,
+            98.76892910957751,
+            98.76892910957751,
+            106.19354765720915,
+            106.19354765720915,
+            106.19354765720915,
+            106.19354765720915,
+            106.19354765720915,
+            106.19354765720915,
+            113.86133061212885,
+            109.39430900932348,
+            105.00284032935224,
+            100.62871667375975,
+            96.41893354326443,
+            96.41893354326443,
+            96.41893354326443,
+            96.41893354326443,
+            96.41893354326443,
+            106.22307637395494,
+            106.22307637395494,
+            106.22307637395494,
+            106.22307637395494,
+            106.22307637395494,
+            106.22307637395494,
+            106.22307637395494,
+            106.22307637395494,
+            106.22307637395494,
+            113.87126084744308,
+            113.87126084744308,
+            113.87126084744308,
+            113.87126084744308,
+            113.87126084744308,
+            113.87126084744308,
+            113.87126084744308,
+            113.87126084744308,
+            113.87126084744308,
+            110.5400944112968,
+            104.4744840919373,
+            104.4744840919373,
+            104.4744840919373,
+            99.29281504287488,
+            99.29281504287488,
+            99.29281504287488,
+            99.29281504287488,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            85.25091850406056,
+            79.31799431698352,
+            76.51125765279698,
+            76.51125765279698,
+            76.51125765279698,
+            76.51125765279698,
+            76.51125765279698,
+            76.51125765279698,
+            82.40985102571842,
+            82.40985102571842,
+            82.40985102571842,
+            82.40985102571842,
+            82.40985102571842,
+            82.40985102571842,
+            82.40985102571842
+          ],
+          "bankroll_roi": -0.17590148974281575,
+          "bankroll_bet_count": 26,
+          "max_drawdown": 0.32808983510508827,
+          "final_bankroll": 82.40985102571842
+        },
+        "delta_thresholded_minus_baseline": {
+          "bankroll_bet_count": -591.0,
+          "bankroll_roi": -0.6527822787823266,
+          "final_bankroll": -65.27822787823267,
+          "max_drawdown": -0.12220466811666614
+        },
+        "thresholded_selection": {
+          "positive_count": 26,
+          "mean_raw_ev": 0.13121093665178007,
+          "mean_full_kelly": 0.07003949166737147
+        }
+      }
+    },
+    {
+      "kelly_fraction": 0.75,
+      "grid_rows": [
+        {
+          "threshold": 0.0,
+          "mean_metrics": {
+            "bankroll_roi": 4.227190649944624,
+            "bankroll_bet_count": 644.3333333333334,
+            "max_drawdown": 0.5372027586760257,
+            "final_bankroll": 522.7190649944624
+          },
+          "mean_positive_count": 644.3333333333334,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.48979919711410813,
+              "bankroll_bet_count": 617,
+              "max_drawdown": 0.47594212276081665,
+              "final_bankroll": 148.97991971141082
+            },
+            "selection": {
+              "positive_count": 617,
+              "mean_raw_ev": 0.03506560318449714,
+              "mean_full_kelly": 0.0248294435824482
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": 0.0,
+              "bankroll_roi": 0.0,
+              "final_bankroll": 0.0,
+              "max_drawdown": 0.0
+            }
+          }
+        },
+        {
+          "threshold": 0.005,
+          "mean_metrics": {
+            "bankroll_roi": 4.204192213976353,
+            "bankroll_bet_count": 577.6666666666666,
+            "max_drawdown": 0.5351886385088922,
+            "final_bankroll": 520.4192213976353
+          },
+          "mean_positive_count": 577.6666666666666,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.5045674687459516,
+              "bankroll_bet_count": 539,
+              "max_drawdown": 0.47501295328976817,
+              "final_bankroll": 150.45674687459515
+            },
+            "selection": {
+              "positive_count": 539,
+              "mean_raw_ev": 0.03979285276306582,
+              "mean_full_kelly": 0.028025676597685414
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -78.0,
+              "bankroll_roi": 0.014768271631843466,
+              "final_bankroll": 1.476827163184339,
+              "max_drawdown": -0.0009291694710484855
+            }
+          }
+        },
+        {
+          "threshold": 0.01,
+          "mean_metrics": {
+            "bankroll_roi": 3.893747606212575,
+            "bankroll_bet_count": 526.0,
+            "max_drawdown": 0.5228361839504015,
+            "final_bankroll": 489.3747606212575
+          },
+          "mean_positive_count": 526.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.5844971155311101,
+              "bankroll_bet_count": 481,
+              "max_drawdown": 0.4591948114161447,
+              "final_bankroll": 158.449711553111
+            },
+            "selection": {
+              "positive_count": 481,
+              "mean_raw_ev": 0.04369493910620713,
+              "mean_full_kelly": 0.03033849888134035
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -136.0,
+              "bankroll_roi": 0.09469791841700193,
+              "final_bankroll": 9.469791841700186,
+              "max_drawdown": -0.016747311344671945
+            }
+          }
+        },
+        {
+          "threshold": 0.015,
+          "mean_metrics": {
+            "bankroll_roi": 3.778861297047634,
+            "bankroll_bet_count": 479.6666666666667,
+            "max_drawdown": 0.5335174079074387,
+            "final_bankroll": 477.8861297047634
+          },
+          "mean_positive_count": 479.6666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.4926941808508252,
+              "bankroll_bet_count": 431,
+              "max_drawdown": 0.47247604693276546,
+              "final_bankroll": 149.26941808508252
+            },
+            "selection": {
+              "positive_count": 431,
+              "mean_raw_ev": 0.04736706543342143,
+              "mean_full_kelly": 0.03217109940767458
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -186.0,
+              "bankroll_roi": 0.002894983736717094,
+              "final_bankroll": 0.28949837367170517,
+              "max_drawdown": -0.003466075828051196
+            }
+          }
+        },
+        {
+          "threshold": 0.02,
+          "mean_metrics": {
+            "bankroll_roi": 4.116409310699727,
+            "bankroll_bet_count": 432.3333333333333,
+            "max_drawdown": 0.5258408884550301,
+            "final_bankroll": 511.64093106997274
+          },
+          "mean_positive_count": 432.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.4145436555037844,
+              "bankroll_bet_count": 381,
+              "max_drawdown": 0.4762142186665514,
+              "final_bankroll": 141.45436555037844
+            },
+            "selection": {
+              "positive_count": 381,
+              "mean_raw_ev": 0.05127097573023768,
+              "mean_full_kelly": 0.03410560260019368
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -236.0,
+              "bankroll_roi": -0.07525554161032372,
+              "final_bankroll": -7.525554161032375,
+              "max_drawdown": 0.0002720959057347372
+            }
+          }
+        },
+        {
+          "threshold": 0.03,
+          "mean_metrics": {
+            "bankroll_roi": 3.4368348763885668,
+            "bankroll_bet_count": 363.0,
+            "max_drawdown": 0.5438327113384324,
+            "final_bankroll": 443.68348763885666
+          },
+          "mean_positive_count": 363.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.5899195863330872,
+              "bankroll_bet_count": 293,
+              "max_drawdown": 0.4871038636844481,
+              "final_bankroll": 158.9919586333087
+            },
+            "selection": {
+              "positive_count": 293,
+              "mean_raw_ev": 0.059182305376684306,
+              "mean_full_kelly": 0.03703777379029468
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -324.0,
+              "bankroll_roi": 0.10012038921897903,
+              "final_bankroll": 10.012038921897897,
+              "max_drawdown": 0.011161740923631425
+            }
+          }
+        },
+        {
+          "threshold": 0.05,
+          "mean_metrics": {
+            "bankroll_roi": 2.3762306561295508,
+            "bankroll_bet_count": 266.3333333333333,
+            "max_drawdown": 0.5494809511018879,
+            "final_bankroll": 337.6230656129551
+          },
+          "mean_positive_count": 266.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.14423869716683924,
+              "bankroll_bet_count": 153,
+              "max_drawdown": 0.44886764656988093,
+              "final_bankroll": 114.42386971668392
+            },
+            "selection": {
+              "positive_count": 153,
+              "mean_raw_ev": 0.07782410461333841,
+              "mean_full_kelly": 0.04588832495252416
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -464.0,
+              "bankroll_roi": -0.3455604999472689,
+              "final_bankroll": -34.55604999472689,
+              "max_drawdown": -0.027074476190935726
+            }
+          }
+        },
+        {
+          "threshold": 0.1,
+          "mean_metrics": {
+            "bankroll_roi": 7.193302060206775,
+            "bankroll_bet_count": 118.66666666666667,
+            "max_drawdown": 0.4223306932305743,
+            "final_bankroll": 819.3302060206775
+          },
+          "mean_positive_count": 118.66666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": -0.19205654226409422,
+              "bankroll_bet_count": 26,
+              "max_drawdown": 0.348314447997251,
+              "final_bankroll": 80.79434577359058
+            },
+            "selection": {
+              "positive_count": 26,
+              "mean_raw_ev": 0.13121093665178007,
+              "mean_full_kelly": 0.07003949166737147
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -591.0,
+              "bankroll_roi": -0.6818557393782023,
+              "final_bankroll": -68.18557393782024,
+              "max_drawdown": -0.12762767476356568
+            }
+          }
+        }
+      ],
+      "best_by_mean_roi": {
+        "threshold": 0.1,
+        "mean_metrics": {
+          "bankroll_roi": 7.193302060206775,
+          "bankroll_bet_count": 118.66666666666667,
+          "max_drawdown": 0.4223306932305743,
+          "final_bankroll": 819.3302060206775
+        },
+        "mean_positive_count": 118.66666666666667,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": -0.19205654226409422,
+            "bankroll_bet_count": 26,
+            "max_drawdown": 0.348314447997251,
+            "final_bankroll": 80.79434577359058
+          },
+          "selection": {
+            "positive_count": 26,
+            "mean_raw_ev": 0.13121093665178007,
+            "mean_full_kelly": 0.07003949166737147
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -591.0,
+            "bankroll_roi": -0.6818557393782023,
+            "final_bankroll": -68.18557393782024,
+            "max_drawdown": -0.12762767476356568
+          }
+        }
+      },
+      "best_by_test_roi": {
+        "threshold": 0.03,
+        "mean_metrics": {
+          "bankroll_roi": 3.4368348763885668,
+          "bankroll_bet_count": 363.0,
+          "max_drawdown": 0.5438327113384324,
+          "final_bankroll": 443.68348763885666
+        },
+        "mean_positive_count": 363.0,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.5899195863330872,
+            "bankroll_bet_count": 293,
+            "max_drawdown": 0.4871038636844481,
+            "final_bankroll": 158.9919586333087
+          },
+          "selection": {
+            "positive_count": 293,
+            "mean_raw_ev": 0.059182305376684306,
+            "mean_full_kelly": 0.03703777379029468
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -324.0,
+            "bankroll_roi": 0.10012038921897903,
+            "final_bankroll": 10.012038921897897,
+            "max_drawdown": 0.011161740923631425
+          }
+        }
+      },
+      "held_out_test": {
+        "baseline": {
+          "bankroll_roi": 0.48979919711410813,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.47594212276081665,
+          "final_bankroll": 148.97991971141082
+        },
+        "baseline_wealth_path": {
+          "starting_bankroll": 100.0,
+          "groups": [
+            "2025-09-23",
+            "2025-09-24",
+            "2025-09-25",
+            "2025-09-26",
+            "2025-09-27",
+            "2025-09-28",
+            "2025-09-29",
+            "2025-10-03",
+            "2025-10-04",
+            "2025-10-05",
+            "2025-10-17",
+            "2025-10-18",
+            "2025-10-19",
+            "2025-10-20",
+            "2025-10-24",
+            "2025-10-25",
+            "2025-10-26",
+            "2025-10-27",
+            "2025-10-28",
+            "2025-10-29",
+            "2025-10-30",
+            "2025-10-31",
+            "2025-11-01",
+            "2025-11-02",
+            "2025-11-03",
+            "2025-11-07",
+            "2025-11-08",
+            "2025-11-09",
+            "2025-11-21",
+            "2025-11-22",
+            "2025-11-23",
+            "2025-11-24",
+            "2025-11-28",
+            "2025-11-29",
+            "2025-11-30",
+            "2025-12-01",
+            "2025-12-02",
+            "2025-12-03",
+            "2025-12-04",
+            "2025-12-05",
+            "2025-12-06",
+            "2025-12-07",
+            "2025-12-08",
+            "2025-12-12",
+            "2025-12-13",
+            "2025-12-14",
+            "2025-12-15",
+            "2025-12-19",
+            "2025-12-20",
+            "2025-12-21",
+            "2025-12-22",
+            "2025-12-26",
+            "2025-12-27",
+            "2025-12-28",
+            "2025-12-29",
+            "2025-12-30",
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-10",
+            "2026-01-11",
+            "2026-01-12",
+            "2026-01-13",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-16",
+            "2026-01-17",
+            "2026-01-18",
+            "2026-01-19",
+            "2026-01-23",
+            "2026-01-24",
+            "2026-01-25",
+            "2026-01-26",
+            "2026-01-27",
+            "2026-01-30",
+            "2026-01-31",
+            "2026-02-01",
+            "2026-02-02",
+            "2026-02-03",
+            "2026-02-06",
+            "2026-02-07",
+            "2026-02-08",
+            "2026-02-09",
+            "2026-02-10",
+            "2026-02-11",
+            "2026-02-12",
+            "2026-02-13",
+            "2026-02-14",
+            "2026-02-15",
+            "2026-02-16",
+            "2026-02-18",
+            "2026-02-20",
+            "2026-02-21",
+            "2026-02-22",
+            "2026-02-23",
+            "2026-02-27",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05"
+          ],
+          "bankroll_after_group": [
+            96.66543999011223,
+            101.68740189773786,
+            106.12167612495634,
+            106.12167612495634,
+            119.50106366284545,
+            121.13221541815767,
+            115.52483064820055,
+            116.01093695580232,
+            131.14075493756982,
+            146.41776380191868,
+            146.0260814719807,
+            148.3703507005673,
+            177.6838385108647,
+            187.5239930065694,
+            185.1319178654831,
+            150.46228915794913,
+            156.069128295904,
+            155.63115407106807,
+            157.24616735589078,
+            145.58251748069202,
+            136.8189706989994,
+            141.05937904546303,
+            163.9759076647045,
+            151.36856616912831,
+            147.01284820318767,
+            142.91985194717054,
+            137.84309044908045,
+            132.07008651299373,
+            142.5977692037168,
+            146.29557637785857,
+            110.23548882984164,
+            123.47456334823454,
+            130.91714100556675,
+            127.59340449810445,
+            138.48530447491197,
+            135.54093448587022,
+            135.89868996968247,
+            141.33145655413733,
+            140.15671273942192,
+            140.15671273942192,
+            149.00352715111882,
+            127.94355748841829,
+            122.59618647064508,
+            112.83189075458594,
+            105.28578895567404,
+            117.07615645733856,
+            113.74150044608685,
+            113.72163802123458,
+            119.25888293764835,
+            138.88332023207153,
+            138.4112641641635,
+            140.94237074786164,
+            143.49482971496323,
+            148.50055090253187,
+            144.60527022108295,
+            141.1713908168511,
+            141.1713908168511,
+            147.35737975625733,
+            167.0701022085663,
+            169.97600122722122,
+            176.69812278456132,
+            188.51055934513823,
+            202.51527077515985,
+            207.8453212113363,
+            216.5777525253586,
+            202.76200694669197,
+            192.67598365025873,
+            183.73454295601232,
+            166.95813149643627,
+            168.64859351884564,
+            169.04172198446258,
+            177.40233821950324,
+            190.48907169746929,
+            188.1385629000518,
+            198.82403404754197,
+            163.5360513382586,
+            161.11410433627844,
+            156.4124332168368,
+            156.4124332168368,
+            149.99322955234177,
+            129.57975369113052,
+            134.80894646826349,
+            136.40219703979932,
+            136.35677832987074,
+            143.61225662506004,
+            148.61356884339216,
+            120.13714180164669,
+            119.35631067061131,
+            118.06590934906657,
+            117.46899017513576,
+            117.46899017513576,
+            120.25865803167413,
+            121.05761455866607,
+            119.46177609603382,
+            114.93256946268318,
+            113.4992772456726,
+            119.93108629248515,
+            127.07159377839886,
+            139.33439278186026,
+            140.76511665456243,
+            137.48483272236,
+            146.57194507070687,
+            146.72921936417296,
+            150.84476160651246,
+            150.6880950981975,
+            148.97991971141082,
+            148.97991971141082
+          ],
+          "bankroll_roi": 0.48979919711410813,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.47594212276081665,
+          "final_bankroll": 148.97991971141082
+        },
+        "best_threshold": 0.1,
+        "thresholded": {
+          "bankroll_roi": -0.19205654226409422,
+          "bankroll_bet_count": 26,
+          "max_drawdown": 0.348314447997251,
+          "final_bankroll": 80.79434577359058
+        },
+        "thresholded_wealth_path": {
+          "starting_bankroll": 100.0,
+          "groups": [
+            "2025-09-23",
+            "2025-09-24",
+            "2025-09-25",
+            "2025-09-26",
+            "2025-09-27",
+            "2025-09-28",
+            "2025-09-29",
+            "2025-10-03",
+            "2025-10-04",
+            "2025-10-05",
+            "2025-10-17",
+            "2025-10-18",
+            "2025-10-19",
+            "2025-10-20",
+            "2025-10-24",
+            "2025-10-25",
+            "2025-10-26",
+            "2025-10-27",
+            "2025-10-28",
+            "2025-10-29",
+            "2025-10-30",
+            "2025-10-31",
+            "2025-11-01",
+            "2025-11-02",
+            "2025-11-03",
+            "2025-11-07",
+            "2025-11-08",
+            "2025-11-09",
+            "2025-11-21",
+            "2025-11-22",
+            "2025-11-23",
+            "2025-11-24",
+            "2025-11-28",
+            "2025-11-29",
+            "2025-11-30",
+            "2025-12-01",
+            "2025-12-02",
+            "2025-12-03",
+            "2025-12-04",
+            "2025-12-05",
+            "2025-12-06",
+            "2025-12-07",
+            "2025-12-08",
+            "2025-12-12",
+            "2025-12-13",
+            "2025-12-14",
+            "2025-12-15",
+            "2025-12-19",
+            "2025-12-20",
+            "2025-12-21",
+            "2025-12-22",
+            "2025-12-26",
+            "2025-12-27",
+            "2025-12-28",
+            "2025-12-29",
+            "2025-12-30",
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-10",
+            "2026-01-11",
+            "2026-01-12",
+            "2026-01-13",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-16",
+            "2026-01-17",
+            "2026-01-18",
+            "2026-01-19",
+            "2026-01-23",
+            "2026-01-24",
+            "2026-01-25",
+            "2026-01-26",
+            "2026-01-27",
+            "2026-01-30",
+            "2026-01-31",
+            "2026-02-01",
+            "2026-02-02",
+            "2026-02-03",
+            "2026-02-06",
+            "2026-02-07",
+            "2026-02-08",
+            "2026-02-09",
+            "2026-02-10",
+            "2026-02-11",
+            "2026-02-12",
+            "2026-02-13",
+            "2026-02-14",
+            "2026-02-15",
+            "2026-02-16",
+            "2026-02-18",
+            "2026-02-20",
+            "2026-02-21",
+            "2026-02-22",
+            "2026-02-23",
+            "2026-02-27",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05"
+          ],
+          "bankroll_after_group": [
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            95.94401915868123,
+            95.94401915868123,
+            95.94401915868123,
+            103.341377644383,
+            112.95865211707513,
+            112.95865211707513,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            109.16167819052411,
+            86.00856631279345,
+            98.37187529582998,
+            98.37187529582998,
+            98.37187529582998,
+            106.29484462800758,
+            106.29484462800758,
+            106.29484462800758,
+            106.29484462800758,
+            106.29484462800758,
+            106.29484462800758,
+            114.51816303188585,
+            109.70445889006274,
+            104.98597405787537,
+            100.30016578567351,
+            95.80441049972755,
+            95.80441049972755,
+            95.80441049972755,
+            95.80441049972755,
+            95.80441049972755,
+            106.24189953658143,
+            106.24189953658143,
+            106.24189953658143,
+            106.24189953658143,
+            106.24189953658143,
+            106.24189953658143,
+            106.24189953658143,
+            106.24189953658143,
+            106.24189953658143,
+            114.43783499692661,
+            114.43783499692661,
+            114.43783499692661,
+            114.43783499692661,
+            114.43783499692661,
+            114.43783499692661,
+            114.43783499692661,
+            114.43783499692661,
+            114.43783499692661,
+            110.8509697686292,
+            104.33382459945689,
+            104.33382459945689,
+            104.33382459945689,
+            98.78951099712896,
+            98.78951099712896,
+            98.78951099712896,
+            98.78951099712896,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            83.82088268935831,
+            77.57080831626575,
+            74.62983228977534,
+            74.62983228977534,
+            74.62983228977534,
+            74.62983228977534,
+            74.62983228977534,
+            74.62983228977534,
+            80.79434577359058,
+            80.79434577359058,
+            80.79434577359058,
+            80.79434577359058,
+            80.79434577359058,
+            80.79434577359058,
+            80.79434577359058
+          ],
+          "bankroll_roi": -0.19205654226409422,
+          "bankroll_bet_count": 26,
+          "max_drawdown": 0.348314447997251,
+          "final_bankroll": 80.79434577359058
+        },
+        "delta_thresholded_minus_baseline": {
+          "bankroll_bet_count": -591.0,
+          "bankroll_roi": -0.6818557393782023,
+          "final_bankroll": -68.18557393782024,
+          "max_drawdown": -0.12762767476356568
+        },
+        "thresholded_selection": {
+          "positive_count": 26,
+          "mean_raw_ev": 0.13121093665178007,
+          "mean_full_kelly": 0.07003949166737147
+        }
+      }
+    },
+    {
+      "kelly_fraction": 1.0,
+      "grid_rows": [
+        {
+          "threshold": 0.0,
+          "mean_metrics": {
+            "bankroll_roi": 5.204894636096578,
+            "bankroll_bet_count": 644.3333333333334,
+            "max_drawdown": 0.6617776472002844,
+            "final_bankroll": 620.4894636096578
+          },
+          "mean_positive_count": 644.3333333333334,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.493242654919793,
+              "bankroll_bet_count": 617,
+              "max_drawdown": 0.5920621961464866,
+              "final_bankroll": 149.3242654919793
+            },
+            "selection": {
+              "positive_count": 617,
+              "mean_raw_ev": 0.03506560318449714,
+              "mean_full_kelly": 0.0248294435824482
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": 0.0,
+              "bankroll_roi": 0.0,
+              "final_bankroll": 0.0,
+              "max_drawdown": 0.0
+            }
+          }
+        },
+        {
+          "threshold": 0.005,
+          "mean_metrics": {
+            "bankroll_roi": 5.169621302652758,
+            "bankroll_bet_count": 577.6666666666666,
+            "max_drawdown": 0.6602396452996032,
+            "final_bankroll": 616.9621302652757
+          },
+          "mean_positive_count": 577.6666666666666,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.5130741888221476,
+              "bankroll_bet_count": 539,
+              "max_drawdown": 0.591081302717926,
+              "final_bankroll": 151.30741888221476
+            },
+            "selection": {
+              "positive_count": 539,
+              "mean_raw_ev": 0.03979285276306582,
+              "mean_full_kelly": 0.028025676597685414
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -78.0,
+              "bankroll_roi": 0.019831533902354592,
+              "final_bankroll": 1.983153390235458,
+              "max_drawdown": -0.0009808934285605586
+            }
+          }
+        },
+        {
+          "threshold": 0.01,
+          "mean_metrics": {
+            "bankroll_roi": 4.74091730826158,
+            "bankroll_bet_count": 526.0,
+            "max_drawdown": 0.6470820107137302,
+            "final_bankroll": 574.0917308261579
+          },
+          "mean_positive_count": 526.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.625562403784831,
+              "bankroll_bet_count": 481,
+              "max_drawdown": 0.5737990327710435,
+              "final_bankroll": 162.5562403784831
+            },
+            "selection": {
+              "positive_count": 481,
+              "mean_raw_ev": 0.04369493910620713,
+              "mean_full_kelly": 0.03033849888134035
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -136.0,
+              "bankroll_roi": 0.13231974886503794,
+              "final_bankroll": 13.231974886503792,
+              "max_drawdown": -0.018263163375443092
+            }
+          }
+        },
+        {
+          "threshold": 0.015,
+          "mean_metrics": {
+            "bankroll_roi": 4.580008839040486,
+            "bankroll_bet_count": 479.6666666666667,
+            "max_drawdown": 0.6580003053508644,
+            "final_bankroll": 558.0008839040487
+          },
+          "mean_positive_count": 479.6666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.5029243553386626,
+              "bankroll_bet_count": 431,
+              "max_drawdown": 0.5883021042797258,
+              "final_bankroll": 150.29243553386627
+            },
+            "selection": {
+              "positive_count": 431,
+              "mean_raw_ev": 0.04736706543342143,
+              "mean_full_kelly": 0.03217109940767458
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -186.0,
+              "bankroll_roi": 0.009681700418869621,
+              "final_bankroll": 0.9681700418869639,
+              "max_drawdown": -0.0037600918667607397
+            }
+          }
+        },
+        {
+          "threshold": 0.02,
+          "mean_metrics": {
+            "bankroll_roi": 5.184071378866777,
+            "bankroll_bet_count": 432.3333333333333,
+            "max_drawdown": 0.6506022944093565,
+            "final_bankroll": 618.4071378866778
+          },
+          "mean_positive_count": 432.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.40830444654509707,
+              "bankroll_bet_count": 381,
+              "max_drawdown": 0.5923812790149318,
+              "final_bankroll": 140.8304446545097
+            },
+            "selection": {
+              "positive_count": 381,
+              "mean_raw_ev": 0.05127097573023768,
+              "mean_full_kelly": 0.03410560260019368
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -236.0,
+              "bankroll_roi": -0.08493820837469596,
+              "final_bankroll": -8.493820837469599,
+              "max_drawdown": 0.0003190828684451752
+            }
+          }
+        },
+        {
+          "threshold": 0.03,
+          "mean_metrics": {
+            "bankroll_roi": 4.086036103186463,
+            "bankroll_bet_count": 363.0,
+            "max_drawdown": 0.6669380229148887,
+            "final_bankroll": 508.6036103186463
+          },
+          "mean_positive_count": 363.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.6558185491073933,
+              "bankroll_bet_count": 293,
+              "max_drawdown": 0.6022724652581397,
+              "final_bankroll": 165.58185491073934
+            },
+            "selection": {
+              "positive_count": 293,
+              "mean_raw_ev": 0.059182305376684306,
+              "mean_full_kelly": 0.03703777379029468
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -324.0,
+              "bankroll_roi": 0.16257589418760032,
+              "final_bankroll": 16.257589418760034,
+              "max_drawdown": 0.010210269111653125
+            }
+          }
+        },
+        {
+          "threshold": 0.05,
+          "mean_metrics": {
+            "bankroll_roi": 2.5677511528213413,
+            "bankroll_bet_count": 266.3333333333333,
+            "max_drawdown": 0.6720644059826517,
+            "final_bankroll": 356.7751152821341
+          },
+          "mean_positive_count": 266.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.09007798910339176,
+              "bankroll_bet_count": 153,
+              "max_drawdown": 0.5584621633870273,
+              "final_bankroll": 109.00779891033918
+            },
+            "selection": {
+              "positive_count": 153,
+              "mean_raw_ev": 0.07782410461333841,
+              "mean_full_kelly": 0.04588832495252416
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -464.0,
+              "bankroll_roi": -0.40316466581640126,
+              "final_bankroll": -40.31646658164013,
+              "max_drawdown": -0.03360003275945933
+            }
+          }
+        },
+        {
+          "threshold": 0.1,
+          "mean_metrics": {
+            "bankroll_roi": 13.315698558691082,
+            "bankroll_bet_count": 118.66666666666667,
+            "max_drawdown": 0.5342634935357363,
+            "final_bankroll": 1431.5698558691083
+          },
+          "mean_positive_count": 118.66666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": -0.2776760563142565,
+              "bankroll_bet_count": 26,
+              "max_drawdown": 0.44511152155527717,
+              "final_bankroll": 72.23239436857435
+            },
+            "selection": {
+              "positive_count": 26,
+              "mean_raw_ev": 0.13121093665178007,
+              "mean_full_kelly": 0.07003949166737147
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -591.0,
+              "bankroll_roi": -0.7709187112340495,
+              "final_bankroll": -77.09187112340496,
+              "max_drawdown": -0.14695067459120942
+            }
+          }
+        }
+      ],
+      "best_by_mean_roi": {
+        "threshold": 0.1,
+        "mean_metrics": {
+          "bankroll_roi": 13.315698558691082,
+          "bankroll_bet_count": 118.66666666666667,
+          "max_drawdown": 0.5342634935357363,
+          "final_bankroll": 1431.5698558691083
+        },
+        "mean_positive_count": 118.66666666666667,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": -0.2776760563142565,
+            "bankroll_bet_count": 26,
+            "max_drawdown": 0.44511152155527717,
+            "final_bankroll": 72.23239436857435
+          },
+          "selection": {
+            "positive_count": 26,
+            "mean_raw_ev": 0.13121093665178007,
+            "mean_full_kelly": 0.07003949166737147
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -591.0,
+            "bankroll_roi": -0.7709187112340495,
+            "final_bankroll": -77.09187112340496,
+            "max_drawdown": -0.14695067459120942
+          }
+        }
+      },
+      "best_by_test_roi": {
+        "threshold": 0.03,
+        "mean_metrics": {
+          "bankroll_roi": 4.086036103186463,
+          "bankroll_bet_count": 363.0,
+          "max_drawdown": 0.6669380229148887,
+          "final_bankroll": 508.6036103186463
+        },
+        "mean_positive_count": 363.0,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.6558185491073933,
+            "bankroll_bet_count": 293,
+            "max_drawdown": 0.6022724652581397,
+            "final_bankroll": 165.58185491073934
+          },
+          "selection": {
+            "positive_count": 293,
+            "mean_raw_ev": 0.059182305376684306,
+            "mean_full_kelly": 0.03703777379029468
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -324.0,
+            "bankroll_roi": 0.16257589418760032,
+            "final_bankroll": 16.257589418760034,
+            "max_drawdown": 0.010210269111653125
+          }
+        }
+      },
+      "held_out_test": {
+        "baseline": {
+          "bankroll_roi": 0.493242654919793,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.5920621961464866,
+          "final_bankroll": 149.3242654919793
+        },
+        "baseline_wealth_path": {
+          "starting_bankroll": 100.0,
+          "groups": [
+            "2025-09-23",
+            "2025-09-24",
+            "2025-09-25",
+            "2025-09-26",
+            "2025-09-27",
+            "2025-09-28",
+            "2025-09-29",
+            "2025-10-03",
+            "2025-10-04",
+            "2025-10-05",
+            "2025-10-17",
+            "2025-10-18",
+            "2025-10-19",
+            "2025-10-20",
+            "2025-10-24",
+            "2025-10-25",
+            "2025-10-26",
+            "2025-10-27",
+            "2025-10-28",
+            "2025-10-29",
+            "2025-10-30",
+            "2025-10-31",
+            "2025-11-01",
+            "2025-11-02",
+            "2025-11-03",
+            "2025-11-07",
+            "2025-11-08",
+            "2025-11-09",
+            "2025-11-21",
+            "2025-11-22",
+            "2025-11-23",
+            "2025-11-24",
+            "2025-11-28",
+            "2025-11-29",
+            "2025-11-30",
+            "2025-12-01",
+            "2025-12-02",
+            "2025-12-03",
+            "2025-12-04",
+            "2025-12-05",
+            "2025-12-06",
+            "2025-12-07",
+            "2025-12-08",
+            "2025-12-12",
+            "2025-12-13",
+            "2025-12-14",
+            "2025-12-15",
+            "2025-12-19",
+            "2025-12-20",
+            "2025-12-21",
+            "2025-12-22",
+            "2025-12-26",
+            "2025-12-27",
+            "2025-12-28",
+            "2025-12-29",
+            "2025-12-30",
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-10",
+            "2026-01-11",
+            "2026-01-12",
+            "2026-01-13",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-16",
+            "2026-01-17",
+            "2026-01-18",
+            "2026-01-19",
+            "2026-01-23",
+            "2026-01-24",
+            "2026-01-25",
+            "2026-01-26",
+            "2026-01-27",
+            "2026-01-30",
+            "2026-01-31",
+            "2026-02-01",
+            "2026-02-02",
+            "2026-02-03",
+            "2026-02-06",
+            "2026-02-07",
+            "2026-02-08",
+            "2026-02-09",
+            "2026-02-10",
+            "2026-02-11",
+            "2026-02-12",
+            "2026-02-13",
+            "2026-02-14",
+            "2026-02-15",
+            "2026-02-16",
+            "2026-02-18",
+            "2026-02-20",
+            "2026-02-21",
+            "2026-02-22",
+            "2026-02-23",
+            "2026-02-27",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05"
+          ],
+          "bankroll_after_group": [
+            95.55391998681631,
+            102.17287496317164,
+            108.11346724520125,
+            108.11346724520125,
+            126.28747314933229,
+            128.5858519496266,
+            120.64928615810427,
+            121.32617820148616,
+            142.42353379893086,
+            164.54536861042996,
+            163.95846793495338,
+            167.4680034669774,
+            211.58347761721197,
+            227.20683894589422,
+            223.3424741954541,
+            167.57538843840604,
+            175.9014458774509,
+            175.24327343598742,
+            177.6679826048273,
+            160.09674655729063,
+            147.24707795393718,
+            153.33188461642752,
+            186.5456469892421,
+            167.42214923805136,
+            160.99859044343987,
+            155.02209123752672,
+            147.67988581329124,
+            139.43324770418312,
+            154.25274268722217,
+            159.58613045548827,
+            107.13806626330157,
+            124.29417280180245,
+            134.2834802709834,
+            129.737878350078,
+            144.50449317891128,
+            140.40803259910774,
+            140.90216862105717,
+            148.4125534381831,
+            146.7677511327521,
+            146.7677511327521,
+            159.1198963899219,
+            129.13349043229493,
+            121.93735178369273,
+            108.98825555783041,
+            99.26953193782067,
+            114.09171924185003,
+            109.75885137286296,
+            109.73329544790782,
+            116.8573589999623,
+            142.49637062014924,
+            141.85058847444867,
+            145.30925648153894,
+            148.81798053417725,
+            155.73986819364532,
+            150.29297033170377,
+            145.53437995544402,
+            145.53437995544402,
+            154.03727429306224,
+            181.51237408534467,
+            185.72183763990984,
+            195.5149437996369,
+            212.9420889130673,
+            234.03510719910403,
+            242.2479458025502,
+            255.81838068399628,
+            234.05977977714488,
+            218.5359484825837,
+            205.01392955803996,
+            180.05474672919368,
+            182.4855015423686,
+            183.052678880144,
+            195.12412239477078,
+            214.31618348807197,
+            210.79015741753915,
+            226.75280473832692,
+            173.09296700815077,
+            169.67498881860266,
+            163.07299289853574,
+            163.07299289853574,
+            154.14958672963903,
+            126.17740089953936,
+            132.9665886095681,
+            135.06189062868387,
+            135.00192740261667,
+            144.57977717853143,
+            151.29311881217345,
+            112.63996402688798,
+            111.66382637628958,
+            110.05417933637331,
+            109.31229485078623,
+            109.31229485078623,
+            112.77357707020474,
+            113.77254808759004,
+            111.77281037160779,
+            106.12255502682017,
+            104.35798840159153,
+            112.24303895224433,
+            121.15340333628838,
+            136.74230393971862,
+            138.61444739498305,
+            134.30755891420787,
+            146.14370454975602,
+            146.3527909281576,
+            151.8261028875085,
+            151.61585525581856,
+            149.3242654919793,
+            149.3242654919793
+          ],
+          "bankroll_roi": 0.493242654919793,
+          "bankroll_bet_count": 617,
+          "max_drawdown": 0.5920621961464866,
+          "final_bankroll": 149.3242654919793
+        },
+        "best_threshold": 0.1,
+        "thresholded": {
+          "bankroll_roi": -0.2776760563142565,
+          "bankroll_bet_count": 26,
+          "max_drawdown": 0.44511152155527717,
+          "final_bankroll": 72.23239436857435
+        },
+        "thresholded_wealth_path": {
+          "starting_bankroll": 100.0,
+          "groups": [
+            "2025-09-23",
+            "2025-09-24",
+            "2025-09-25",
+            "2025-09-26",
+            "2025-09-27",
+            "2025-09-28",
+            "2025-09-29",
+            "2025-10-03",
+            "2025-10-04",
+            "2025-10-05",
+            "2025-10-17",
+            "2025-10-18",
+            "2025-10-19",
+            "2025-10-20",
+            "2025-10-24",
+            "2025-10-25",
+            "2025-10-26",
+            "2025-10-27",
+            "2025-10-28",
+            "2025-10-29",
+            "2025-10-30",
+            "2025-10-31",
+            "2025-11-01",
+            "2025-11-02",
+            "2025-11-03",
+            "2025-11-07",
+            "2025-11-08",
+            "2025-11-09",
+            "2025-11-21",
+            "2025-11-22",
+            "2025-11-23",
+            "2025-11-24",
+            "2025-11-28",
+            "2025-11-29",
+            "2025-11-30",
+            "2025-12-01",
+            "2025-12-02",
+            "2025-12-03",
+            "2025-12-04",
+            "2025-12-05",
+            "2025-12-06",
+            "2025-12-07",
+            "2025-12-08",
+            "2025-12-12",
+            "2025-12-13",
+            "2025-12-14",
+            "2025-12-15",
+            "2025-12-19",
+            "2025-12-20",
+            "2025-12-21",
+            "2025-12-22",
+            "2025-12-26",
+            "2025-12-27",
+            "2025-12-28",
+            "2025-12-29",
+            "2025-12-30",
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+            "2026-01-10",
+            "2026-01-11",
+            "2026-01-12",
+            "2026-01-13",
+            "2026-01-14",
+            "2026-01-15",
+            "2026-01-16",
+            "2026-01-17",
+            "2026-01-18",
+            "2026-01-19",
+            "2026-01-23",
+            "2026-01-24",
+            "2026-01-25",
+            "2026-01-26",
+            "2026-01-27",
+            "2026-01-30",
+            "2026-01-31",
+            "2026-02-01",
+            "2026-02-02",
+            "2026-02-03",
+            "2026-02-06",
+            "2026-02-07",
+            "2026-02-08",
+            "2026-02-09",
+            "2026-02-10",
+            "2026-02-11",
+            "2026-02-12",
+            "2026-02-13",
+            "2026-02-14",
+            "2026-02-15",
+            "2026-02-16",
+            "2026-02-18",
+            "2026-02-20",
+            "2026-02-21",
+            "2026-02-22",
+            "2026-02-23",
+            "2026-02-27",
+            "2026-02-28",
+            "2026-03-01",
+            "2026-03-02",
+            "2026-03-03",
+            "2026-03-04",
+            "2026-03-05"
+          ],
+          "bankroll_after_group": [
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            94.59202554490831,
+            94.59202554490831,
+            94.59202554490831,
+            104.3161838472209,
+            117.26017452963485,
+            117.26017452963485,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            112.00475505277606,
+            80.32991985956075,
+            95.72596178705088,
+            95.72596178705088,
+            95.72596178705088,
+            106.00578153229412,
+            106.00578153229412,
+            106.00578153229412,
+            106.00578153229412,
+            106.00578153229412,
+            106.00578153229412,
+            116.94038890976016,
+            110.3863609193463,
+            104.05594220530834,
+            97.86354429523321,
+            92.01482619165795,
+            92.01482619165795,
+            92.01482619165795,
+            92.01482619165795,
+            92.01482619165795,
+            105.38099913496833,
+            105.38099913496833,
+            105.38099913496833,
+            105.38099913496833,
+            105.38099913496833,
+            105.38099913496833,
+            105.38099913496833,
+            105.38099913496833,
+            105.38099913496833,
+            116.22036190269324,
+            116.22036190269324,
+            116.22036190269324,
+            116.22036190269324,
+            116.22036190269324,
+            116.22036190269324,
+            116.22036190269324,
+            116.22036190269324,
+            116.22036190269324,
+            111.36338110969929,
+            102.63368666514766,
+            102.63368666514766,
+            102.63368666514766,
+            95.3617292762032,
+            95.3617292762032,
+            95.3617292762032,
+            95.3617292762032,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            76.09606343895699,
+            68.53062881640746,
+            65.06631982691172,
+            65.06631982691172,
+            65.06631982691172,
+            65.06631982691172,
+            65.06631982691172,
+            65.06631982691172,
+            72.23239436857435,
+            72.23239436857435,
+            72.23239436857435,
+            72.23239436857435,
+            72.23239436857435,
+            72.23239436857435,
+            72.23239436857435
+          ],
+          "bankroll_roi": -0.2776760563142565,
+          "bankroll_bet_count": 26,
+          "max_drawdown": 0.44511152155527717,
+          "final_bankroll": 72.23239436857435
+        },
+        "delta_thresholded_minus_baseline": {
+          "bankroll_bet_count": -591.0,
+          "bankroll_roi": -0.7709187112340495,
+          "final_bankroll": -77.09187112340496,
+          "max_drawdown": -0.14695067459120942
+        },
+        "thresholded_selection": {
+          "positive_count": 26,
+          "mean_raw_ev": 0.13121093665178007,
+          "mean_full_kelly": 0.07003949166737147
+        }
+      }
+    }
+  ],
+  "held_out_test": {
+    "baseline": {
+      "bankroll_roi": 0.38928599792475554,
+      "bankroll_bet_count": 617,
+      "max_drawdown": 0.33927690228764856,
+      "final_bankroll": 138.92859979247555
+    },
+    "isotonic_thresholded": {
+      "bankroll_roi": 0.4016714735577531,
+      "bankroll_bet_count": 535,
+      "max_drawdown": 0.3377411498189113,
+      "final_bankroll": 140.1671473557753
+    },
+    "delta_isotonic_thresholded_minus_baseline": {
+      "bankroll_bet_count": -82.0,
+      "bankroll_roi": 0.012385475632997578,
+      "final_bankroll": 1.2385475632997611,
+      "max_drawdown": -0.0015357524687372726
+    },
+    "baseline_selection": {
+      "positive_count": 617,
+      "mean_raw_ev": 0.03506560318449714,
+      "mean_full_kelly": 0.0248294435824482
+    },
+    "isotonic_thresholded_selection": {
+      "positive_count": 535,
+      "mean_raw_ev": 0.04005146287172754,
+      "mean_full_kelly": 0.02819668936457381
+    },
+    "best_fixed_threshold": {
+      "threshold": 0.1,
+      "metrics": {
+        "bankroll_roi": -0.11533323972903489,
+        "bankroll_bet_count": 26,
+        "max_drawdown": 0.24440190424747021,
+        "final_bankroll": 88.46667602709651
+      },
+      "delta_minus_baseline": {
+        "bankroll_bet_count": -591.0,
+        "bankroll_roi": -0.5046192376537905,
+        "final_bankroll": -50.46192376537904,
+        "max_drawdown": -0.09487499804017835
+      },
+      "selection": {
+        "positive_count": 26,
+        "mean_raw_ev": 0.13121093665178007,
+        "mean_full_kelly": 0.07003949166737147
+      }
+    },
+    "best_fixed_threshold_by_test_roi": {
+      "threshold": 0.01,
+      "metrics": {
+        "bankroll_roi": 0.44581191144748145,
+        "bankroll_bet_count": 481,
+        "max_drawdown": 0.32582632731264105,
+        "final_bankroll": 144.58119114474815
+      },
+      "delta_minus_baseline": {
+        "bankroll_bet_count": -136.0,
+        "bankroll_roi": 0.0565259135227259,
+        "final_bankroll": 5.652591352272594,
+        "max_drawdown": -0.013450574975007512
+      },
+      "selection": {
+        "positive_count": 481,
+        "mean_raw_ev": 0.04369493910620713,
+        "mean_full_kelly": 0.03033849888134035
+      }
+    },
+    "fixed_threshold_grid": {
+      "rows": [
+        {
+          "threshold": 0.0,
+          "mean_metrics": {
+            "bankroll_roi": 2.352141912947022,
+            "bankroll_bet_count": 644.3333333333334,
+            "max_drawdown": 0.384645073941178,
+            "final_bankroll": 335.2141912947022
+          },
+          "mean_positive_count": 644.3333333333334,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.38928599792475554,
+              "bankroll_bet_count": 617,
+              "max_drawdown": 0.33927690228764856,
+              "final_bankroll": 138.92859979247555
+            },
+            "selection": {
+              "positive_count": 617,
+              "mean_raw_ev": 0.03506560318449714,
+              "mean_full_kelly": 0.0248294435824482
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": 0.0,
+              "bankroll_roi": 0.0,
+              "final_bankroll": 0.0,
+              "max_drawdown": 0.0
+            }
+          }
+        },
+        {
+          "threshold": 0.005,
+          "mean_metrics": {
+            "bankroll_roi": 2.342416373777112,
+            "bankroll_bet_count": 577.6666666666666,
+            "max_drawdown": 0.38265621890904816,
+            "final_bankroll": 334.24163737771124
+          },
+          "mean_positive_count": 577.6666666666666,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.39841828282532843,
+              "bankroll_bet_count": 539,
+              "max_drawdown": 0.3385097092295316,
+              "final_bankroll": 139.84182828253284
+            },
+            "selection": {
+              "positive_count": 539,
+              "mean_raw_ev": 0.03979285276306582,
+              "mean_full_kelly": 0.028025676597685414
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -78.0,
+              "bankroll_roi": 0.009132284900572885,
+              "final_bankroll": 0.9132284900572927,
+              "max_drawdown": -0.000767193058116955
+            }
+          }
+        },
+        {
+          "threshold": 0.01,
+          "mean_metrics": {
+            "bankroll_roi": 2.207516566434817,
+            "bankroll_bet_count": 526.0,
+            "max_drawdown": 0.37255841908607773,
+            "final_bankroll": 320.7516566434817
+          },
+          "mean_positive_count": 526.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.44581191144748145,
+              "bankroll_bet_count": 481,
+              "max_drawdown": 0.32582632731264105,
+              "final_bankroll": 144.58119114474815
+            },
+            "selection": {
+              "positive_count": 481,
+              "mean_raw_ev": 0.04369493910620713,
+              "mean_full_kelly": 0.03033849888134035
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -136.0,
+              "bankroll_roi": 0.0565259135227259,
+              "final_bankroll": 5.652591352272594,
+              "max_drawdown": -0.013450574975007512
+            }
+          }
+        },
+        {
+          "threshold": 0.015,
+          "mean_metrics": {
+            "bankroll_roi": 2.1476758909489004,
+            "bankroll_bet_count": 479.6666666666667,
+            "max_drawdown": 0.3816196503976928,
+            "final_bankroll": 314.76758909489007
+          },
+          "mean_positive_count": 479.6666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.38850127464257384,
+              "bankroll_bet_count": 431,
+              "max_drawdown": 0.3364984216156941,
+              "final_bankroll": 138.85012746425738
+            },
+            "selection": {
+              "positive_count": 431,
+              "mean_raw_ev": 0.04736706543342143,
+              "mean_full_kelly": 0.03217109940767458
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -186.0,
+              "bankroll_roi": -0.0007847232821817096,
+              "final_bankroll": -0.07847232821816874,
+              "max_drawdown": -0.002778480671954464
+            }
+          }
+        },
+        {
+          "threshold": 0.02,
+          "mean_metrics": {
+            "bankroll_roi": 2.271579150634429,
+            "bankroll_bet_count": 432.3333333333333,
+            "max_drawdown": 0.37497292484029776,
+            "final_bankroll": 327.1579150634429
+          },
+          "mean_positive_count": 432.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.3353618801051056,
+              "bankroll_bet_count": 381,
+              "max_drawdown": 0.3394680747030402,
+              "final_bankroll": 133.53618801051056
+            },
+            "selection": {
+              "positive_count": 381,
+              "mean_raw_ev": 0.05127097573023768,
+              "mean_full_kelly": 0.03410560260019368
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -236.0,
+              "bankroll_roi": -0.05392411781964995,
+              "final_bankroll": -5.392411781964995,
+              "max_drawdown": 0.00019117241539162722
+            }
+          }
+        },
+        {
+          "threshold": 0.03,
+          "mean_metrics": {
+            "bankroll_roi": 1.9843834922875063,
+            "bankroll_bet_count": 363.0,
+            "max_drawdown": 0.39167161658156635,
+            "final_bankroll": 298.43834922875067
+          },
+          "mean_positive_count": 363.0,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.4396196855315614,
+              "bankroll_bet_count": 293,
+              "max_drawdown": 0.34966805747785235,
+              "final_bankroll": 143.96196855315614
+            },
+            "selection": {
+              "positive_count": 293,
+              "mean_raw_ev": 0.059182305376684306,
+              "mean_full_kelly": 0.03703777379029468
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -324.0,
+              "bankroll_roi": 0.050333687606805844,
+              "final_bankroll": 5.033368760680588,
+              "max_drawdown": 0.010391155190203782
+            }
+          }
+        },
+        {
+          "threshold": 0.05,
+          "mean_metrics": {
+            "bankroll_roi": 1.5154895993758977,
+            "bankroll_bet_count": 266.3333333333333,
+            "max_drawdown": 0.39720010677098466,
+            "final_bankroll": 251.54895993758976
+          },
+          "mean_positive_count": 266.3333333333333,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": 0.1435952925759162,
+              "bankroll_bet_count": 153,
+              "max_drawdown": 0.3204446184416904,
+              "final_bankroll": 114.35952925759162
+            },
+            "selection": {
+              "positive_count": 153,
+              "mean_raw_ev": 0.07782410461333841,
+              "mean_full_kelly": 0.04588832495252416
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -464.0,
+              "bankroll_roi": -0.24569070534883936,
+              "final_bankroll": -24.569070534883934,
+              "max_drawdown": -0.018832283845958142
+            }
+          }
+        },
+        {
+          "threshold": 0.1,
+          "mean_metrics": {
+            "bankroll_roi": 3.003804982162628,
+            "bankroll_bet_count": 118.66666666666667,
+            "max_drawdown": 0.29668187073625524,
+            "final_bankroll": 400.3804982162628
+          },
+          "mean_positive_count": 118.66666666666667,
+          "held_out_test": {
+            "metrics": {
+              "bankroll_roi": -0.11533323972903489,
+              "bankroll_bet_count": 26,
+              "max_drawdown": 0.24440190424747021,
+              "final_bankroll": 88.46667602709651
+            },
+            "selection": {
+              "positive_count": 26,
+              "mean_raw_ev": 0.13121093665178007,
+              "mean_full_kelly": 0.07003949166737147
+            },
+            "delta_minus_baseline": {
+              "bankroll_bet_count": -591.0,
+              "bankroll_roi": -0.5046192376537905,
+              "final_bankroll": -50.46192376537904,
+              "max_drawdown": -0.09487499804017835
+            }
+          }
+        }
+      ],
+      "best_by_mean_roi": {
+        "threshold": 0.1,
+        "mean_metrics": {
+          "bankroll_roi": 3.003804982162628,
+          "bankroll_bet_count": 118.66666666666667,
+          "max_drawdown": 0.29668187073625524,
+          "final_bankroll": 400.3804982162628
+        },
+        "mean_positive_count": 118.66666666666667,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": -0.11533323972903489,
+            "bankroll_bet_count": 26,
+            "max_drawdown": 0.24440190424747021,
+            "final_bankroll": 88.46667602709651
+          },
+          "selection": {
+            "positive_count": 26,
+            "mean_raw_ev": 0.13121093665178007,
+            "mean_full_kelly": 0.07003949166737147
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -591.0,
+            "bankroll_roi": -0.5046192376537905,
+            "final_bankroll": -50.46192376537904,
+            "max_drawdown": -0.09487499804017835
+          }
+        }
+      },
+      "best_by_test_roi": {
+        "threshold": 0.01,
+        "mean_metrics": {
+          "bankroll_roi": 2.207516566434817,
+          "bankroll_bet_count": 526.0,
+          "max_drawdown": 0.37255841908607773,
+          "final_bankroll": 320.7516566434817
+        },
+        "mean_positive_count": 526.0,
+        "held_out_test": {
+          "metrics": {
+            "bankroll_roi": 0.44581191144748145,
+            "bankroll_bet_count": 481,
+            "max_drawdown": 0.32582632731264105,
+            "final_bankroll": 144.58119114474815
+          },
+          "selection": {
+            "positive_count": 481,
+            "mean_raw_ev": 0.04369493910620713,
+            "mean_full_kelly": 0.03033849888134035
+          },
+          "delta_minus_baseline": {
+            "bankroll_bet_count": -136.0,
+            "bankroll_roi": 0.0565259135227259,
+            "final_bankroll": 5.652591352272594,
+            "max_drawdown": -0.013450574975007512
+          }
+        }
+      }
+    },
+    "test_raw_ev_bin_summary": [
+      {
+        "label": "[0.000, 0.010)",
+        "left": 0.0,
+        "right": 0.01,
+        "count": 136,
+        "mean_raw_ev": 0.0045456724613905,
+        "mean_realized_roi": -0.2088235294117647
+      },
+      {
+        "label": "[0.010, 0.020)",
+        "left": 0.01,
+        "right": 0.02,
+        "count": 100,
+        "mean_raw_ev": 0.01483023956865072,
+        "mean_realized_roi": 0.1014
+      },
+      {
+        "label": "[0.020, 0.030)",
+        "left": 0.02,
+        "right": 0.03,
+        "count": 88,
+        "mean_raw_ev": 0.024929844066500652,
+        "mean_realized_roi": -0.1715909090909091
+      },
+      {
+        "label": "[0.030, 0.050)",
+        "left": 0.03,
+        "right": 0.05,
+        "count": 140,
+        "mean_raw_ev": 0.038809481925198015,
+        "mean_realized_roi": 0.16878571428571432
+      },
+      {
+        "label": "[0.050, 0.100)",
+        "left": 0.05,
+        "right": 0.1,
+        "count": 127,
+        "mean_raw_ev": 0.06689451695192516,
+        "mean_realized_roi": 0.02511811023622047
+      },
+      {
+        "label": "[0.100, inf]",
+        "left": 0.1,
+        "right": Infinity,
+        "count": 26,
+        "mean_raw_ev": 0.13121093665178007,
+        "mean_realized_roi": -0.13961538461538459
+      }
+    ],
+    "threshold_fit": {
+      "threshold_raw_ev": 0.005400717258453369,
+      "support_count": 1933,
+      "curve_preview": [
+        {
+          "raw_ev": 2.4487972259512603e-05,
+          "fitted_realized_roi": -0.2292405063291139
+        },
+        {
+          "raw_ev": 0.002371156215667636,
+          "fitted_realized_roi": -0.015118110236220453
+        },
+        {
+          "raw_ev": 0.005106025934219494,
+          "fitted_realized_roi": -0.015118110236220453
+        },
+        {
+          "raw_ev": 0.008600801229476929,
+          "fitted_realized_roi": 0.02408653846153845
+        },
+        {
+          "raw_ev": 0.011806815266609094,
+          "fitted_realized_roi": 0.02408653846153845
+        },
+        {
+          "raw_ev": 0.01529102921485892,
+          "fitted_realized_roi": 0.02408653846153845
+        },
+        {
+          "raw_ev": 0.018624484539031982,
+          "fitted_realized_roi": 0.02408653846153845
+        },
+        {
+          "raw_ev": 0.023122894018888562,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.027673032879829362,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.034014007449150174,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.04034967422485347,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.04912415146827698,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.05740432739257817,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.06704594790935503,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.07682067155838013,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.09090454578399654,
+          "fitted_realized_roi": 0.06120940649496078
+        },
+        {
+          "raw_ev": 0.11111994832754135,
+          "fitted_realized_roi": 0.112987012987013
+        },
+        {
+          "raw_ev": 0.13649004697799683,
+          "fitted_realized_roi": 0.112987012987013
+        },
+        {
+          "raw_ev": 0.17541395127773285,
+          "fitted_realized_roi": 0.27999999999999997
+        },
+        {
+          "raw_ev": 0.42456144094467163,
+          "fitted_realized_roi": 0.5460465116279068
+        }
+      ]
+    }
+  },
+  "artifacts": {
+    "testset_wealth_plots": {
+      "baseline_by_kelly_fraction": "C:\\Users\\mouts\\Desktop\\Repositories\\Football_predict\\artifacts\\tmp\\ev_threshold_strategy_review_main_2026-04-05\\testset_wealth_by_kelly_fraction.png",
+      "fixed_threshold_1pct_by_kelly_fraction": "C:\\Users\\mouts\\Desktop\\Repositories\\Football_predict\\artifacts\\tmp\\ev_threshold_strategy_review_main_2026-04-05\\testset_wealth_by_kelly_fraction_threshold_1pct.png",
+      "fixed_threshold_3pct_by_kelly_fraction": "C:\\Users\\mouts\\Desktop\\Repositories\\Football_predict\\artifacts\\tmp\\ev_threshold_strategy_review_main_2026-04-05\\testset_wealth_by_kelly_fraction_threshold_3pct.png"
+    },
+    "testset_wealth_paths_json": "C:\\Users\\mouts\\Desktop\\Repositories\\Football_predict\\artifacts\\tmp\\ev_threshold_strategy_review_main_2026-04-05\\testset_wealth_paths_by_kelly_fraction.json"
+  }
+}
