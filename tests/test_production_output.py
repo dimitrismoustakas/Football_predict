@@ -39,7 +39,6 @@ class FakeModel:
 
 class LeagueBiasFakeModel(FakeModel):
 	learn_league_market_bias = True
-	learn_league_residual_bias = True
 
 	def __call__(self, X, cat_features, implied, raw_margin):
 		if cat_features is None:

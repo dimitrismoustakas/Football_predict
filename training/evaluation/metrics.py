@@ -11,7 +11,6 @@ import torch
 import torch.nn as nn
 from sklearn.metrics import accuracy_score, log_loss
 
-from training.inference import forward_model
 from utils.portfolio import DEFAULT_BANKROLL, DEFAULT_KELLY_FRACTION, evaluate_bankroll_strategy
 
 
@@ -89,7 +88,7 @@ def evaluate_model(
 	raw_margin = torch.tensor(data["raw_margin"], dtype=torch.float32).to(device)
 
 	with torch.no_grad():
-		pred_logits = forward_model(model, X, cat_features, implied, raw_margin)
+		pred_logits = model(X, cat_features, implied, raw_margin)
 		probs = torch.softmax(pred_logits, dim=-1).cpu().numpy()
 
 	y_true = data["y"]

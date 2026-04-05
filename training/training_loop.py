@@ -10,7 +10,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from training.inference import model_requires_cat_features
 from training.models.neural_net import GatedResidualModel, TrainConfig, _normalized_market_entropy, gated_loss
 
 
@@ -20,7 +19,6 @@ def build_model(config: TrainConfig, device: torch.device) -> GatedResidualModel
 	model = GatedResidualModel(
 		input_dim=config.input_dim,
 		n_classes=3,
-		cat_config=getattr(config, "cat_config", None),
 		**config.model_kwargs,
 	)
 	return model.to(device)
@@ -36,8 +34,6 @@ def create_optimizer(model: nn.Module, config: TrainConfig) -> torch.optim.Optim
 		betas=(config.beta1, config.beta2),
 		eps=config.optimizer_eps,
 	)
-
-
 
 def create_scheduler(optimizer: torch.optim.Optimizer, config: TrainConfig) -> torch.optim.lr_scheduler.CosineAnnealingLR:
 	"""Create the fixed scheduler used by the canonical model."""
@@ -83,6 +79,65 @@ def _entropy_curriculum_weights(
 	return weights / weights.mean().clamp_min(eps)
 
 
+def _compute_training_loss(
+	model: GatedResidualModel,
+	batch_x: torch.Tensor,
+	cat_in: torch.Tensor | None,
+	batch_implied: torch.Tensor,
+	batch_y: torch.Tensor,
+	batch_raw_margin: torch.Tensor,
+	sample_weights: torch.Tensor | None,
+	config: TrainConfig,
+) -> torch.Tensor:
+	return gated_loss(
+		model,
+		batch_x,
+		cat_in,
+		batch_implied,
+		batch_y,
+		batch_raw_margin,
+		gate_mean_weight=config.gate_mean_weight,
+		gate_sat_weight=config.gate_sat_weight,
+		lambda_repulsion=config.lambda_repulsion,
+		lambda_corr=config.lambda_corr,
+		lambda_logit_delta=config.lambda_logit_delta,
+		market_target_mix=config.market_target_mix,
+		market_target_surprise_scale=config.market_target_surprise_scale,
+		market_target_surprise_power=config.market_target_surprise_power,
+		market_target_surprise_floor=config.market_target_surprise_floor,
+		market_target_draw_surprise_scale=config.market_target_draw_surprise_scale,
+		market_target_away_surprise_scale=config.market_target_away_surprise_scale,
+		market_target_draw_surprise_floor=config.market_target_draw_surprise_floor,
+		market_target_away_surprise_floor=config.market_target_away_surprise_floor,
+		market_target_surprise_mode=config.market_target_surprise_mode,
+		market_target_surprise_center=config.market_target_surprise_center,
+		market_target_surprise_width=config.market_target_surprise_width,
+		market_target_surprise_slope=config.market_target_surprise_slope,
+		market_target_draw_weight=config.market_target_draw_weight,
+		market_target_away_weight=config.market_target_away_weight,
+		market_target_entropy_scale=config.market_target_entropy_scale,
+		market_target_entropy_mode=config.market_target_entropy_mode,
+		sample_weights=sample_weights,
+		confidence_penalty_weight=config.confidence_penalty_weight,
+		brier_aux_weight=config.brier_aux_weight,
+		symmetric_ce_weight=config.symmetric_ce_weight,
+		symmetric_ce_label_floor=config.symmetric_ce_label_floor,
+		gce_mix_weight=config.gce_mix_weight,
+		gce_q=config.gce_q,
+		bi_tempered_mix_weight=config.bi_tempered_mix_weight,
+		bi_tempered_t1=config.bi_tempered_t1,
+		bi_tempered_t2=config.bi_tempered_t2,
+		bi_tempered_num_iters=config.bi_tempered_num_iters,
+		anchor_regret_weight=config.anchor_regret_weight,
+		anchor_regret_margin=config.anchor_regret_margin,
+		anchor_regret_power=config.anchor_regret_power,
+	)
+
+
+def _clone_state_dict(model: nn.Module) -> dict[str, torch.Tensor]:
+	return {name: value.detach().clone() for name, value in model.state_dict().items()}
+
+
 def run_train_epoch(
 	model: GatedResidualModel,
 	train_loader: DataLoader,
@@ -92,8 +147,6 @@ def run_train_epoch(
 ) -> float:
 	"""Run one training epoch."""
 
-	cat_config = getattr(config, "cat_config", None)
-	needs_cat = model_requires_cat_features(model, cat_config)
 	model.train()
 	total_loss = 0.0
 	total_batches = max(1, len(train_loader))
@@ -103,49 +156,18 @@ def run_train_epoch(
 		batch_implied = batch_implied.to(device)
 		batch_y = batch_y.to(device)
 		batch_raw_margin = batch_raw_margin.to(device)
-		cat_in = batch_cat if needs_cat else None
 		sample_weights = _entropy_curriculum_weights(batch_implied, batch_idx, total_batches, config)
 
 		optimizer.zero_grad(set_to_none=True)
-		loss = gated_loss(
+		loss = _compute_training_loss(
 			model,
 			batch_x,
-			cat_in,
+			batch_cat,
 			batch_implied,
 			batch_y,
 			batch_raw_margin,
-			gate_mean_weight=config.gate_mean_weight,
-			gate_sat_weight=config.gate_sat_weight,
-			lambda_repulsion=config.lambda_repulsion,
-			lambda_corr=config.lambda_corr,
-			lambda_logit_delta=config.lambda_logit_delta,
-			market_target_mix=config.market_target_mix,
-			market_target_surprise_scale=config.market_target_surprise_scale,
-			market_target_surprise_power=config.market_target_surprise_power,
-			market_target_surprise_floor=config.market_target_surprise_floor,
-			market_target_draw_surprise_scale=config.market_target_draw_surprise_scale,
-			market_target_away_surprise_scale=config.market_target_away_surprise_scale,
-			market_target_draw_surprise_floor=config.market_target_draw_surprise_floor,
-			market_target_away_surprise_floor=config.market_target_away_surprise_floor,
-			market_target_surprise_mode=config.market_target_surprise_mode,
-			market_target_surprise_center=config.market_target_surprise_center,
-			market_target_surprise_width=config.market_target_surprise_width,
-			market_target_surprise_slope=config.market_target_surprise_slope,
-			market_target_draw_weight=config.market_target_draw_weight,
-			market_target_away_weight=config.market_target_away_weight,
-			market_target_entropy_scale=config.market_target_entropy_scale,
-			market_target_entropy_mode=config.market_target_entropy_mode,
-			sample_weights=sample_weights,
-			confidence_penalty_weight=config.confidence_penalty_weight,
-			brier_aux_weight=config.brier_aux_weight,
-			symmetric_ce_weight=config.symmetric_ce_weight,
-			symmetric_ce_label_floor=config.symmetric_ce_label_floor,
-			gce_mix_weight=config.gce_mix_weight,
-			gce_q=config.gce_q,
-			bi_tempered_mix_weight=config.bi_tempered_mix_weight,
-			bi_tempered_t1=config.bi_tempered_t1,
-			bi_tempered_t2=config.bi_tempered_t2,
-			bi_tempered_num_iters=config.bi_tempered_num_iters,
+			sample_weights,
+			config,
 		)
 		loss.backward()
 		optimizer.step()
@@ -157,8 +179,6 @@ def run_validation_epoch(
 	model: GatedResidualModel,
 	val_loader: DataLoader,
 	device: torch.device,
-	cat_config,
-	needs_cat: bool,
 ) -> Tuple[float, list[float], list[float]]:
 	"""Run one validation epoch."""
 
@@ -172,11 +192,10 @@ def run_validation_epoch(
 			batch_implied = batch_implied.to(device)
 			batch_y = batch_y.to(device)
 			batch_raw_margin = batch_raw_margin.to(device)
-			cat_in = batch_cat if needs_cat else None
-			pred_logits = model(batch_x, cat_in, batch_implied, batch_raw_margin)
+			pred_logits = model(batch_x, batch_cat, batch_implied, batch_raw_margin)
 			loss = F.cross_entropy(pred_logits, batch_y.view(-1).long())
 			val_loss += loss.item() * len(batch_x)
-			all_gates.append(model.get_gate_stats(batch_x, cat_in, batch_implied, batch_raw_margin)["gate_values"])
+			all_gates.append(model.get_gate_stats(batch_x, batch_cat, batch_implied, batch_raw_margin)["gate_values"])
 
 	all_gates = np.concatenate(all_gates, axis=0)
 	return (
@@ -184,6 +203,8 @@ def run_validation_epoch(
 		all_gates.mean(axis=0).tolist(),
 		all_gates.std(axis=0).tolist(),
 	)
+
+
 def _fit_model(
 	config: TrainConfig,
 	train_loader: DataLoader,
@@ -199,8 +220,6 @@ def _fit_model(
 	model = build_model(config, device)
 	optimizer = create_optimizer(model, config)
 	scheduler = create_scheduler(optimizer, config)
-	cat_config = getattr(config, "cat_config", None)
-	needs_cat = model_requires_cat_features(model, cat_config)
 	use_validation = val_loader is not None
 	history = {"train_loss": [], "val_loss": [], "gate_mean": [], "gate_std": []}
 	best_val_loss = float("inf")
@@ -217,7 +236,7 @@ def _fit_model(
 				print(f"Epoch {epoch:03d} | Train: {avg_train_loss:.5f}")
 			continue
 
-		avg_val_loss, gate_mean, gate_std = run_validation_epoch(model, val_loader, device, cat_config, needs_cat)
+		avg_val_loss, gate_mean, gate_std = run_validation_epoch(model, val_loader, device)
 		history["val_loss"].append(avg_val_loss)
 		history["gate_mean"].append(gate_mean)
 		history["gate_std"].append(gate_std)
@@ -230,7 +249,7 @@ def _fit_model(
 
 		if avg_val_loss < best_val_loss - 1e-4:
 			best_val_loss = avg_val_loss
-			best_model_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
+			best_model_state = _clone_state_dict(model)
 			stalled_epochs = 0
 		else:
 			stalled_epochs += 1
