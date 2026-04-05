@@ -29,7 +29,6 @@ if __package__ is None or __package__ == "":
 
 from preprocessing.feature_engineering import LEAGUE_IDS
 from training.evaluation.metrics import ranked_probability_score
-from training.inference import model_requires_cat_features
 from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
 from training.train_utils import add_targets_and_implied, filter_min_history, load_frame, prepare_data, resolve_test_season
 from utils.paths import MODELS_DIR, PROJECT_ROOT
@@ -121,58 +120,47 @@ def extract_calibration_parameters(model) -> dict[str, Any]:
 			"market_min_prob",
 		],
 	}
-	if getattr(model, "market_class_scale", None) is not None:
-		payload["global_market_class_scale"] = [
-			float(value) for value in torch.exp(model.market_class_scale.detach().cpu()).tolist()
-		]
-	if getattr(model, "learn_market_bias", False):
-		payload["global_market_bias_centered"] = centered_bias_row(model.market_bias.detach().cpu().numpy())
 
 	league_rows = []
-	for league_idx in range(int(getattr(model, "num_leagues", 0))):
+	for league_idx in range(int(model.num_leagues)):
 		row: dict[str, Any] = {
 			"league_idx": league_idx,
 			"league_name": LEAGUE_NAME_BY_IDX.get(league_idx, f"league_{league_idx}"),
 		}
-		if getattr(model, "league_market_scale", None) is not None:
-			enabled = league_row_is_enabled(getattr(model, "league_market_scale_enabled_mask", None), league_idx)
-			raw_value = model.league_market_scale.weight[league_idx, 0].detach().cpu().item()
-			row["league_market_scale_enabled"] = enabled
-			row["league_market_scale_raw"] = float(raw_value)
-			row["league_market_scale_multiplier"] = float(np.exp(raw_value) if enabled else 1.0)
-		if getattr(model, "league_market_class_scale", None) is not None:
-			enabled = league_row_is_enabled(getattr(model, "league_market_class_scale_enabled_mask", None), league_idx)
-			raw_vector = model.league_market_class_scale.weight[league_idx].detach().cpu().numpy()
-			row["league_market_class_scale_enabled"] = enabled
-			row["league_market_class_scale_raw"] = [float(value) for value in raw_vector.tolist()]
-			row["league_market_class_scale_multiplier"] = [
-				float(np.exp(value) if enabled else 1.0)
-				for value in raw_vector.tolist()
-			]
-		if getattr(model, "league_market_bias", None) is not None:
-			enabled = league_row_is_enabled(getattr(model, "league_market_bias_enabled_mask", None), league_idx)
-			row["league_market_bias_enabled"] = enabled
-			row["league_market_bias_centered"] = centered_bias_row(
-				model.league_market_bias.weight[league_idx].detach().cpu().numpy() if enabled else np.zeros(3, dtype=float)
-			)
-		if getattr(model, "league_market_logit_mixer", None) is not None:
-			enabled = league_row_is_enabled(getattr(model, "league_market_logit_mixer_enabled_mask", None), league_idx)
-			row["league_market_logit_mixer_enabled"] = enabled
-			row["league_market_logit_mixer"] = reshape_mixer(
-				model.league_market_logit_mixer.weight[league_idx].detach().cpu().numpy() if enabled else np.zeros(9, dtype=float)
-			)
+		enabled = league_row_is_enabled(model.league_market_scale_enabled_mask, league_idx)
+		raw_value = model.league_market_scale.weight[league_idx, 0].detach().cpu().item()
+		row["league_market_scale_enabled"] = enabled
+		row["league_market_scale_raw"] = float(raw_value)
+		row["league_market_scale_multiplier"] = float(np.exp(raw_value) if enabled else 1.0)
+		enabled = league_row_is_enabled(model.league_market_class_scale_enabled_mask, league_idx)
+		raw_vector = model.league_market_class_scale.weight[league_idx].detach().cpu().numpy()
+		row["league_market_class_scale_enabled"] = enabled
+		row["league_market_class_scale_raw"] = [float(value) for value in raw_vector.tolist()]
+		row["league_market_class_scale_multiplier"] = [
+			float(np.exp(value) if enabled else 1.0)
+			for value in raw_vector.tolist()
+		]
+		enabled = league_row_is_enabled(model.league_market_bias_enabled_mask, league_idx)
+		row["league_market_bias_enabled"] = enabled
+		row["league_market_bias_centered"] = centered_bias_row(
+			model.league_market_bias.weight[league_idx].detach().cpu().numpy() if enabled else np.zeros(3, dtype=float)
+		)
+		enabled = league_row_is_enabled(model.league_market_logit_mixer_enabled_mask, league_idx)
+		row["league_market_logit_mixer_enabled"] = enabled
+		row["league_market_logit_mixer"] = reshape_mixer(
+			model.league_market_logit_mixer.weight[league_idx].detach().cpu().numpy() if enabled else np.zeros(9, dtype=float)
+		)
 		league_rows.append(row)
 	payload["per_league"] = league_rows
 
-	if getattr(model, "linear_gate", False):
-		gate_weight = model.gate_head.weight.detach().cpu().numpy().reshape(-1)
-		gate_bias = float(model.gate_head.bias.detach().cpu().reshape(-1)[0].item())
-		market_weight = gate_weight[-7:]
-		payload["linear_gate_market_weights"] = {
-			name: float(weight)
-			for name, weight in zip(payload["gate_market_feature_order"], market_weight)
-		}
-		payload["linear_gate_head_bias"] = gate_bias
+	gate_weight = model.gate_head.weight.detach().cpu().numpy().reshape(-1)
+	gate_bias = float(model.gate_head.bias.detach().cpu().reshape(-1)[0].item())
+	market_weight = gate_weight[-7:]
+	payload["linear_gate_market_weights"] = {
+		name: float(weight)
+		for name, weight in zip(payload["gate_market_feature_order"], market_weight)
+	}
+	payload["linear_gate_head_bias"] = gate_bias
 
 	return payload
 
@@ -184,17 +172,11 @@ def compute_forward_components(model, X: np.ndarray, cat_features: np.ndarray, i
 	implied_tensor = torch.tensor(implied, dtype=torch.float32, device=device)
 	raw_margin_tensor = torch.tensor(raw_margin, dtype=torch.float32, device=device)
 
-	needs_cat = model_requires_cat_features(model, getattr(model, "cat_config", None))
-	cat_in = cat_tensor if needs_cat else None
-
 	with torch.no_grad():
-		hidden = model.backbone.get_hidden(X_tensor, cat_in)
-		residual_logits = model._compute_residual_logits(hidden, cat_in)
-		anchor_logits = model._compute_implied_logits(implied_tensor, cat_in)
-		gate_logits = model._compute_gate_logits(hidden, implied_tensor, raw_margin_tensor, cat_in)
-		gate = torch.sigmoid(gate_logits + model.gate_bias)
-		if model.shared_gate:
-			gate = gate.expand(-1, model.n_classes)
+		hidden = model.backbone.get_hidden(X_tensor)
+		residual_logits = model._compute_residual_logits(hidden)
+		anchor_logits = model._compute_implied_logits(implied_tensor, cat_tensor)
+		gate = model._compute_gate(hidden, implied_tensor, raw_margin_tensor)
 		applied_residual_logits = gate * residual_logits
 		open_logits = anchor_logits + residual_logits
 		final_logits = anchor_logits + applied_residual_logits
@@ -324,10 +306,9 @@ def print_report(summary: dict[str, Any]):
 	cal = summary["calibration"]
 	print(f"Global market_logit_scale: {cal['market_logit_scale']:.6f}")
 	print(f"Learned gate_bias: {cal['gate_bias']:.6f}")
-	if "linear_gate_market_weights" in cal:
-		print("Linear gate market weights:")
-		for key, value in cal["linear_gate_market_weights"].items():
-			print(f"  {key:18s} {value:+.6f}")
+	print("Linear gate market weights:")
+	for key, value in cal["linear_gate_market_weights"].items():
+		print(f"  {key:18s} {value:+.6f}")
 	print("Per-league calibration:")
 	for row in cal["per_league"]:
 		scale = row.get("league_market_scale_multiplier", 1.0)

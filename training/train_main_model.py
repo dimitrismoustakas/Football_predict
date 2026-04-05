@@ -28,7 +28,7 @@ import torch
 
 from training.evaluation import evaluate_model
 from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, save_model_bundle as save_bundle
-from training.models import CategoricalConfig, TrainConfig
+from training.models import TrainConfig
 from training.training_loop import train_fixed_epochs, train_with_early_stopping
 from training.train_utils import (
 	add_targets_and_implied,
@@ -171,28 +171,14 @@ def build_model_kwargs(training_config: dict, num_leagues: int) -> dict:
 
 	return {
 		"hidden_layers": training_config["hidden_layers"],
-		"cross_layers": training_config.get("cross_layers", 2),
+		"cross_layers": training_config["cross_layers"],
 		"dropout": training_config["dropout"],
-		"norm": training_config["norm"],
-		"activation": training_config["activation"],
-		"gate_hidden_dim": training_config["gate_hidden_dim"],
 		"gate_target_budget": training_config["gate_target_budget"],
-		"shared_gate": training_config.get("shared_gate", False),
-		"linear_gate": training_config.get("linear_gate", False),
-		"market_feature_dim": training_config.get("market_feature_dim", 3),
-		"market_logit_scale": training_config.get("market_logit_scale", 1.0),
-		"learn_market_bias": training_config.get("learn_market_bias", False),
-		"learn_market_class_scale": training_config.get("learn_market_class_scale", False),
-		"learn_league_market_bias": training_config.get("learn_league_market_bias", False),
-		"league_market_bias_enabled_leagues": training_config.get("league_market_bias_enabled_leagues"),
-		"learn_league_market_scale": training_config.get("learn_league_market_scale", False),
-		"league_market_scale_enabled_leagues": training_config.get("league_market_scale_enabled_leagues"),
-		"learn_league_market_class_scale": training_config.get("learn_league_market_class_scale", False),
-		"league_market_class_scale_enabled_leagues": training_config.get("league_market_class_scale_enabled_leagues"),
-		"learn_league_market_logit_mixer": training_config.get("learn_league_market_logit_mixer", False),
-		"league_market_logit_mixer_enabled_leagues": training_config.get("league_market_logit_mixer_enabled_leagues"),
-		"learn_league_gate_bias": training_config.get("learn_league_gate_bias", False),
-		"learn_league_residual_bias": training_config.get("learn_league_residual_bias", False),
+		"market_logit_scale": training_config["market_logit_scale"],
+		"league_market_bias_enabled_leagues": training_config["league_market_bias_enabled_leagues"],
+		"league_market_scale_enabled_leagues": training_config["league_market_scale_enabled_leagues"],
+		"league_market_class_scale_enabled_leagues": training_config["league_market_class_scale_enabled_leagues"],
+		"league_market_logit_mixer_enabled_leagues": training_config["league_market_logit_mixer_enabled_leagues"],
 		"num_leagues": num_leagues,
 	}
 
@@ -200,7 +186,6 @@ def build_model_kwargs(training_config: dict, num_leagues: int) -> dict:
 def build_train_config(
 	training_config: dict,
 	input_dim: int,
-	cat_config: CategoricalConfig,
 	epochs: int,
 	num_leagues: int,
 ) -> TrainConfig:
@@ -215,48 +200,49 @@ def build_train_config(
 		epochs=epochs,
 		patience=training_config["patience"],
 		batch_size=training_config["batch_size"],
-		cat_config=cat_config,
 		scheduler_min_lr_ratio=0.01,
 		gate_mean_weight=training_config["gate_mean_weight"],
 		gate_sat_weight=training_config["gate_sat_weight"],
-		lambda_repulsion=training_config.get("lambda_repulsion", 0.0),
-		lambda_corr=training_config.get("lambda_corr", 0.0),
-		lambda_logit_delta=training_config.get("lambda_logit_delta", 0.0),
-		market_target_mix=training_config.get("market_target_mix", 0.0),
-		market_target_surprise_scale=training_config.get("market_target_surprise_scale", 0.0),
-		market_target_surprise_power=training_config.get("market_target_surprise_power", 1.0),
-		market_target_surprise_floor=training_config.get("market_target_surprise_floor", 0.0),
-		market_target_draw_surprise_scale=training_config.get("market_target_draw_surprise_scale"),
+		lambda_repulsion=training_config["lambda_repulsion"],
+		lambda_corr=training_config["lambda_corr"],
+		lambda_logit_delta=training_config["lambda_logit_delta"],
+		market_target_mix=training_config["market_target_mix"],
+		market_target_surprise_scale=training_config["market_target_surprise_scale"],
+		market_target_surprise_power=training_config["market_target_surprise_power"],
+		market_target_surprise_floor=training_config["market_target_surprise_floor"],
+		market_target_draw_surprise_scale=training_config["market_target_draw_surprise_scale"],
 		market_target_away_surprise_scale=training_config.get("market_target_away_surprise_scale"),
-		market_target_draw_surprise_floor=training_config.get("market_target_draw_surprise_floor"),
+		market_target_draw_surprise_floor=training_config["market_target_draw_surprise_floor"],
 		market_target_away_surprise_floor=training_config.get("market_target_away_surprise_floor"),
-		market_target_surprise_mode=training_config.get("market_target_surprise_mode", "power"),
-		market_target_surprise_center=training_config.get("market_target_surprise_center", 0.5),
-		market_target_surprise_width=training_config.get("market_target_surprise_width", 0.3),
-		market_target_surprise_slope=training_config.get("market_target_surprise_slope", 12.0),
-		market_target_draw_weight=training_config.get("market_target_draw_weight", 1.0),
-		market_target_away_weight=training_config.get("market_target_away_weight", 1.0),
-		market_target_entropy_scale=training_config.get("market_target_entropy_scale", 0.0),
+		market_target_surprise_mode=training_config["market_target_surprise_mode"],
+		market_target_surprise_center=training_config["market_target_surprise_center"],
+		market_target_surprise_width=training_config["market_target_surprise_width"],
+		market_target_surprise_slope=training_config["market_target_surprise_slope"],
+		market_target_draw_weight=training_config["market_target_draw_weight"],
+		market_target_away_weight=training_config["market_target_away_weight"],
+		market_target_entropy_scale=training_config["market_target_entropy_scale"],
 		market_target_entropy_mode=training_config.get("market_target_entropy_mode", "linear"),
-		entropy_curriculum_mode=training_config.get("entropy_curriculum_mode", "none"),
-		entropy_curriculum_strength=training_config.get("entropy_curriculum_strength", 0.0),
-		confidence_penalty_weight=training_config.get("confidence_penalty_weight", 0.0),
-		brier_aux_weight=training_config.get("brier_aux_weight", 0.0),
-		symmetric_ce_weight=training_config.get("symmetric_ce_weight", 0.0),
-		symmetric_ce_label_floor=training_config.get("symmetric_ce_label_floor", 1e-4),
-		gce_mix_weight=training_config.get("gce_mix_weight", 0.0),
-		gce_q=training_config.get("gce_q", 0.7),
-		bi_tempered_mix_weight=training_config.get("bi_tempered_mix_weight", 0.0),
-		bi_tempered_t1=training_config.get("bi_tempered_t1", 1.0),
-		bi_tempered_t2=training_config.get("bi_tempered_t2", 1.0),
+		entropy_curriculum_mode=training_config["entropy_curriculum_mode"],
+		entropy_curriculum_strength=training_config["entropy_curriculum_strength"],
+		confidence_penalty_weight=training_config["confidence_penalty_weight"],
+		brier_aux_weight=training_config["brier_aux_weight"],
+		symmetric_ce_weight=training_config["symmetric_ce_weight"],
+		symmetric_ce_label_floor=training_config["symmetric_ce_label_floor"],
+		gce_mix_weight=training_config["gce_mix_weight"],
+		gce_q=training_config["gce_q"],
+		bi_tempered_mix_weight=training_config["bi_tempered_mix_weight"],
+		bi_tempered_t1=training_config["bi_tempered_t1"],
+		bi_tempered_t2=training_config["bi_tempered_t2"],
 		bi_tempered_num_iters=training_config.get("bi_tempered_num_iters", 5),
+		anchor_regret_weight=training_config["anchor_regret_weight"],
+		anchor_regret_margin=training_config.get("anchor_regret_margin", 0.0),
+		anchor_regret_power=training_config["anchor_regret_power"],
 	)
 
 
 def build_bundle_metadata(
 	training_config: dict,
 	evaluation_config: dict,
-	cat_config: CategoricalConfig | None,
 	num_leagues: int,
 	feature_cols: list[str],
 	objective_metrics: dict,
@@ -282,10 +268,6 @@ def build_bundle_metadata(
 		"comparison_metric": evaluation_config["comparison_metric"],
 		"model_kwargs": build_model_kwargs(training_config, num_leagues),
 		"feature_cols": feature_cols,
-		"cat_config": None if cat_config is None else {
-			"num_leagues": cat_config.num_leagues,
-			"league_embed_dim": cat_config.league_embed_dim,
-		},
 		"final_epochs": final_train_epochs,
 		"final_epoch_mode": "best",
 		"evaluation_protocol": {
@@ -446,7 +428,6 @@ def evaluate_cv_objective(
 	df,
 	feature_cols: list[str],
 	training_config: dict,
-	cat_config: CategoricalConfig,
 	objective_folds: list[tuple[list[str], str]],
 	final_train_epochs: int,
 	training_seed: int,
@@ -467,7 +448,7 @@ def evaluate_cv_objective(
 			[val_season],
 			training_seed + fold_idx,
 		)
-		fold_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs, num_leagues)
+		fold_config = build_train_config(training_config, data_train["X"].shape[1], final_train_epochs, num_leagues)
 		fold_model, _, _ = train_fixed_epochs(fold_config, train_loader, device=DEVICE, verbose=True)
 		baseline_metrics = summarize_metrics(evaluate_implied_baseline(data_val))
 		metrics = summarize_metrics(evaluate_model(fold_model, data_val, device=DEVICE, verbose=True))
@@ -507,12 +488,7 @@ def train_main_model(description: str = "") -> dict:
 	feature_cols = select_feature_columns(df, FEATURE_MANIFEST_PATH)
 	print(f"Features: {len(feature_cols)}")
 	num_leagues = get_num_leagues(df)
-	use_categorical = training_config.get("use_categorical", True)
-	cat_config = CategoricalConfig(num_leagues=num_leagues, league_embed_dim=3) if use_categorical else None
-	if cat_config is None:
-		print("Categorical: disabled")
-	else:
-		print(f"Categorical: {cat_config.num_leagues} leagues (embed_dim=3)")
+	print(f"Leagues: {num_leagues}")
 
 	test_season = resolve_test_season(df, evaluation_config["test_season"])
 	data_snapshot = build_data_snapshot(df, test_season)
@@ -549,7 +525,6 @@ def train_main_model(description: str = "") -> dict:
 	early_stop_config = build_train_config(
 		training_config,
 		data_initial_train["X"].shape[1],
-		cat_config,
 		training_config["max_epochs"],
 		num_leagues,
 	)
@@ -569,7 +544,6 @@ def train_main_model(description: str = "") -> dict:
 		df,
 		feature_cols,
 		training_config,
-		cat_config,
 		objective_folds,
 		final_train_epochs,
 		training_seed,
@@ -590,7 +564,7 @@ def train_main_model(description: str = "") -> dict:
 		[test_season],
 		training_seed + 10_000,
 	)
-	final_config = build_train_config(training_config, data_train["X"].shape[1], cat_config, final_train_epochs, num_leagues)
+	final_config = build_train_config(training_config, data_train["X"].shape[1], final_train_epochs, num_leagues)
 
 	test_baseline_metrics = evaluate_implied_baseline(data_test)
 
@@ -646,7 +620,6 @@ def train_main_model(description: str = "") -> dict:
 	bundle_metadata = build_bundle_metadata(
 		training_config=training_config,
 		evaluation_config=evaluation_config,
-		cat_config=cat_config,
 		num_leagues=num_leagues,
 		feature_cols=feature_cols,
 		objective_metrics=cv_metrics,

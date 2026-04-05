@@ -1,9 +1,5 @@
 """
 Neural network architecture and loss functions for match-result prediction.
-
-Architecture: contextual gated residual model.
-The network starts from bookmaker implied probabilities and learns when to
-deviate from them using a context-dependent gate.
 """
 
 import math
@@ -16,66 +12,22 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-@dataclass
-class CategoricalConfig:
-	"""Configuration for categorical features."""
-
-	num_leagues: int = 5
-	league_embed_dim: int = 3
-
-
-class CategoricalEmbedder(nn.Module):
-	"""Embed league id and append promoted-team flags."""
-
-	def __init__(self, cat_config: CategoricalConfig):
-		super().__init__()
-		self.cat_config = cat_config
-		self.league_embed = nn.Embedding(cat_config.num_leagues, cat_config.league_embed_dim)
-		self.output_dim = cat_config.league_embed_dim + 2
-
-	def forward(self, cat_features: torch.Tensor) -> torch.Tensor:
-		league_idx = cat_features[:, 0].long()
-		promoted = cat_features[:, 1:3].float()
-		league_emb = self.league_embed(league_idx)
-		return torch.cat([league_emb, promoted], dim=-1)
-
-
-def _make_activation(name: str) -> nn.Module:
-	if name == "relu":
-		return nn.ReLU()
-	if name == "silu":
-		return nn.SiLU()
-	if name == "gelu":
-		return nn.GELU()
-	raise ValueError(f"Unknown activation: {name}")
-
-
-def _resolve_norm(name: str):
-	return {"none": None, "bn": nn.BatchNorm1d, "ln": nn.LayerNorm}.get(name)
-
-
 class ResidualBlock(nn.Module):
-	"""Residual MLP block with optional projection."""
+	"""Canonical residual MLP block used by the live result model."""
 
-	def __init__(self, in_dim: int, out_dim: int, dropout: float, norm: str, activation: str):
+	def __init__(self, in_dim: int, out_dim: int, dropout: float):
 		super().__init__()
-		NormClass = _resolve_norm(norm)
-		self.norm1 = None if NormClass is None else NormClass(in_dim)
 		self.linear1 = nn.Linear(in_dim, out_dim)
-		self.act = _make_activation(activation)
+		self.act = nn.GELU()
 		self.dropout1 = nn.Dropout(dropout)
-		self.norm2 = None if NormClass is None else NormClass(out_dim)
 		self.linear2 = nn.Linear(out_dim, out_dim)
 		self.dropout2 = nn.Dropout(dropout)
 		self.skip = nn.Identity() if in_dim == out_dim else nn.Linear(in_dim, out_dim)
 
 	def forward(self, x: torch.Tensor) -> torch.Tensor:
 		residual = self.skip(x)
-		h = x if self.norm1 is None else self.norm1(x)
-		h = self.linear1(h)
-		h = self.act(h)
+		h = self.act(self.linear1(x))
 		h = self.dropout1(h)
-		h = h if self.norm2 is None else self.norm2(h)
 		h = self.linear2(h)
 		h = self.dropout2(h)
 		return self.act(h + residual)
@@ -100,10 +52,7 @@ class FeatureBackbone(nn.Module):
 		input_dim: int,
 		hidden_layers: List[int],
 		dropout: float = 0.3,
-		norm: str = "none",
-		activation: str = "relu",
 		output_dim: int = 3,
-		cat_config: Optional[CategoricalConfig] = None,
 		cross_layers: int = 2,
 	):
 		super().__init__()
@@ -112,41 +61,35 @@ class FeatureBackbone(nn.Module):
 		if cross_layers <= 0:
 			raise ValueError("cross_layers must be positive for feature backbone")
 
-		self.cat_embedder = None
-		total_input_dim = input_dim
-		if cat_config is not None:
-			self.cat_embedder = CategoricalEmbedder(cat_config)
-			total_input_dim = input_dim + self.cat_embedder.output_dim
-
 		blocks = []
-		prev = total_input_dim
+		prev = input_dim
 		for width in hidden_layers:
-			blocks.append(ResidualBlock(prev, width, dropout=dropout, norm=norm, activation=activation))
+			blocks.append(
+				ResidualBlock(
+					prev,
+					width,
+					dropout=dropout,
+				)
+			)
 			prev = width
 
 		self.deep_net = nn.Sequential(*blocks)
-		self.cross_net = nn.ModuleList([CrossLayer(total_input_dim) for _ in range(cross_layers)])
-		self.hidden_dim = prev + total_input_dim
+		self.cross_net = nn.ModuleList([CrossLayer(input_dim) for _ in range(cross_layers)])
+		self.hidden_dim = prev + input_dim
 		self.final_layer = nn.Linear(self.hidden_dim, output_dim)
 		self.input_dim = input_dim
 		self.hidden_layers = hidden_layers
 		self.cross_layers = cross_layers
 		self.dropout = dropout
-		self.norm = norm
-		self.activation = activation
+		self.norm = "none"
+		self.activation = "gelu"
 		self.output_dim = output_dim
-		self.cat_config = cat_config
 
-	def forward(self, x: torch.Tensor, cat_features: Optional[torch.Tensor] = None) -> torch.Tensor:
-		h = self.get_hidden(x, cat_features)
+	def forward(self, x: torch.Tensor) -> torch.Tensor:
+		h = self.get_hidden(x)
 		return self.final_layer(h)
 
-	def get_hidden(self, x: torch.Tensor, cat_features: Optional[torch.Tensor] = None) -> torch.Tensor:
-		if self.cat_embedder is not None:
-			if cat_features is None:
-				raise ValueError("cat_features required when model has cat_config")
-			cat_emb = self.cat_embedder(cat_features)
-			x = torch.cat([x, cat_emb], dim=-1)
+	def get_hidden(self, x: torch.Tensor) -> torch.Tensor:
 		deep_hidden = self.deep_net(x)
 		cross_hidden = x
 		for layer in self.cross_net:
@@ -162,160 +105,86 @@ class GatedResidualModel(nn.Module):
 		input_dim: int,
 		hidden_layers: List[int],
 		n_classes: int = 3,
-		cat_config: Optional[CategoricalConfig] = None,
-		gate_hidden_dim: int = 32,
-		market_feature_dim: int = 3,
 		dropout: float = 0.3,
-		norm: str = "none",
-		activation: str = "relu",
 		gate_target_budget: float = 0.2,
-		shared_gate: bool = False,
-		linear_gate: bool = False,
 		market_logit_scale: float = 1.0,
-		learn_market_bias: bool = False,
-		learn_market_class_scale: bool = False,
-		learn_league_market_bias: bool = False,
 		league_market_bias_enabled_leagues: Optional[List[int]] = None,
-		learn_league_market_scale: bool = False,
 		league_market_scale_enabled_leagues: Optional[List[int]] = None,
-		learn_league_market_class_scale: bool = False,
 		league_market_class_scale_enabled_leagues: Optional[List[int]] = None,
-		learn_league_market_logit_mixer: bool = False,
 		league_market_logit_mixer_enabled_leagues: Optional[List[int]] = None,
-		learn_league_gate_bias: bool = False,
-		learn_league_residual_bias: bool = False,
 		num_leagues: int = 0,
 		cross_layers: int = 2,
 	):
 		super().__init__()
-		if learn_league_market_bias and num_leagues <= 0:
-			raise ValueError("num_leagues must be positive when learn_league_market_bias is enabled")
-		if learn_league_market_scale and num_leagues <= 0:
-			raise ValueError("num_leagues must be positive when learn_league_market_scale is enabled")
-		if learn_league_market_class_scale and num_leagues <= 0:
-			raise ValueError("num_leagues must be positive when learn_league_market_class_scale is enabled")
-		if learn_league_market_logit_mixer and num_leagues <= 0:
-			raise ValueError("num_leagues must be positive when learn_league_market_logit_mixer is enabled")
-		if learn_league_gate_bias and num_leagues <= 0:
-			raise ValueError("num_leagues must be positive when learn_league_gate_bias is enabled")
-		if learn_league_residual_bias and num_leagues <= 0:
-			raise ValueError("num_leagues must be positive when learn_league_residual_bias is enabled")
+		if num_leagues <= 0:
+			raise ValueError("num_leagues must be positive for the canonical result model")
 
 		self.backbone = FeatureBackbone(
 			input_dim=input_dim,
 			hidden_layers=hidden_layers,
 			dropout=dropout,
-			norm=norm,
-			activation=activation,
 			output_dim=n_classes,
-			cat_config=cat_config,
 			cross_layers=cross_layers,
 		)
 
-		if market_feature_dim not in {3, 4, 5}:
-			raise ValueError(f"Unsupported market_feature_dim: {market_feature_dim}")
-		self.market_feature_dim = market_feature_dim + 3
-		gate_input_dim = self.backbone.hidden_dim + self.market_feature_dim
-		if linear_gate:
-			self.gate_head = nn.Linear(gate_input_dim, 1 if shared_gate else n_classes)
-		else:
-			self.gate_head = nn.Sequential(
-				nn.Linear(gate_input_dim, gate_hidden_dim),
-				nn.ReLU(),
-				nn.Dropout(dropout * 0.5),
-				nn.Linear(gate_hidden_dim, 1 if shared_gate else n_classes),
-			)
+		gate_input_dim = self.backbone.hidden_dim + 7
+		self.gate_head = nn.Linear(gate_input_dim, 1)
 
 		init_bias = math.log(gate_target_budget / (1 - gate_target_budget))
-		self.gate_bias = nn.Parameter(torch.full((1 if shared_gate else n_classes,), init_bias))
-		if learn_market_bias:
-			self.market_bias = nn.Parameter(torch.zeros(n_classes))
-		else:
-			self.register_buffer("market_bias", torch.zeros(n_classes))
-		if learn_market_class_scale:
-			self.market_class_scale = nn.Parameter(torch.zeros(n_classes))
-		else:
-			self.market_class_scale = None
-		if learn_league_market_bias:
-			self.league_market_bias = nn.Embedding(num_leagues, n_classes)
-			nn.init.zeros_(self.league_market_bias.weight)
-		else:
-			self.league_market_bias = None
+		self.gate_bias = nn.Parameter(torch.full((1,), init_bias))
+		self.register_buffer("market_bias", torch.zeros(n_classes))
+		self.market_class_scale = None
+		self.league_market_bias = nn.Embedding(num_leagues, n_classes)
+		nn.init.zeros_(self.league_market_bias.weight)
 		self._register_enabled_mask(
 			"league_market_bias_enabled_mask",
 			num_leagues,
 			league_market_bias_enabled_leagues,
 			"league_market_bias_enabled_leagues",
 		)
-		if learn_league_market_scale:
-			self.league_market_scale = nn.Embedding(num_leagues, 1)
-			nn.init.zeros_(self.league_market_scale.weight)
-		else:
-			self.league_market_scale = None
+		self.league_market_scale = nn.Embedding(num_leagues, 1)
+		nn.init.zeros_(self.league_market_scale.weight)
 		self._register_enabled_mask(
 			"league_market_scale_enabled_mask",
 			num_leagues,
 			league_market_scale_enabled_leagues,
 			"league_market_scale_enabled_leagues",
 		)
-		if learn_league_market_class_scale:
-			self.league_market_class_scale = nn.Embedding(num_leagues, n_classes)
-			nn.init.zeros_(self.league_market_class_scale.weight)
-		else:
-			self.league_market_class_scale = None
+		self.league_market_class_scale = nn.Embedding(num_leagues, n_classes)
+		nn.init.zeros_(self.league_market_class_scale.weight)
 		self._register_enabled_mask(
 			"league_market_class_scale_enabled_mask",
 			num_leagues,
 			league_market_class_scale_enabled_leagues,
 			"league_market_class_scale_enabled_leagues",
 		)
-		if learn_league_market_logit_mixer:
-			self.league_market_logit_mixer = nn.Embedding(num_leagues, n_classes * n_classes)
-			nn.init.zeros_(self.league_market_logit_mixer.weight)
-		else:
-			self.league_market_logit_mixer = None
+		self.league_market_logit_mixer = nn.Embedding(num_leagues, n_classes * n_classes)
+		nn.init.zeros_(self.league_market_logit_mixer.weight)
 		self._register_enabled_mask(
 			"league_market_logit_mixer_enabled_mask",
 			num_leagues,
 			league_market_logit_mixer_enabled_leagues,
 			"league_market_logit_mixer_enabled_leagues",
 		)
-		if learn_league_gate_bias:
-			self.league_gate_bias = nn.Embedding(num_leagues, 1 if shared_gate else n_classes)
-			nn.init.zeros_(self.league_gate_bias.weight)
-		else:
-			self.league_gate_bias = None
-		if learn_league_residual_bias:
-			self.league_residual_bias = nn.Embedding(num_leagues, n_classes)
-			nn.init.zeros_(self.league_residual_bias.weight)
-		else:
-			self.league_residual_bias = None
 
 		self.input_dim = input_dim
 		self.hidden_layers = hidden_layers
 		self.dropout = dropout
-		self.norm = norm
-		self.activation = activation
-		self.cat_config = cat_config
+		self.norm = "none"
+		self.activation = "gelu"
 		self.n_classes = n_classes
-		self.gate_hidden_dim = gate_hidden_dim
 		self.gate_target_budget = gate_target_budget
-		self.shared_gate = shared_gate
-		self.linear_gate = linear_gate
+		self.shared_gate = True
+		self.linear_gate = True
 		self.market_logit_scale = market_logit_scale
-		self.learn_market_bias = learn_market_bias
-		self.learn_market_class_scale = learn_market_class_scale
-		self.learn_league_market_bias = learn_league_market_bias
+		self.learn_league_market_bias = True
 		self.league_market_bias_enabled_leagues = league_market_bias_enabled_leagues
-		self.learn_league_market_scale = learn_league_market_scale
+		self.learn_league_market_scale = True
 		self.league_market_scale_enabled_leagues = league_market_scale_enabled_leagues
-		self.learn_league_market_class_scale = learn_league_market_class_scale
+		self.learn_league_market_class_scale = True
 		self.league_market_class_scale_enabled_leagues = league_market_class_scale_enabled_leagues
-		self.learn_league_market_logit_mixer = learn_league_market_logit_mixer
+		self.learn_league_market_logit_mixer = True
 		self.league_market_logit_mixer_enabled_leagues = league_market_logit_mixer_enabled_leagues
-		self.learn_league_gate_bias = learn_league_gate_bias
-		self.learn_league_residual_bias = learn_league_residual_bias
-		self.market_feature_stats = market_feature_dim
 		self.num_leagues = num_leagues
 		self.cross_layers = cross_layers
 
@@ -349,29 +218,19 @@ class GatedResidualModel(nn.Module):
 		hidden: torch.Tensor,
 		implied_probs: torch.Tensor,
 		raw_margin: torch.Tensor,
-		cat_features: Optional[torch.Tensor] = None,
 	) -> torch.Tensor:
 		market_features = self._compute_market_features(implied_probs, raw_margin)
 		gate_input = torch.cat([hidden, market_features], dim=-1)
-		gate_logits = self.gate_head(gate_input)
-		if self.league_gate_bias is not None:
-			if cat_features is None:
-				raise ValueError("cat_features required when learn_league_gate_bias is enabled")
-			gate_logits = gate_logits + self.league_gate_bias(cat_features[:, 0].long())
-		return gate_logits
+		return self.gate_head(gate_input)
 
 	def _compute_gate(
 		self,
 		hidden: torch.Tensor,
 		implied_probs: torch.Tensor,
 		raw_margin: torch.Tensor,
-		cat_features: Optional[torch.Tensor] = None,
 	) -> torch.Tensor:
-		gate_logits = self._compute_gate_logits(hidden, implied_probs, raw_margin, cat_features)
-		gate = torch.sigmoid(gate_logits + self.gate_bias)
-		if self.shared_gate:
-			gate = gate.expand(-1, self.n_classes)
-		return gate
+		gate_logits = self._compute_gate_logits(hidden, implied_probs, raw_margin)
+		return torch.sigmoid(gate_logits + self.gate_bias).expand(-1, self.n_classes)
 
 	def _compute_market_features(
 		self,
@@ -383,108 +242,74 @@ class GatedResidualModel(nn.Module):
 		entropy = entropy / math.log(self.n_classes)
 		max_prob = implied_probs.max(dim=-1, keepdim=True)[0]
 		min_prob = implied_probs.min(dim=-1, keepdim=True)[0]
-		sorted_probs = torch.sort(implied_probs, dim=-1, descending=True)[0]
-		top2_gap = sorted_probs[:, :1] - sorted_probs[:, 1:2]
 		if raw_margin.dim() == 1:
 			raw_margin = raw_margin.unsqueeze(-1)
-		feature_parts = [implied_probs, entropy, max_prob, raw_margin]
-		if self.market_feature_stats >= 4:
-			feature_parts.append(min_prob)
-		if self.market_feature_stats >= 5:
-			feature_parts.append(top2_gap)
-		return torch.cat(feature_parts, dim=-1)
+		return torch.cat([implied_probs, entropy, max_prob, raw_margin, min_prob], dim=-1)
 
 	def _compute_implied_logits(
 		self,
 		implied_probs: torch.Tensor,
-		cat_features: Optional[torch.Tensor] = None,
+		cat_features: torch.Tensor,
 	) -> torch.Tensor:
+		if cat_features is None:
+			raise ValueError("cat_features are required for the canonical result model")
 		log_implied = _log_softmax_from_implied(implied_probs)
-		league_idx = None
-		if cat_features is not None:
-			league_idx = cat_features[:, 0].long()
-		if self.league_market_scale is not None:
-			if league_idx is None:
-				raise ValueError("cat_features required when learn_league_market_scale is enabled")
-			league_scale = torch.exp(self.league_market_scale(league_idx))
-			if self.league_market_scale_enabled_mask is not None:
-				enabled = self.league_market_scale_enabled_mask[league_idx]
-				league_scale = enabled * league_scale + (1.0 - enabled)
-			scale = self.market_logit_scale * league_scale
-		else:
-			scale = self.market_logit_scale
+		league_idx = cat_features[:, 0].long()
+		league_scale = torch.exp(self.league_market_scale(league_idx))
+		if self.league_market_scale_enabled_mask is not None:
+			enabled = self.league_market_scale_enabled_mask[league_idx]
+			league_scale = enabled * league_scale + (1.0 - enabled)
+		scale = self.market_logit_scale * league_scale
 		log_implied = log_implied * scale
-		if self.market_class_scale is not None:
-			log_implied = log_implied * torch.exp(self.market_class_scale)
-		if self.league_market_class_scale is not None:
-			if league_idx is None:
-				raise ValueError("cat_features required when learn_league_market_class_scale is enabled")
-			class_scale = torch.exp(self.league_market_class_scale(league_idx))
-			if self.league_market_class_scale_enabled_mask is not None:
-				enabled = self.league_market_class_scale_enabled_mask[league_idx]
-				class_scale = enabled * class_scale + (1.0 - enabled)
-			log_implied = log_implied * class_scale
-		if self.league_market_logit_mixer is not None:
-			if league_idx is None:
-				raise ValueError("cat_features required when learn_league_market_logit_mixer is enabled")
-			mix = self.league_market_logit_mixer(league_idx).view(-1, self.n_classes, self.n_classes)
-			mix = mix - torch.diag_embed(torch.diagonal(mix, dim1=-2, dim2=-1))
-			if self.league_market_logit_mixer_enabled_mask is not None:
-				enabled = self.league_market_logit_mixer_enabled_mask[league_idx].unsqueeze(-1)
-				mix = mix * enabled
-			log_implied = log_implied + torch.bmm(log_implied.unsqueeze(1), mix).squeeze(1)
+		class_scale = torch.exp(self.league_market_class_scale(league_idx))
+		if self.league_market_class_scale_enabled_mask is not None:
+			enabled = self.league_market_class_scale_enabled_mask[league_idx]
+			class_scale = enabled * class_scale + (1.0 - enabled)
+		log_implied = log_implied * class_scale
+		mix = self.league_market_logit_mixer(league_idx).view(-1, self.n_classes, self.n_classes)
+		mix = mix - torch.diag_embed(torch.diagonal(mix, dim1=-2, dim2=-1))
+		if self.league_market_logit_mixer_enabled_mask is not None:
+			enabled = self.league_market_logit_mixer_enabled_mask[league_idx].unsqueeze(-1)
+			mix = mix * enabled
+		log_implied = log_implied + torch.bmm(log_implied.unsqueeze(1), mix).squeeze(1)
 		implied_logits = log_implied + self.market_bias
-		if self.league_market_bias is not None:
-			if league_idx is None:
-				raise ValueError("cat_features required when learn_league_market_bias is enabled")
-			league_bias = self.league_market_bias(league_idx)
-			if self.league_market_bias_enabled_mask is not None:
-				league_bias = league_bias * self.league_market_bias_enabled_mask[league_idx]
-			implied_logits = implied_logits + league_bias
+		league_bias = self.league_market_bias(league_idx)
+		if self.league_market_bias_enabled_mask is not None:
+			league_bias = league_bias * self.league_market_bias_enabled_mask[league_idx]
+		implied_logits = implied_logits + league_bias
 		return implied_logits
 
 	def forward(
 		self,
 		x: torch.Tensor,
-		cat_features: Optional[torch.Tensor] = None,
-		implied_probs: Optional[torch.Tensor] = None,
-		raw_margin: Optional[torch.Tensor] = None,
+		cat_features: torch.Tensor,
+		implied_probs: torch.Tensor,
+		raw_margin: torch.Tensor,
 	) -> torch.Tensor:
-		h = self.backbone.get_hidden(x, cat_features)
-		residual_logits = self._compute_residual_logits(h, cat_features)
+		h = self.backbone.get_hidden(x)
+		residual_logits = self._compute_residual_logits(h)
 
-		if implied_probs is None:
-			return residual_logits
-		if raw_margin is None:
-			raise ValueError("raw_margin is required when implied_probs is provided")
-
-		gate = self._compute_gate(h, implied_probs, raw_margin, cat_features)
+		gate = self._compute_gate(h, implied_probs, raw_margin)
 		implied_logits = self._compute_implied_logits(implied_probs, cat_features)
 		return implied_logits + gate * residual_logits
 
 	def _compute_residual_logits(
 		self,
 		hidden: torch.Tensor,
-		cat_features: Optional[torch.Tensor] = None,
 	) -> torch.Tensor:
-		residual_logits = self.backbone.final_layer(hidden)
-		if self.league_residual_bias is not None:
-			if cat_features is None:
-				raise ValueError("cat_features required when learn_league_residual_bias is enabled")
-			residual_logits = residual_logits + self.league_residual_bias(cat_features[:, 0].long())
-		return residual_logits
+		return self.backbone.final_layer(hidden)
 
 	def get_gate_stats(
 		self,
 		x: torch.Tensor,
-		cat_features: Optional[torch.Tensor],
+		cat_features: torch.Tensor,
 		implied_probs: torch.Tensor,
 		raw_margin: torch.Tensor,
 	) -> Dict[str, np.ndarray]:
 		self.eval()
 		with torch.no_grad():
-			h = self.backbone.get_hidden(x, cat_features)
-			gate = self._compute_gate(h, implied_probs, raw_margin, cat_features)
+			h = self.backbone.get_hidden(x)
+			gate = self._compute_gate(h, implied_probs, raw_margin)
 
 		return {
 			"gate_values": gate.cpu().numpy(),
@@ -509,7 +334,6 @@ class TrainConfig:
 	epochs: int = 100
 	patience: int = 15
 	batch_size: int = 128
-	cat_config: Optional[CategoricalConfig] = None
 	scheduler_min_lr_ratio: float = 0.01
 	gate_mean_weight: float = 0.01
 	gate_sat_weight: float = 0.001
@@ -544,6 +368,9 @@ class TrainConfig:
 	bi_tempered_t1: float = 1.0
 	bi_tempered_t2: float = 1.0
 	bi_tempered_num_iters: int = 5
+	anchor_regret_weight: float = 0.0
+	anchor_regret_margin: float = 0.0
+	anchor_regret_power: float = 1.0
 
 
 def _log_softmax_from_implied(implied_probs: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -893,6 +720,28 @@ def _apply_true_class_surprise_scaling(
 	return base_mix * (1.0 + scale * response)
 
 
+def _anchor_regret_penalty(
+	final_log_probs: torch.Tensor,
+	anchor_logits: torch.Tensor,
+	target: torch.Tensor,
+	margin: float = 0.0,
+	power: float = 1.0,
+) -> torch.Tensor:
+	"""Positive-part excess log-loss over the calibrated anchor."""
+
+	if margin < 0:
+		raise ValueError("anchor_regret_margin must be non-negative")
+	if power <= 0:
+		raise ValueError("anchor_regret_power must be positive")
+	target = target.view(-1).long()
+	final_nll = F.nll_loss(final_log_probs, target, reduction="none")
+	anchor_nll = F.cross_entropy(anchor_logits, target, reduction="none")
+	regret = (final_nll - anchor_nll - margin).clamp_min(0.0)
+	if abs(power - 1.0) > 1e-6:
+		regret = regret.pow(power)
+	return regret
+
+
 def gated_loss(
 	model: GatedResidualModel,
 	x: torch.Tensor,
@@ -932,6 +781,9 @@ def gated_loss(
 	bi_tempered_t1: float = 1.0,
 	bi_tempered_t2: float = 1.0,
 	bi_tempered_num_iters: int = 5,
+	anchor_regret_weight: float = 0.0,
+	anchor_regret_margin: float = 0.0,
+	anchor_regret_power: float = 1.0,
 	eps: float = 1e-6,
 ) -> torch.Tensor:
 	"""Loss for the multiclass gated residual model."""
@@ -1005,7 +857,6 @@ def gated_loss(
 		base_loss = (1.0 - bi_tempered_mix_weight) * base_loss + bi_tempered_mix_weight * bi_tempered_loss
 
 	if confidence_penalty_weight > 0:
-		# Positive weight penalizes low-entropy predictions via sum(p log p).
 		confidence_penalty = (pred_probs * log_probs).sum(dim=-1)
 		base_loss = base_loss + confidence_penalty_weight * confidence_penalty
 
@@ -1024,9 +875,23 @@ def gated_loss(
 	if sample_weights is not None:
 		sample_weights = sample_weights.view(-1).clamp_min(eps)
 		sample_weights = sample_weights / sample_weights.mean().clamp_min(eps)
-		loss = (base_loss * sample_weights).mean()
+		effective_base_loss = base_loss * sample_weights
 	else:
-		loss = base_loss.mean()
+		effective_base_loss = base_loss
+	loss = effective_base_loss.mean()
+
+	if anchor_regret_weight > 0:
+		anchor_logits = model._compute_implied_logits(implied_probs, cat_features)
+		regret_penalty = _anchor_regret_penalty(
+			log_probs,
+			anchor_logits,
+			target,
+			margin=anchor_regret_margin,
+			power=anchor_regret_power,
+		)
+		if sample_weights is not None:
+			regret_penalty = regret_penalty * sample_weights
+		loss = loss + anchor_regret_weight * regret_penalty.mean()
 
 	if lambda_repulsion > 0:
 		implied_normalized = implied_probs / implied_probs.sum(dim=-1, keepdim=True)
@@ -1040,12 +905,12 @@ def gated_loss(
 
 	if lambda_logit_delta > 0:
 		implied_anchor = model._compute_implied_logits(implied_probs, cat_features)
-		logit_delta = pred_logits - implied_anchor
-		loss = loss + lambda_logit_delta * logit_delta.pow(2).mean()
+		logit_delta_penalty = (pred_logits - implied_anchor).pow(2).mean(dim=-1)
+		loss = loss + lambda_logit_delta * logit_delta_penalty.mean()
 
 	if gate_mean_weight > 0 or gate_sat_weight > 0:
-		h = model.backbone.get_hidden(x, cat_features)
-		gate = model._compute_gate(h, implied_probs, raw_margin, cat_features)
+		hidden = model.backbone.get_hidden(x)
+		gate = model._compute_gate(hidden, implied_probs, raw_margin)
 
 		if gate_mean_weight > 0:
 			gate_mean_loss = (gate.mean() - model.gate_target_budget).pow(2)

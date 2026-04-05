@@ -3,9 +3,11 @@ import unittest
 import torch
 import torch.nn.functional as F
 
+from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
 from training.models import FeatureBackbone, GatedResidualModel, _log_softmax_from_implied
 from training.models.neural_net import (
 	_apply_true_class_surprise_scaling,
+	_anchor_regret_penalty,
 	_bi_tempered_logistic_loss,
 	_bi_tempered_logistic_loss_autograd,
 	_reverse_cross_entropy,
@@ -19,18 +21,91 @@ class ResultModelingTests(unittest.TestCase):
 		model = GatedResidualModel(
 			input_dim=6,
 			hidden_layers=[8, 8],
-			gate_hidden_dim=4,
+			num_leagues=5,
 			cross_layers=2,
 		)
 		x = torch.randn(4, 6)
+		cat_features = torch.zeros(4, 3, dtype=torch.long)
 		implied_probs = torch.softmax(torch.randn(4, 3), dim=-1)
 		raw_margin = torch.rand(4, 1)
 
-		logits = model(x, implied_probs=implied_probs, raw_margin=raw_margin)
+		logits = model(x, cat_features, implied_probs, raw_margin)
 
 		self.assertIsInstance(model.backbone, FeatureBackbone)
 		self.assertEqual(tuple(logits.shape), (4, 3))
 		self.assertEqual(model.backbone.hidden_dim, 14)
+
+	def test_anchor_regret_penalty_only_counts_harm_vs_anchor(self):
+		final_log_probs = torch.log(torch.tensor([
+			[0.70, 0.20, 0.10],
+			[0.40, 0.30, 0.30],
+		], dtype=torch.float32))
+		anchor_logits = torch.log(torch.tensor([
+			[0.60, 0.25, 0.15],
+			[0.20, 0.30, 0.50],
+		], dtype=torch.float32))
+		target = torch.tensor([0, 2], dtype=torch.long)
+
+		penalty = _anchor_regret_penalty(final_log_probs, anchor_logits, target)
+
+		self.assertAlmostEqual(float(penalty[0].item()), 0.0, places=6)
+		expected = float(-torch.log(torch.tensor(0.30 / 0.50)).item())
+		self.assertAlmostEqual(float(penalty[1].item()), expected, places=6)
+
+	def test_anchor_regret_penalty_respects_margin_and_power(self):
+		final_log_probs = torch.log(torch.tensor([[0.45, 0.25, 0.30]], dtype=torch.float32))
+		anchor_logits = torch.log(torch.tensor([[0.40, 0.20, 0.40]], dtype=torch.float32))
+		target = torch.tensor([2], dtype=torch.long)
+
+		penalty = _anchor_regret_penalty(final_log_probs, anchor_logits, target, margin=0.20, power=2.0)
+
+		excess = max(0.0, float(-torch.log(torch.tensor(0.30 / 0.40)).item()) - 0.20)
+		self.assertAlmostEqual(float(penalty.item()), excess**2, places=6)
+
+	def test_gated_loss_anchor_regret_penalizes_harmful_deviations_more(self):
+		model = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			num_leagues=1,
+		)
+		x = torch.zeros(1, 2)
+		cat_features = torch.zeros(1, 3, dtype=torch.long)
+		implied_probs = torch.tensor([[0.60, 0.25, 0.15]], dtype=torch.float32)
+		raw_margin = torch.tensor([[1.0]], dtype=torch.float32)
+		target = torch.tensor([2], dtype=torch.long)
+		with torch.no_grad():
+			model.backbone.final_layer.weight.zero_()
+			model.gate_head.weight.zero_()
+			model.gate_head.bias.zero_()
+			model.gate_bias.fill_(10.0)
+			model.backbone.final_layer.bias.copy_(torch.tensor([-2.0, 0.0, 1.5], dtype=torch.float32))
+
+		helpful_loss = gated_loss(
+			model,
+			x,
+			cat_features,
+			implied_probs,
+			target,
+			raw_margin,
+			gate_mean_weight=0.0,
+			gate_sat_weight=0.0,
+			anchor_regret_weight=0.5,
+		)
+		with torch.no_grad():
+			model.backbone.final_layer.bias.copy_(torch.tensor([1.5, 0.0, -2.0], dtype=torch.float32))
+		harmful_loss = gated_loss(
+			model,
+			x,
+			cat_features,
+			implied_probs,
+			target,
+			raw_margin,
+			gate_mean_weight=0.0,
+			gate_sat_weight=0.0,
+			anchor_regret_weight=0.5,
+		)
+
+		self.assertLess(float(helpful_loss.item()), float(harmful_loss.item()))
 
 	def test_feature_backbone_requires_positive_cross_layers(self):
 		with self.assertRaisesRegex(ValueError, "cross_layers must be positive for feature backbone"):
@@ -287,10 +362,10 @@ class ResultModelingTests(unittest.TestCase):
 		model = GatedResidualModel(
 			input_dim=2,
 			hidden_layers=[4],
-			gate_hidden_dim=4,
-			linear_gate=True,
+			num_leagues=1,
 		)
 		x = torch.zeros(1, 2)
+		cat_features = torch.zeros(1, 3, dtype=torch.long)
 		implied_probs = torch.tensor([[0.7, 0.2, 0.1]], dtype=torch.float32)
 		raw_margin = torch.tensor([[1.0]], dtype=torch.float32)
 		target = torch.tensor([0], dtype=torch.long)
@@ -304,7 +379,7 @@ class ResultModelingTests(unittest.TestCase):
 		aligned_loss = gated_loss(
 			model,
 			x,
-			None,
+			cat_features,
 			implied_probs,
 			target,
 			raw_margin,
@@ -319,7 +394,7 @@ class ResultModelingTests(unittest.TestCase):
 		misaligned_loss = gated_loss(
 			model,
 			x,
-			None,
+			cat_features,
 			implied_probs,
 			target,
 			raw_margin,
@@ -336,10 +411,10 @@ class ResultModelingTests(unittest.TestCase):
 		model = GatedResidualModel(
 			input_dim=2,
 			hidden_layers=[4],
-			gate_hidden_dim=4,
-			linear_gate=True,
+			num_leagues=1,
 		)
 		x = torch.zeros(1, 2)
+		cat_features = torch.zeros(1, 3, dtype=torch.long)
 		implied_probs = torch.tensor([[0.7, 0.2, 0.1]], dtype=torch.float32)
 		raw_margin = torch.tensor([[1.0]], dtype=torch.float32)
 		target = torch.tensor([0], dtype=torch.long)
@@ -353,7 +428,7 @@ class ResultModelingTests(unittest.TestCase):
 		aligned_loss = gated_loss(
 			model,
 			x,
-			None,
+			cat_features,
 			implied_probs,
 			target,
 			raw_margin,
@@ -366,7 +441,7 @@ class ResultModelingTests(unittest.TestCase):
 		misaligned_loss = gated_loss(
 			model,
 			x,
-			None,
+			cat_features,
 			implied_probs,
 			target,
 			raw_margin,
@@ -382,7 +457,6 @@ class ResultModelingTests(unittest.TestCase):
 			input_dim=2,
 			hidden_layers=[4],
 			num_leagues=2,
-			learn_league_market_bias=True,
 			league_market_bias_enabled_leagues=[1],
 		)
 		with torch.no_grad():
@@ -406,12 +480,63 @@ class ResultModelingTests(unittest.TestCase):
 		self.assertTrue(torch.allclose(logits[0], base_logits[0], atol=1e-6))
 		self.assertTrue(torch.allclose(logits[1], base_logits[1] + torch.tensor([0.1, 0.2, -0.3]), atol=1e-6))
 
+	def test_league_market_scale_mask_disables_selected_leagues(self):
+		model = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			num_leagues=2,
+			league_market_scale_enabled_leagues=[1],
+		)
+		with torch.no_grad():
+			model.league_market_scale.weight.copy_(torch.log(torch.tensor([[2.0], [0.5]], dtype=torch.float32)))
+
+		implied_probs = torch.tensor([
+			[0.5, 0.3, 0.2],
+			[0.5, 0.3, 0.2],
+		], dtype=torch.float32)
+		cat_features = torch.tensor([
+			[0, 0, 0],
+			[1, 0, 0],
+		], dtype=torch.long)
+
+		logits = model._compute_implied_logits(implied_probs, cat_features)
+		base_logits = _log_softmax_from_implied(implied_probs)
+
+		self.assertTrue(torch.allclose(logits[0], base_logits[0], atol=1e-6))
+		self.assertTrue(torch.allclose(logits[1], 0.5 * base_logits[1], atol=1e-6))
+
+	def test_league_market_class_scale_mask_disables_selected_leagues(self):
+		model = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			num_leagues=2,
+			league_market_class_scale_enabled_leagues=[1],
+		)
+		with torch.no_grad():
+			model.league_market_class_scale.weight.copy_(torch.log(torch.tensor([
+				[2.0, 2.0, 2.0],
+				[1.5, 0.5, 1.0],
+			], dtype=torch.float32)))
+		implied_probs = torch.tensor([
+			[0.5, 0.3, 0.2],
+			[0.5, 0.3, 0.2],
+		], dtype=torch.float32)
+		cat_features = torch.tensor([
+			[0, 0, 0],
+			[1, 0, 0],
+		], dtype=torch.long)
+
+		logits = model._compute_implied_logits(implied_probs, cat_features)
+		base_logits = _log_softmax_from_implied(implied_probs)
+
+		self.assertTrue(torch.allclose(logits[0], base_logits[0], atol=1e-6))
+		self.assertTrue(torch.allclose(logits[1], base_logits[1] * torch.tensor([1.5, 0.5, 1.0]), atol=1e-6))
+
 	def test_league_market_logit_mixer_mask_disables_selected_leagues(self):
 		model = GatedResidualModel(
 			input_dim=2,
 			hidden_layers=[4],
 			num_leagues=2,
-			learn_league_market_logit_mixer=True,
 			league_market_logit_mixer_enabled_leagues=[1],
 		)
 		with torch.no_grad():
@@ -439,6 +564,13 @@ class ResultModelingTests(unittest.TestCase):
 
 		self.assertTrue(torch.allclose(logits[0], base_logits[0], atol=1e-6))
 		self.assertTrue(torch.allclose(logits[1], expected_enabled, atol=1e-6))
+
+	def test_load_model_bundle_loads_tracked_artifact(self):
+		bundle = load_model_bundle(RESULT_MODEL_BUNDLE_PATHS, torch.device("cpu"))
+
+		self.assertEqual(bundle.model.num_leagues, 5)
+		self.assertTrue(bundle.model.shared_gate)
+		self.assertTrue(bundle.model.linear_gate)
 
 
 if __name__ == "__main__":
