@@ -22,7 +22,7 @@
 	"gate_sat_weight": 0.0,
 	"lambda_repulsion": 2.5,
 	"lambda_corr": 0.0,
-	"lambda_logit_delta": 0.032,
+	"lambda_logit_delta": 0.045,
 	"market_target_mix": 0.01125,
 	"market_target_surprise_scale": 1.7,
 	"market_target_surprise_power": 1.0,
@@ -38,7 +38,7 @@
 	"market_target_entropy_scale": 0.85,
 	"entropy_curriculum_mode": "center_only",
 	"entropy_curriculum_strength": 0.15,
-	"confidence_penalty_weight": 0.0075,
+	"confidence_penalty_weight": 0.01,
 	"brier_aux_weight": 0.028,
 	"symmetric_ce_weight": 0.001,
 	"symmetric_ce_label_floor": 0.0001,
@@ -47,6 +47,6 @@
 	"bi_tempered_mix_weight": 0.1055,
 	"bi_tempered_t1": 0.82,
 	"bi_tempered_t2": 1.05,
-	"anchor_regret_weight": 0.03,
+	"anchor_regret_weight": 0.05,
 	"anchor_regret_power": 2.0
 }
