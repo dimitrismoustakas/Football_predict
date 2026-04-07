@@ -1,10 +1,12 @@
 import unittest
 from datetime import datetime
+from unittest.mock import Mock, patch
 
+import pandas as pd
 import polars as pl
 
 from preprocessing.odds_integration import join_odds
-from prod_run.build_prod_features import fill_missing_future_elo
+from prod_run.build_prod_features import fetch_current_data, fill_missing_future_elo
 
 
 class ProductionFeatureInputTests(unittest.TestCase):
@@ -101,6 +103,33 @@ class ProductionFeatureInputTests(unittest.TestCase):
 		self.assertEqual(filled["elo_diff"][1], 80.0)
 		self.assertEqual(filled["elo_sum"][1], 2940.0)
 		self.assertEqual(filled["elo_mean"][1], 1470.0)
+
+	def test_fetch_current_data_raises_on_league_fetch_error(self):
+		def fake_understat(leagues, seasons):
+			reader = Mock()
+			if leagues == "ESP-La Liga":
+				reader.read_team_match_stats.side_effect = RuntimeError("upstream failure")
+			else:
+				reader.read_team_match_stats.return_value = pd.DataFrame({
+					"league": [leagues],
+					"league_id": [leagues],
+					"season": ["2526"],
+					"date": [pd.Timestamp("2026-03-10")],
+					"game": [f"{leagues}-match"],
+					"home_team": ["Team A"],
+					"away_team": ["Team B"],
+					"home_team_id": [1],
+					"away_team_id": [2],
+					"home_shot": [11.0],
+					"away_shot": [8.0],
+					"home_shotontarget": [5.0],
+					"away_shotontarget": [3.0],
+				})
+			return reader
+
+		with patch("prod_run.build_prod_features.sd.Understat", side_effect=fake_understat):
+			with self.assertRaisesRegex(RuntimeError, "upstream failure"):
+				fetch_current_data(upcoming_fixtures=pd.DataFrame())
 
 
 if __name__ == "__main__":

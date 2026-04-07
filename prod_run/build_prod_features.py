@@ -313,50 +313,47 @@ def fetch_current_data(upcoming_fixtures: pd.DataFrame | None = None):
     
     for league in LEAGUES:
         print(f"  Processing {league}...")
-        try:
-            reader = sd.Understat(leagues=league, seasons=season_str)
-            
-            # 1. Completed matches stats
-            stats = reader.read_team_match_stats()
-            if not stats.empty:
-                stats = stats.reset_index()
-                # Rename columns
-                stats.columns = [c.lower() for c in stats.columns]
-                rename_map = {
-                    "home_shot": "home_shots",
-                    "away_shot": "away_shots",
-                    "home_shotontarget": "home_sot",
-                    "away_shotontarget": "away_sot",
-                    "game": "match_id"
-                }
-                stats = stats.rename(columns=rename_map)
-                
+        reader = sd.Understat(leagues=league, seasons=season_str)
+
+        # 1. Completed matches stats
+        stats = reader.read_team_match_stats()
+        if stats.empty:
+            raise RuntimeError(f"No Understat team-match stats returned for {league} in {season_str}")
+        stats = stats.reset_index()
+        # Rename columns
+        stats.columns = [c.lower() for c in stats.columns]
+        rename_map = {
+            "home_shot": "home_shots",
+            "away_shot": "away_shots",
+            "home_shotontarget": "home_sot",
+            "away_shotontarget": "away_sot",
+            "game": "match_id"
+        }
+        stats = stats.rename(columns=rename_map)
+
+        # Ensure date is datetime
+        if 'date' in stats.columns:
+            stats['date'] = pd.to_datetime(stats['date'])
+
+        all_matches.append(stats)
+
+        if upcoming_fixtures is None:
+            # 2. Schedule (upcoming fallback when no odds-driven slate is supplied)
+            schedule = reader.read_schedule(include_matches_without_data=True)
+            if not schedule.empty:
+                schedule = schedule.reset_index()
+                schedule.columns = [c.lower() for c in schedule.columns]
+                if 'game' in schedule.columns:
+                    schedule = schedule.rename(columns={'game': 'match_id'})
+
                 # Ensure date is datetime
-                if 'date' in stats.columns:
-                    stats['date'] = pd.to_datetime(stats['date'])
-                
-                all_matches.append(stats)
-            
-            if upcoming_fixtures is None:
-                # 2. Schedule (upcoming fallback when no odds-driven slate is supplied)
-                schedule = reader.read_schedule(include_matches_without_data=True)
-                if not schedule.empty:
-                    schedule = schedule.reset_index()
-                    schedule.columns = [c.lower() for c in schedule.columns]
-                    if 'game' in schedule.columns:
-                        schedule = schedule.rename(columns={'game': 'match_id'})
-                    
-                    # Ensure date is datetime
-                    if 'date' in schedule.columns:
-                        schedule['date'] = pd.to_datetime(schedule['date'])
-                    
-                    all_matches.append(schedule)
-                
-        except Exception as e:
-            print(f"    Error fetching {league}: {e}")
+                if 'date' in schedule.columns:
+                    schedule['date'] = pd.to_datetime(schedule['date'])
+
+                all_matches.append(schedule)
             
     if not all_matches:
-        return pl.DataFrame()
+        raise RuntimeError(f"No current-season production data fetched for {season_str}")
         
     # Combine all
     full_df = pd.concat(all_matches, ignore_index=True)
@@ -384,8 +381,7 @@ def main(upcoming_fixtures: pd.DataFrame | None = None):
     # 1. Fetch data
     df = fetch_current_data(upcoming_fixtures=upcoming_fixtures)
     if df.is_empty():
-        print("No data fetched.")
-        return
+        raise RuntimeError("No data fetched for production features")
 
     lf = df.lazy()
     lf = rename_and_cast(lf)
