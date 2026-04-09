@@ -565,6 +565,46 @@ class ResultModelingTests(unittest.TestCase):
 		self.assertTrue(torch.allclose(logits[0], base_logits[0], atol=1e-6))
 		self.assertTrue(torch.allclose(logits[1], expected_enabled, atol=1e-6))
 
+	def test_high_draw_positive_residual_scale_only_caps_positive_draw_residuals_above_threshold(self):
+		model = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			num_leagues=1,
+			high_draw_positive_residual_scale=0.8,
+			high_draw_positive_threshold=0.26,
+		)
+		hidden = torch.zeros(3, model.backbone.hidden_dim)
+		hidden[:, 0] = torch.tensor([1.0, -1.0, 1.0], dtype=torch.float32)
+		anchor_draw_prob = torch.tensor([0.24, 0.28, 0.28], dtype=torch.float32)
+		with torch.no_grad():
+			model.backbone.final_layer.weight.zero_()
+			model.backbone.final_layer.bias.zero_()
+			model.backbone.final_layer.weight[1, 0] = 0.5
+
+		residual_logits = model._compute_residual_logits(hidden, anchor_draw_prob=anchor_draw_prob)
+
+		self.assertTrue(torch.allclose(residual_logits[:, 1], torch.tensor([0.5, -0.5, 0.4], dtype=torch.float32), atol=1e-6))
+
+	def test_low_draw_negative_residual_scale_only_caps_negative_draw_residuals_below_threshold(self):
+		model = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			num_leagues=1,
+			low_draw_negative_residual_scale=0.8,
+			low_draw_negative_threshold=0.22,
+		)
+		hidden = torch.zeros(3, model.backbone.hidden_dim)
+		hidden[:, 0] = torch.tensor([-1.0, 1.0, -1.0], dtype=torch.float32)
+		anchor_draw_prob = torch.tensor([0.20, 0.20, 0.24], dtype=torch.float32)
+		with torch.no_grad():
+			model.backbone.final_layer.weight.zero_()
+			model.backbone.final_layer.bias.zero_()
+			model.backbone.final_layer.weight[1, 0] = 0.5
+
+		residual_logits = model._compute_residual_logits(hidden, anchor_draw_prob=anchor_draw_prob)
+
+		self.assertTrue(torch.allclose(residual_logits[:, 1], torch.tensor([-0.4, 0.5, -0.5], dtype=torch.float32), atol=1e-6))
+
 	def test_load_model_bundle_loads_tracked_artifact(self):
 		bundle = load_model_bundle(RESULT_MODEL_BUNDLE_PATHS, torch.device("cpu"))
 

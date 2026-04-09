@@ -114,6 +114,10 @@ class GatedResidualModel(nn.Module):
 		league_market_logit_mixer_enabled_leagues: Optional[List[int]] = None,
 		num_leagues: int = 0,
 		cross_layers: int = 2,
+		high_draw_positive_residual_scale: float = 1.0,
+		high_draw_positive_threshold: float = 0.26,
+		low_draw_negative_residual_scale: float = 1.0,
+		low_draw_negative_threshold: float = 0.22,
 	):
 		super().__init__()
 		if num_leagues <= 0:
@@ -187,6 +191,10 @@ class GatedResidualModel(nn.Module):
 		self.league_market_logit_mixer_enabled_leagues = league_market_logit_mixer_enabled_leagues
 		self.num_leagues = num_leagues
 		self.cross_layers = cross_layers
+		self.high_draw_positive_residual_scale = float(high_draw_positive_residual_scale)
+		self.high_draw_positive_threshold = float(high_draw_positive_threshold)
+		self.low_draw_negative_residual_scale = float(low_draw_negative_residual_scale)
+		self.low_draw_negative_threshold = float(low_draw_negative_threshold)
 
 	@staticmethod
 	def _build_enabled_mask(
@@ -287,17 +295,43 @@ class GatedResidualModel(nn.Module):
 		raw_margin: torch.Tensor,
 	) -> torch.Tensor:
 		h = self.backbone.get_hidden(x)
-		residual_logits = self._compute_residual_logits(h)
-
-		gate = self._compute_gate(h, implied_probs, raw_margin)
 		implied_logits = self._compute_implied_logits(implied_probs, cat_features)
+		anchor_draw_prob = torch.softmax(implied_logits, dim=-1)[:, 1]
+		residual_logits = self._compute_residual_logits(h, anchor_draw_prob=anchor_draw_prob)
+		gate = self._compute_gate(h, implied_probs, raw_margin)
 		return implied_logits + gate * residual_logits
 
 	def _compute_residual_logits(
 		self,
 		hidden: torch.Tensor,
+		anchor_draw_prob: torch.Tensor | None = None,
 	) -> torch.Tensor:
-		return self.backbone.final_layer(hidden)
+		residual_logits = self.backbone.final_layer(hidden)
+		if (
+			self.high_draw_positive_residual_scale == 1.0
+			and self.low_draw_negative_residual_scale == 1.0
+		):
+			return residual_logits
+		if anchor_draw_prob is None:
+			raise ValueError("anchor_draw_prob is required when draw residual caps are active")
+		draw_logit = residual_logits[:, 1]
+		draw_scale = torch.ones_like(draw_logit)
+		if self.high_draw_positive_residual_scale != 1.0:
+			positive_high_draw_mask = (anchor_draw_prob.view(-1) >= self.high_draw_positive_threshold) & (draw_logit > 0)
+			draw_scale = torch.where(
+				positive_high_draw_mask,
+				draw_scale.new_full(draw_scale.shape, self.high_draw_positive_residual_scale),
+				draw_scale,
+			)
+		if self.low_draw_negative_residual_scale != 1.0:
+			negative_low_draw_mask = (anchor_draw_prob.view(-1) <= self.low_draw_negative_threshold) & (draw_logit < 0)
+			draw_scale = torch.where(
+				negative_low_draw_mask,
+				draw_scale.new_full(draw_scale.shape, self.low_draw_negative_residual_scale),
+				draw_scale,
+			)
+		scaled_draw = draw_logit.unsqueeze(-1) * draw_scale.unsqueeze(-1)
+		return torch.cat([residual_logits[:, :1], scaled_draw, residual_logits[:, 2:]], dim=-1)
 
 	def get_gate_stats(
 		self,
