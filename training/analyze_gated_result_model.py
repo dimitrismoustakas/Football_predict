@@ -110,6 +110,12 @@ def extract_calibration_parameters(model) -> dict[str, Any]:
 		"gate_bias": float(model.gate_bias.detach().cpu().view(-1)[0].item()),
 		"shared_gate": bool(model.shared_gate),
 		"linear_gate": bool(model.linear_gate),
+		"draw_residual_caps": {
+			"high_positive_scale": float(model.high_draw_positive_residual_scale),
+			"high_positive_threshold": float(model.high_draw_positive_threshold),
+			"low_negative_scale": float(model.low_draw_negative_residual_scale),
+			"low_negative_threshold": float(model.low_draw_negative_threshold),
+		},
 		"gate_market_feature_order": [
 			"implied_home",
 			"implied_draw",
@@ -174,8 +180,9 @@ def compute_forward_components(model, X: np.ndarray, cat_features: np.ndarray, i
 
 	with torch.no_grad():
 		hidden = model.backbone.get_hidden(X_tensor)
-		residual_logits = model._compute_residual_logits(hidden)
 		anchor_logits = model._compute_implied_logits(implied_tensor, cat_tensor)
+		anchor_draw_prob = torch.softmax(anchor_logits, dim=-1)[:, 1]
+		residual_logits = model._compute_residual_logits(hidden, anchor_draw_prob=anchor_draw_prob)
 		gate = model._compute_gate(hidden, implied_tensor, raw_margin_tensor)
 		applied_residual_logits = gate * residual_logits
 		open_logits = anchor_logits + residual_logits
@@ -306,6 +313,14 @@ def print_report(summary: dict[str, Any]):
 	cal = summary["calibration"]
 	print(f"Global market_logit_scale: {cal['market_logit_scale']:.6f}")
 	print(f"Learned gate_bias: {cal['gate_bias']:.6f}")
+	caps = cal["draw_residual_caps"]
+	print(
+		"Draw residual caps: "
+		f"high_positive_scale={caps['high_positive_scale']:.4f} "
+		f"@ threshold={caps['high_positive_threshold']:.4f} | "
+		f"low_negative_scale={caps['low_negative_scale']:.4f} "
+		f"@ threshold={caps['low_negative_threshold']:.4f}"
+	)
 	print("Linear gate market weights:")
 	for key, value in cal["linear_gate_market_weights"].items():
 		print(f"  {key:18s} {value:+.6f}")
