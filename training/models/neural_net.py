@@ -374,6 +374,9 @@ class TrainConfig:
 	lambda_repulsion: float = 0.0
 	lambda_corr: float = 0.0
 	lambda_logit_delta: float = 0.0
+	logit_delta_home_weight: float = 1.0
+	logit_delta_draw_weight: float = 1.0
+	logit_delta_away_weight: float = 1.0
 	market_target_mix: float = 0.0
 	market_target_surprise_scale: float = 0.0
 	market_target_surprise_power: float = 1.0
@@ -788,6 +791,9 @@ def gated_loss(
 	lambda_repulsion: float = 0.0,
 	lambda_corr: float = 0.0,
 	lambda_logit_delta: float = 0.0,
+	logit_delta_home_weight: float = 1.0,
+	logit_delta_draw_weight: float = 1.0,
+	logit_delta_away_weight: float = 1.0,
 	market_target_mix: float = 0.0,
 	market_target_surprise_scale: float = 0.0,
 	market_target_surprise_power: float = 1.0,
@@ -939,7 +945,14 @@ def gated_loss(
 
 	if lambda_logit_delta > 0:
 		implied_anchor = model._compute_implied_logits(implied_probs, cat_features)
-		logit_delta_penalty = (pred_logits - implied_anchor).pow(2).mean(dim=-1)
+		logit_delta_class_weights = pred_logits.new_tensor(
+			[
+				float(logit_delta_home_weight),
+				float(logit_delta_draw_weight),
+				float(logit_delta_away_weight),
+			]
+		).view(1, -1)
+		logit_delta_penalty = ((pred_logits - implied_anchor).pow(2) * logit_delta_class_weights).mean(dim=-1)
 		loss = loss + lambda_logit_delta * logit_delta_penalty.mean()
 
 	if gate_mean_weight > 0 or gate_sat_weight > 0:

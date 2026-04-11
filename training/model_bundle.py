@@ -3,6 +3,7 @@ Shared save/load helpers for the canonical result-model bundle.
 """
 
 import json
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -79,7 +80,12 @@ def build_result_model(
 ) -> GatedResidualModel:
 	"""Build the result model from saved metadata."""
 
-	model_kwargs = dict(metadata.get("model_kwargs", {}))
+	accepted_kwargs = set(inspect.signature(GatedResidualModel).parameters)
+	model_kwargs = {
+		key: value
+		for key, value in dict(metadata.get("model_kwargs", {})).items()
+		if key in accepted_kwargs
+	}
 	return GatedResidualModel(
 		input_dim=len(feature_cols),
 		n_classes=3,
@@ -106,7 +112,12 @@ def load_model_bundle(paths: ModelBundlePaths, device: torch.device) -> LoadedMo
 		raise ValueError(f"No feature column list found in {paths.config_path}")
 	state_dict = torch.load(paths.model_path, map_location=device, weights_only=True)
 	model = build_result_model(feature_cols, metadata)
-	model.load_state_dict(state_dict)
+	filtered_state_dict = {
+		key: value
+		for key, value in state_dict.items()
+		if key in model.state_dict()
+	}
+	model.load_state_dict(filtered_state_dict, strict=False)
 	model.to(device)
 	model.eval()
 

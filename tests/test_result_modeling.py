@@ -62,6 +62,51 @@ class ResultModelingTests(unittest.TestCase):
 		excess = max(0.0, float(-torch.log(torch.tensor(0.30 / 0.40)).item()) - 0.20)
 		self.assertAlmostEqual(float(penalty.item()), excess**2, places=6)
 
+	def test_class_weighted_logit_delta_penalty_can_downweight_draw_alignment(self):
+		model = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			num_leagues=1,
+		)
+		x = torch.zeros(1, 2, dtype=torch.float32)
+		cat_features = torch.zeros(1, 3, dtype=torch.long)
+		implied_probs = torch.tensor([[0.60, 0.25, 0.15]], dtype=torch.float32)
+		target = torch.tensor([1], dtype=torch.long)
+		raw_margin = torch.ones(1, 1, dtype=torch.float32)
+		with torch.no_grad():
+			model.backbone.final_layer.weight.zero_()
+			model.backbone.final_layer.bias.zero_()
+			model.backbone.final_layer.bias[1] = 1.0
+			model.gate_head.weight.zero_()
+			model.gate_head.bias.zero_()
+			model.gate_bias.fill_(10.0)
+
+		full_penalty = gated_loss(
+			model,
+			x,
+			cat_features,
+			implied_probs,
+			target,
+			raw_margin,
+			lambda_logit_delta=1.0,
+			gate_mean_weight=0.0,
+			gate_sat_weight=0.0,
+		)
+		draw_downweighted = gated_loss(
+			model,
+			x,
+			cat_features,
+			implied_probs,
+			target,
+			raw_margin,
+			lambda_logit_delta=1.0,
+			logit_delta_draw_weight=0.2,
+			gate_mean_weight=0.0,
+			gate_sat_weight=0.0,
+		)
+
+		self.assertLess(float(draw_downweighted.item()), float(full_penalty.item()))
+
 	def test_gated_loss_anchor_regret_penalizes_harmful_deviations_more(self):
 		model = GatedResidualModel(
 			input_dim=2,
