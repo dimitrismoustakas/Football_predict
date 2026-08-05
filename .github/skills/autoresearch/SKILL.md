@@ -79,7 +79,7 @@ The TSV at `artifacts/experiment_metrics/result_main_runs.tsv` uses tab-separate
 | `description` | Short text of what this experiment tried |
 | `cv_rps` | CV mean RPS (secondary) |
 | `val_log_loss` | Epoch-selection season log_loss |
-| `test_log_loss` | Held-out test season log_loss |
+| `test_log_loss` | Consulted acceptance-season log_loss |
 | `cv_metrics_json` | Full CV metrics dict as JSON |
 | `test_metrics_json` | Full test metrics dict as JSON |
 

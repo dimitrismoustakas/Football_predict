@@ -97,15 +97,13 @@ class FeatureBackbone(nn.Module):
 		return torch.cat([deep_hidden, cross_hidden], dim=-1)
 
 
-class ZeroEmbedding(nn.Module):
-	"""Embedding-like table that stays zero-initialized without consuming RNG."""
+def _zero_embedding(num_embeddings: int, embedding_dim: int) -> nn.Embedding:
+	"""Build a trainable zero embedding without consuming random numbers."""
 
-	def __init__(self, num_embeddings: int, embedding_dim: int):
-		super().__init__()
-		self.weight = nn.Parameter(torch.zeros(num_embeddings, embedding_dim))
-
-	def forward(self, indices: torch.Tensor) -> torch.Tensor:
-		return F.embedding(indices, self.weight)
+	return nn.Embedding.from_pretrained(
+		torch.zeros(num_embeddings, embedding_dim),
+		freeze=False,
+	)
 
 
 class GatedResidualModel(nn.Module):
@@ -149,28 +147,28 @@ class GatedResidualModel(nn.Module):
 		self.gate_bias = nn.Parameter(torch.full((1,), init_bias))
 		self.register_buffer("market_bias", torch.zeros(n_classes))
 		self.market_class_scale = None
-		self.league_market_bias = ZeroEmbedding(num_leagues, n_classes)
+		self.league_market_bias = _zero_embedding(num_leagues, n_classes)
 		self._register_enabled_mask(
 			"league_market_bias_enabled_mask",
 			num_leagues,
 			league_market_bias_enabled_leagues,
 			"league_market_bias_enabled_leagues",
 		)
-		self.league_market_scale = ZeroEmbedding(num_leagues, 1)
+		self.league_market_scale = _zero_embedding(num_leagues, 1)
 		self._register_enabled_mask(
 			"league_market_scale_enabled_mask",
 			num_leagues,
 			league_market_scale_enabled_leagues,
 			"league_market_scale_enabled_leagues",
 		)
-		self.league_market_class_scale = ZeroEmbedding(num_leagues, n_classes)
+		self.league_market_class_scale = _zero_embedding(num_leagues, n_classes)
 		self._register_enabled_mask(
 			"league_market_class_scale_enabled_mask",
 			num_leagues,
 			league_market_class_scale_enabled_leagues,
 			"league_market_class_scale_enabled_leagues",
 		)
-		self.league_market_logit_mixer = ZeroEmbedding(num_leagues, n_classes * n_classes)
+		self.league_market_logit_mixer = _zero_embedding(num_leagues, n_classes * n_classes)
 		self._register_enabled_mask(
 			"league_market_logit_mixer_enabled_mask",
 			num_leagues,
@@ -767,8 +765,7 @@ def _apply_true_class_surprise_scaling(
 def _anchor_regret_penalty(
 	final_log_probs: torch.Tensor,
 	anchor_logits: torch.Tensor,
-	target: torch.Tensor | None = None,
-	target_distribution: torch.Tensor | None = None,
+	target_distribution: torch.Tensor,
 	margin: float = 0.0,
 	power: float = 1.0,
 ) -> torch.Tensor:
@@ -778,16 +775,9 @@ def _anchor_regret_penalty(
 		raise ValueError("anchor_regret_margin must be non-negative")
 	if power <= 0:
 		raise ValueError("anchor_regret_power must be positive")
-	if target_distribution is not None:
-		target_distribution = target_distribution.float()
-		final_nll = -(target_distribution * final_log_probs).sum(dim=-1)
-		anchor_nll = -(target_distribution * F.log_softmax(anchor_logits, dim=-1)).sum(dim=-1)
-	else:
-		if target is None:
-			raise ValueError("target or target_distribution is required for anchor regret penalty")
-		target = target.view(-1).long()
-		final_nll = F.nll_loss(final_log_probs, target, reduction="none")
-		anchor_nll = F.cross_entropy(anchor_logits, target, reduction="none")
+	target_distribution = target_distribution.float()
+	final_nll = -(target_distribution * final_log_probs).sum(dim=-1)
+	anchor_nll = -(target_distribution * F.log_softmax(anchor_logits, dim=-1)).sum(dim=-1)
 	regret = (final_nll - anchor_nll - margin).clamp_min(0.0)
 	if abs(power - 1.0) > 1e-6:
 		regret = regret.pow(power)
@@ -940,8 +930,7 @@ def gated_loss(
 		regret_penalty = _anchor_regret_penalty(
 			log_probs,
 			anchor_logits,
-			target,
-			target_distribution=target_distribution,
+			target_distribution,
 			margin=anchor_regret_margin,
 			power=anchor_regret_power,
 		)

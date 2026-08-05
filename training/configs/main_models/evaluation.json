@@ -4,5 +4,5 @@
 	"final_training_seed": 13,
 	"rolling_cv_n_folds": 4,
 	"test_season": "2526",
-	"test_role": "held_out"
+	"test_role": "acceptance"
 }

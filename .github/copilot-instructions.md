@@ -22,6 +22,7 @@ Always preserve this unless the user explicitly asks to change it:
 - use `training/configs/main_models/evaluation.json` as the source of truth
 - rolling expanding-window CV mean `log_loss` is the decision metric
 - the last pre-test season is reserved for epoch selection
+- the fixed test season is a consulted acceptance set rather than an untouched holdout
 - use the latest comparable row in `artifacts/experiment_metrics/result_main_runs.tsv` as the default comparison point
 
 ## Production

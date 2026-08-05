@@ -1,12 +1,12 @@
 """
-Analyze a trained gated-residual match-result model on a held-out season.
+Analyze a trained gated-residual match-result model on the fixed test season.
 
 This script focuses on the parts that are structurally interpretable:
 - market calibration parameters
 - calibrated anchor probabilities vs raw implied probabilities
 - residual logits before the gate
 - applied residual logits after the gate
-- per-league and overall held-out metrics
+- per-league and overall test-season metrics
 
 It assumes the production bundle in artifacts/models/ was produced by the
 current gated residual trainer.

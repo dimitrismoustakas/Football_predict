@@ -4,7 +4,7 @@ Canonical training entry point for the production match-result model.
 The evaluation loop is fixed by source-controlled config:
 - frozen rolling CV folds for model selection
 - fixed epoch-selection season for epoch selection
-- fixed held-out test season for secondary evaluation
+- fixed test season for secondary acceptance evaluation
 """
 
 import argparse
@@ -289,6 +289,8 @@ def build_bundle_metadata(
 			"test_season": test_season,
 			"test_role": evaluation_config["test_role"],
 			"training_seed": evaluation_config["training_seed"],
+			"final_training_seed": evaluation_config["final_training_seed"],
+			"final_loader_seed": evaluation_config["training_seed"] + 10_000,
 		},
 		"selection_summary": {
 			"objective_metrics": objective_metrics,
@@ -346,6 +348,14 @@ def split_selection_folds(folds: list[tuple[list[str], str]]) -> tuple[list[tupl
 	return folds[:-1], folds[-1]
 
 
+def collect_pre_test_seasons(folds: list[tuple[list[str], str]]) -> list[str]:
+	return sorted({
+		season
+		for train_seasons, validation_season in folds
+		for season in [*train_seasons, validation_season]
+	})
+
+
 def describe_training_split(
 	objective_folds: list[tuple[list[str], str]],
 	epoch_train_seasons: list[str],
@@ -379,10 +389,6 @@ def prepare_phase_loaders(
 
 def resolve_final_training_epochs(max_epochs: int, best_epoch: int) -> int:
 	return max(1, min(max_epochs, int(best_epoch)))
-
-
-def resolve_final_training_seed(evaluation_config: dict) -> int:
-	return int(evaluation_config["final_training_seed"])
 
 
 def metric_improvement(candidate_value: float, reference_value: float, metric_name: str) -> float:
@@ -483,7 +489,8 @@ def train_main_model(description: str = "") -> dict:
 	evaluation_config = load_evaluation_config()
 	comparison_metric = evaluation_config["comparison_metric"]
 	training_seed = evaluation_config["training_seed"]
-	final_training_seed = resolve_final_training_seed(evaluation_config)
+	final_training_seed = evaluation_config["final_training_seed"]
+	final_loader_seed = training_seed + 10_000
 
 	print_header(f"TRAIN MAIN MODEL: {DISPLAY_NAME}")
 	print(f"Device: {DEVICE}")
@@ -509,11 +516,11 @@ def train_main_model(description: str = "") -> dict:
 
 	print(f"\nGenerating {evaluation_config['rolling_cv_n_folds']}-fold rolling CV splits...")
 	folds = generate_rolling_cv_folds(df, n_folds=evaluation_config["rolling_cv_n_folds"], test_season=test_season)
-	print(f"Fixed held-out test season: {test_season} ({evaluation_config['test_role']})")
+	print(f"Fixed test season: {test_season} ({evaluation_config['test_role']})")
 
 	objective_folds, epoch_fold = split_selection_folds(folds)
 	epoch_train_seasons, epoch_selection_season = epoch_fold
-	all_cv_seasons = sorted({season for train_seasons, val_season in folds for season in [*train_seasons, val_season]})
+	all_cv_seasons = collect_pre_test_seasons(folds)
 	objective_val_seasons = [val_season for _, val_season in objective_folds]
 	describe_training_split(
 		objective_folds,
@@ -576,7 +583,7 @@ def train_main_model(description: str = "") -> dict:
 		training_config["batch_size"],
 		all_cv_seasons,
 		[test_season],
-		training_seed + 10_000,
+		final_loader_seed,
 	)
 	final_config = build_train_config(training_config, data_train["X"].shape[1], final_train_epochs, num_leagues)
 
@@ -612,8 +619,11 @@ def train_main_model(description: str = "") -> dict:
 		"objective_baseline_metrics": cv_baseline_metrics,
 		"objective_fold_metrics": cv_fold_metrics,
 		"epoch_selection_season": epoch_selection_season,
-		"held_out_test_season": test_season,
+		"test_season": test_season,
 		"test_role": evaluation_config["test_role"],
+		"training_seed": training_seed,
+		"final_training_seed": final_training_seed,
+		"final_loader_seed": final_loader_seed,
 		"best_epoch": best_epoch,
 		"best_val_loss": float(best_val_loss),
 		"data_snapshot": data_snapshot,
