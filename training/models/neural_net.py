@@ -97,6 +97,17 @@ class FeatureBackbone(nn.Module):
 		return torch.cat([deep_hidden, cross_hidden], dim=-1)
 
 
+class ZeroEmbedding(nn.Module):
+	"""Embedding-like table that stays zero-initialized without consuming RNG."""
+
+	def __init__(self, num_embeddings: int, embedding_dim: int):
+		super().__init__()
+		self.weight = nn.Parameter(torch.zeros(num_embeddings, embedding_dim))
+
+	def forward(self, indices: torch.Tensor) -> torch.Tensor:
+		return F.embedding(indices, self.weight)
+
+
 class GatedResidualModel(nn.Module):
 	"""Multiclass gated residual model for Home/Draw/Away prediction."""
 
@@ -138,32 +149,28 @@ class GatedResidualModel(nn.Module):
 		self.gate_bias = nn.Parameter(torch.full((1,), init_bias))
 		self.register_buffer("market_bias", torch.zeros(n_classes))
 		self.market_class_scale = None
-		self.league_market_bias = nn.Embedding(num_leagues, n_classes)
-		nn.init.zeros_(self.league_market_bias.weight)
+		self.league_market_bias = ZeroEmbedding(num_leagues, n_classes)
 		self._register_enabled_mask(
 			"league_market_bias_enabled_mask",
 			num_leagues,
 			league_market_bias_enabled_leagues,
 			"league_market_bias_enabled_leagues",
 		)
-		self.league_market_scale = nn.Embedding(num_leagues, 1)
-		nn.init.zeros_(self.league_market_scale.weight)
+		self.league_market_scale = ZeroEmbedding(num_leagues, 1)
 		self._register_enabled_mask(
 			"league_market_scale_enabled_mask",
 			num_leagues,
 			league_market_scale_enabled_leagues,
 			"league_market_scale_enabled_leagues",
 		)
-		self.league_market_class_scale = nn.Embedding(num_leagues, n_classes)
-		nn.init.zeros_(self.league_market_class_scale.weight)
+		self.league_market_class_scale = ZeroEmbedding(num_leagues, n_classes)
 		self._register_enabled_mask(
 			"league_market_class_scale_enabled_mask",
 			num_leagues,
 			league_market_class_scale_enabled_leagues,
 			"league_market_class_scale_enabled_leagues",
 		)
-		self.league_market_logit_mixer = nn.Embedding(num_leagues, n_classes * n_classes)
-		nn.init.zeros_(self.league_market_logit_mixer.weight)
+		self.league_market_logit_mixer = ZeroEmbedding(num_leagues, n_classes * n_classes)
 		self._register_enabled_mask(
 			"league_market_logit_mixer_enabled_mask",
 			num_leagues,
@@ -374,6 +381,9 @@ class TrainConfig:
 	lambda_repulsion: float = 0.0
 	lambda_corr: float = 0.0
 	lambda_logit_delta: float = 0.0
+	logit_delta_home_weight: float = 1.0
+	logit_delta_draw_weight: float = 1.0
+	logit_delta_away_weight: float = 1.0
 	market_target_mix: float = 0.0
 	market_target_surprise_scale: float = 0.0
 	market_target_surprise_power: float = 1.0
@@ -757,7 +767,8 @@ def _apply_true_class_surprise_scaling(
 def _anchor_regret_penalty(
 	final_log_probs: torch.Tensor,
 	anchor_logits: torch.Tensor,
-	target: torch.Tensor,
+	target: torch.Tensor | None = None,
+	target_distribution: torch.Tensor | None = None,
 	margin: float = 0.0,
 	power: float = 1.0,
 ) -> torch.Tensor:
@@ -767,9 +778,16 @@ def _anchor_regret_penalty(
 		raise ValueError("anchor_regret_margin must be non-negative")
 	if power <= 0:
 		raise ValueError("anchor_regret_power must be positive")
-	target = target.view(-1).long()
-	final_nll = F.nll_loss(final_log_probs, target, reduction="none")
-	anchor_nll = F.cross_entropy(anchor_logits, target, reduction="none")
+	if target_distribution is not None:
+		target_distribution = target_distribution.float()
+		final_nll = -(target_distribution * final_log_probs).sum(dim=-1)
+		anchor_nll = -(target_distribution * F.log_softmax(anchor_logits, dim=-1)).sum(dim=-1)
+	else:
+		if target is None:
+			raise ValueError("target or target_distribution is required for anchor regret penalty")
+		target = target.view(-1).long()
+		final_nll = F.nll_loss(final_log_probs, target, reduction="none")
+		anchor_nll = F.cross_entropy(anchor_logits, target, reduction="none")
 	regret = (final_nll - anchor_nll - margin).clamp_min(0.0)
 	if abs(power - 1.0) > 1e-6:
 		regret = regret.pow(power)
@@ -788,6 +806,9 @@ def gated_loss(
 	lambda_repulsion: float = 0.0,
 	lambda_corr: float = 0.0,
 	lambda_logit_delta: float = 0.0,
+	logit_delta_home_weight: float = 1.0,
+	logit_delta_draw_weight: float = 1.0,
+	logit_delta_away_weight: float = 1.0,
 	market_target_mix: float = 0.0,
 	market_target_surprise_scale: float = 0.0,
 	market_target_surprise_power: float = 1.0,
@@ -872,11 +893,11 @@ def gated_loss(
 		base_loss = F.nll_loss(log_probs, target, reduction="none")
 
 	if gce_mix_weight > 0:
-		true_class_probs = pred_probs.gather(1, target.unsqueeze(1)).squeeze(1).clamp_min(eps)
+		class_probs = pred_probs.clamp_min(eps)
 		if abs(gce_q) <= eps:
-			gce_loss = -torch.log(true_class_probs)
+			gce_loss = -(target_distribution * torch.log(class_probs)).sum(dim=-1)
 		else:
-			gce_loss = (1.0 - true_class_probs.pow(gce_q)) / gce_q
+			gce_loss = ((1.0 - class_probs.pow(gce_q)) / gce_q * target_distribution).sum(dim=-1)
 		base_loss = (1.0 - gce_mix_weight) * base_loss + gce_mix_weight * gce_loss
 
 	if bi_tempered_mix_weight > 0:
@@ -920,6 +941,7 @@ def gated_loss(
 			log_probs,
 			anchor_logits,
 			target,
+			target_distribution=target_distribution,
 			margin=anchor_regret_margin,
 			power=anchor_regret_power,
 		)
@@ -939,7 +961,14 @@ def gated_loss(
 
 	if lambda_logit_delta > 0:
 		implied_anchor = model._compute_implied_logits(implied_probs, cat_features)
-		logit_delta_penalty = (pred_logits - implied_anchor).pow(2).mean(dim=-1)
+		logit_delta_class_weights = pred_logits.new_tensor(
+			[
+				float(logit_delta_home_weight),
+				float(logit_delta_draw_weight),
+				float(logit_delta_away_weight),
+			]
+		).view(1, -1)
+		logit_delta_penalty = ((pred_logits - implied_anchor).pow(2) * logit_delta_class_weights).mean(dim=-1)
 		loss = loss + lambda_logit_delta * logit_delta_penalty.mean()
 
 	if gate_mean_weight > 0 or gate_sat_weight > 0:

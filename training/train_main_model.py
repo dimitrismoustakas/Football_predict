@@ -158,6 +158,7 @@ def load_evaluation_config() -> dict:
 	config = dict(raw)
 	config["comparison_metric"] = str(config["comparison_metric"])
 	config["training_seed"] = int(config["training_seed"])
+	config["final_training_seed"] = int(config.get("final_training_seed", config["training_seed"] + 10_000))
 	config["rolling_cv_n_folds"] = int(config["rolling_cv_n_folds"])
 	config["test_season"] = str(config["test_season"])
 	config["test_role"] = str(config["test_role"])
@@ -210,6 +211,9 @@ def build_train_config(
 		lambda_repulsion=training_config["lambda_repulsion"],
 		lambda_corr=training_config["lambda_corr"],
 		lambda_logit_delta=training_config["lambda_logit_delta"],
+		logit_delta_home_weight=training_config.get("logit_delta_home_weight", 1.0),
+		logit_delta_draw_weight=training_config.get("logit_delta_draw_weight", 1.0),
+		logit_delta_away_weight=training_config.get("logit_delta_away_weight", 1.0),
 		market_target_mix=training_config["market_target_mix"],
 		market_target_surprise_scale=training_config["market_target_surprise_scale"],
 		market_target_surprise_power=training_config["market_target_surprise_power"],
@@ -377,6 +381,10 @@ def resolve_final_training_epochs(max_epochs: int, best_epoch: int) -> int:
 	return max(1, min(max_epochs, int(best_epoch)))
 
 
+def resolve_final_training_seed(evaluation_config: dict) -> int:
+	return int(evaluation_config["final_training_seed"])
+
+
 def metric_improvement(candidate_value: float, reference_value: float, metric_name: str) -> float:
 	if metric_name in LESS_IS_BETTER_METRICS:
 		return reference_value - candidate_value
@@ -475,6 +483,7 @@ def train_main_model(description: str = "") -> dict:
 	evaluation_config = load_evaluation_config()
 	comparison_metric = evaluation_config["comparison_metric"]
 	training_seed = evaluation_config["training_seed"]
+	final_training_seed = resolve_final_training_seed(evaluation_config)
 
 	print_header(f"TRAIN MAIN MODEL: {DISPLAY_NAME}")
 	print(f"Device: {DEVICE}")
@@ -560,6 +569,7 @@ def train_main_model(description: str = "") -> dict:
 	validation_baseline_metrics = evaluate_implied_baseline(data_final_val)
 	validation_metrics = evaluate_model(early_stop_model, data_final_val, device=DEVICE, verbose=True)
 
+	set_seed(final_training_seed, deterministic=True)
 	data_train, data_test, train_loader, _ = prepare_phase_loaders(
 		df,
 		feature_cols,

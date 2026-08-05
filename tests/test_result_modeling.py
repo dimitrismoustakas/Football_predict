@@ -12,6 +12,7 @@ from training.models.neural_net import (
 	_bi_tempered_logistic_loss_autograd,
 	_reverse_cross_entropy,
 	_tempered_softmax,
+	ZeroEmbedding,
 	gated_loss,
 )
 
@@ -61,6 +62,133 @@ class ResultModelingTests(unittest.TestCase):
 
 		excess = max(0.0, float(-torch.log(torch.tensor(0.30 / 0.40)).item()) - 0.20)
 		self.assertAlmostEqual(float(penalty.item()), excess**2, places=6)
+
+	def test_anchor_regret_penalty_supports_soft_targets(self):
+		final_log_probs = torch.log(torch.tensor([[0.55, 0.35, 0.10]], dtype=torch.float32))
+		anchor_logits = torch.log(torch.tensor([[0.50, 0.30, 0.20]], dtype=torch.float32))
+		target_distribution = torch.tensor([[0.75, 0.25, 0.0]], dtype=torch.float32)
+
+		penalty = _anchor_regret_penalty(
+			final_log_probs,
+			anchor_logits,
+			target_distribution=target_distribution,
+		)
+
+		expected_final = -(target_distribution * final_log_probs).sum(dim=-1)
+		expected_anchor = -(target_distribution * torch.log_softmax(anchor_logits, dim=-1)).sum(dim=-1)
+		expected = torch.clamp(expected_final - expected_anchor, min=0.0)
+		self.assertTrue(torch.allclose(penalty, expected, atol=1e-6))
+
+	def test_gce_mix_uses_soft_targets_when_market_target_mix_is_active(self):
+		model = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			num_leagues=1,
+		)
+		x = torch.zeros(1, 2, dtype=torch.float32)
+		cat_features = torch.zeros(1, 3, dtype=torch.long)
+		implied_probs = torch.tensor([[0.60, 0.25, 0.15]], dtype=torch.float32)
+		target = torch.tensor([1], dtype=torch.long)
+		raw_margin = torch.ones(1, 1, dtype=torch.float32)
+		with torch.no_grad():
+			model.backbone.final_layer.weight.zero_()
+			model.backbone.final_layer.bias.copy_(torch.tensor([0.2, 0.1, -0.3], dtype=torch.float32))
+			model.gate_head.weight.zero_()
+			model.gate_head.bias.zero_()
+			model.gate_bias.fill_(10.0)
+
+		hard_gce = gated_loss(
+			model,
+			x,
+			cat_features,
+			implied_probs,
+			target,
+			raw_margin,
+			gce_mix_weight=1.0,
+			gce_q=1.328,
+			gate_mean_weight=0.0,
+			gate_sat_weight=0.0,
+		)
+		soft_gce = gated_loss(
+			model,
+			x,
+			cat_features,
+			implied_probs,
+			target,
+			raw_margin,
+			gce_mix_weight=1.0,
+			gce_q=1.328,
+			market_target_mix=0.5,
+			gate_mean_weight=0.0,
+			gate_sat_weight=0.0,
+		)
+
+		self.assertNotAlmostEqual(float(soft_gce.item()), float(hard_gce.item()), places=6)
+
+	def test_class_weighted_logit_delta_penalty_can_downweight_draw_alignment(self):
+		model = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			num_leagues=1,
+		)
+		x = torch.zeros(1, 2, dtype=torch.float32)
+		cat_features = torch.zeros(1, 3, dtype=torch.long)
+		implied_probs = torch.tensor([[0.60, 0.25, 0.15]], dtype=torch.float32)
+		target = torch.tensor([1], dtype=torch.long)
+		raw_margin = torch.ones(1, 1, dtype=torch.float32)
+		with torch.no_grad():
+			model.backbone.final_layer.weight.zero_()
+			model.backbone.final_layer.bias.zero_()
+			model.backbone.final_layer.bias[1] = 1.0
+			model.gate_head.weight.zero_()
+			model.gate_head.bias.zero_()
+			model.gate_bias.fill_(10.0)
+
+		full_penalty = gated_loss(
+			model,
+			x,
+			cat_features,
+			implied_probs,
+			target,
+			raw_margin,
+			lambda_logit_delta=1.0,
+			gate_mean_weight=0.0,
+			gate_sat_weight=0.0,
+		)
+		draw_downweighted = gated_loss(
+			model,
+			x,
+			cat_features,
+			implied_probs,
+			target,
+			raw_margin,
+			lambda_logit_delta=1.0,
+			logit_delta_draw_weight=0.2,
+			gate_mean_weight=0.0,
+			gate_sat_weight=0.0,
+		)
+
+		self.assertLess(float(draw_downweighted.item()), float(full_penalty.item()))
+
+	def test_zero_embedding_does_not_shift_rng_by_table_size(self):
+		torch.manual_seed(123)
+		_ = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			num_leagues=1,
+		)
+		small_next = torch.rand(4)
+
+		torch.manual_seed(123)
+		_ = GatedResidualModel(
+			input_dim=2,
+			hidden_layers=[4],
+			num_leagues=20,
+		)
+		large_next = torch.rand(4)
+
+		self.assertIsInstance(_.league_market_bias, ZeroEmbedding)
+		self.assertTrue(torch.allclose(small_next, large_next, atol=1e-6))
 
 	def test_gated_loss_anchor_regret_penalizes_harmful_deviations_more(self):
 		model = GatedResidualModel(
