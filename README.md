@@ -1,97 +1,110 @@
 # Football Predict
 
-Torch-based football prediction pipeline for one core task: match result (`Home/Draw/Away`).
+PyTorch football match-result forecasting pipeline for `Home / Draw / Away`.
 
-## Canonical workflow
+The project covers data collection, feature building, rolling-window training, production prediction, positive-EV diagnostics, Kelly stake sizing, and a static HTML report.
 
-The repo keeps one stable training and evaluation loop for the production model.
+Live report: https://dimitrismoustakas.github.io/Football_predict/
 
-### Training data
-1. Collect or refresh raw data.
-2. Build training features into `data/training/understat_df.parquet`.
-3. Train the canonical result model with the fixed evaluation protocol.
+## What is included
 
-### Evaluation protocol
-The main training loop is frozen and should be used for branch comparisons.
-The source-controlled protocol lives in:
-- `training/configs/main_models/evaluation.json`
+- Data collectors for match history, schedules, Understat features, ClubElo ratings, and market odds.
+- A reproducible feature pipeline with source-controlled team-name mappings.
+- A PyTorch result model trained with a fixed expanding-window evaluation protocol.
+- Production code that writes match probabilities, model picks, value diagnostics, stake suggestions, and an HTML report.
+- Tests covering odds parsing, portfolio logic, production outputs, and the training loop.
 
-Current rules:
-- rolling expanding-window CV mean `log_loss` is the single decision metric
-- the last pre-test season is reserved for epoch selection
-- the fixed test season is a consulted acceptance set, not an untouched statistical holdout
-- compare against the latest kept ledger row: prefer lower CV `log_loss`, reject regressions on the acceptance season, and allow a practical CV tie when acceptance-season `log_loss` improves
-- every run records per-season row counts so comparisons across data refreshes are explicit
-- local prescreens should mirror the canonical split as closely as practical: use the epoch-selection season to choose training length, then score the objective folds without appending to the ledger
-- do not trust the epoch-selection season alone for close experiment decisions
+## Repo map
 
-This is implemented in:
-- `training/train_main_model.py`
+- `data_collection/`: raw data refresh scripts.
+- `preprocessing/`: feature engineering and canonical mapping utilities.
+- `training/`: model definitions, training loop, inference helpers, and evaluation code.
+- `training/configs/main_models/`: source-controlled model, feature, and evaluation configs.
+- `prod_run/`: production feature build, odds fetch, prediction pipeline, and report generation.
+- `site/`: static report output for GitHub Pages or another static host.
+- `tests/`: regression tests for core training and production behavior.
+- `artifacts/mappings/`: tracked canonical-name mappings.
 
-### Main model config
-The frozen source-controlled model config lives in:
-- `training/configs/main_models/result.json`
-- `training/configs/main_models/result_features.json`
-- `training/configs/main_models/evaluation.json`
+Generated datasets and runtime model files are intentionally not committed.
 
-Generated runtime artifacts are written to `artifacts/models/` and are not meant to be committed.
+## Workflow
 
-The trainer appends one row per canonical run to `artifacts/experiment_metrics/result_main_runs.tsv`.
-That TSV is the single experiment ledger.
+Install dependencies:
 
-## Commands
+```bash
+uv sync
+```
 
-### Data refresh
-- `uv run python data_collection/collect_understat.py`
-- `uv run python data_collection/collect_full_schedule.py`
-- `uv run python data_collection/collect_match_history.py`
-- `uv run python data_collection/collect_elo.py`
-- `uv run python preprocessing/build_understat_features.py`
+Refresh data:
 
-### Train canonical model
-- `uv run python training/train_main_model.py`
+```bash
+uv run python data_collection/collect_understat.py
+uv run python data_collection/collect_full_schedule.py
+uv run python data_collection/collect_match_history.py
+uv run python data_collection/collect_elo.py
+uv run python preprocessing/build_understat_features.py
+```
 
-## Production
+Train the canonical result model:
 
-`prod_run/pipeline.py` builds production features, fetches match-result odds, loads the canonical model, and writes predictions to `data/predictions/`.
+```bash
+uv run python training/train_main_model.py
+```
+
+Run the production prediction pipeline:
+
+```bash
+uv run python prod_run/pipeline.py
+```
+
+Run tests:
+
+```bash
+uv run pytest
+```
+
+## Evaluation protocol
+
+The main training loop uses the protocol in `training/configs/main_models/evaluation.json`.
+
+Current policy:
+
+- compare candidate models by rolling expanding-window CV mean `log_loss`;
+- reserve the last pre-test season for epoch selection;
+- treat the configured test season as a consulted acceptance set, not an untouched statistical holdout;
+- compare against the latest kept ledger row: prefer lower CV `log_loss`, reject regressions on the acceptance season, and allow a practical CV tie when acceptance-season `log_loss` improves;
+- record per-season row counts in generated run outputs, so comparisons across data refreshes are explicit;
+- mirror the canonical split in local prescreens: use the epoch-selection season to choose training length, then score the objective folds without appending to the ledger;
+- do not trust the epoch-selection season alone for close experiment decisions.
+
+The implementation entry point is `training/train_main_model.py`.
+
+## Production output
+
+`prod_run/pipeline.py` builds production features, fetches match-result odds, loads the canonical model, and writes predictions under `data/predictions/`.
 
 The output includes:
-- result probabilities
-- model pick
-- positive-EV result side diagnostics
-- bankroll stake fields for recommended positive-EV picks (`Result_Value_Prob`, `Result_Value_Implied`, `Result_Edge`, `Result_EV`, `Result_Budget_Share`, `Result_Budget_Amount`)
-- an interactive HTML report at `data/predictions/upcoming_predictions.html`
-- an optional hosted copy at `site/index.html` for static-site deployment
 
-Offline smoke-test command:
-- `.venv\Scripts\python.exe prod_run\smoke_test.py`
+- result probabilities and model pick;
+- market-implied probability and positive-EV diagnostics;
+- Kelly-style stake fields for recommended positive-EV picks;
+- an interactive HTML report at `data/predictions/upcoming_predictions.html`;
+- an optional hosted copy at `site/index.html`.
 
-Bankroll Kelly knobs for production:
-- `FIXED_BUDGET` default `100`
-- `KELLY_FRACTION` default `0.5`
-- `MIN_BET_AMOUNT` default `0.1`
-- `PREDICTION_WINDOW_DAYS` default `7`
+Useful production settings:
 
-Static report hosting knobs:
-- `PUBLISH_STATIC_REPORT` default `true`
-- `STATIC_REPORT_PATH` default `site/index.html`
-- `REPORT_PUBLIC_URL` optional public URL used in the email body; when set, the email sends the link instead of attaching the HTML file
+- `FIXED_BUDGET`
+- `KELLY_FRACTION`
+- `MIN_BET_AMOUNT`
+- `PREDICTION_WINDOW_DAYS`
+- `PUBLISH_STATIC_REPORT`
+- `STATIC_REPORT_PATH`
+- `REPORT_PUBLIC_URL`
 
-Fastest hosted flow:
-1. Run `uv run python prod_run/pipeline.py`.
-2. Commit the updated `site/index.html`.
-3. Push the branch and deploy `site/` with a static host such as GitHub Pages or Cloudflare Pages.
-4. Set `REPORT_PUBLIC_URL` so recipients get a URL instead of an attachment.
+## Generated files
 
-## Repo hygiene
+Ignored or generated paths include:
 
-Tracked source assets:
-- code
-- mappings under `artifacts/mappings/`
-- frozen source config under `training/configs/main_models/`
-- the canonical experiment ledger `artifacts/experiment_metrics/result_main_runs.tsv`
-
-Ignored or generated outputs:
+- `data/`
 - `artifacts/models/`
 - `downloaded_files/`
-- `data/`
