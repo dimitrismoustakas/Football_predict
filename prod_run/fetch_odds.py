@@ -8,7 +8,7 @@ from pathlib import Path
 
 import requests
 
-from utils.paths import MAPPINGS_DIR
+from utils.paths import DATA_DIR, MAPPINGS_DIR
 
 LEAGUE_TO_SPORT_KEY = {
 	"ENG-Premier League": "soccer_epl",
@@ -18,7 +18,7 @@ LEAGUE_TO_SPORT_KEY = {
 	"ESP-La Liga": "soccer_spain_la_liga",
 }
 SPORT_KEY_TO_LEAGUE = {value: key for key, value in LEAGUE_TO_SPORT_KEY.items()}
-CACHE_DIR = Path("data/prod/odds")
+CACHE_DIR = DATA_DIR / "prod" / "odds"
 TEAM_MAPPING_PATH = MAPPINGS_DIR / "theoddsapi_to_canonical.json"
 PREFERRED_BOOKMAKER_KEYS = ("betsson", "williamhill")
 

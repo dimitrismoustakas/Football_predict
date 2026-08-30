@@ -2,11 +2,18 @@ import soccerdata as sd
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+	sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.paths import DATA_DIR
 
 LEAGUES = ["ENG-Premier League", "ESP-La Liga", "GER-Bundesliga", "ITA-Serie A", "FRA-Ligue 1"]
 
 START_YEAR = 2014
-OUTPUT_ROOT = Path("data/understat")
+OUTPUT_ROOT = DATA_DIR / "understat"
 
 
 def get_season_str(start_year):

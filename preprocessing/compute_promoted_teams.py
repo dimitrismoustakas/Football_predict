@@ -13,10 +13,16 @@ the promoted_teams.json file.
 import polars as pl
 import json
 from pathlib import Path
+import sys
 
-PROJECT_ROOT = Path(__file__).parent.parent
-UNDERSTAT_GLOB = PROJECT_ROOT / "data" / "understat" / "*" / "*" / "matches.parquet"
-PROMOTED_TEAMS_PATH = PROJECT_ROOT / "data" / "promoted_teams.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+	sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.paths import DATA_DIR
+
+UNDERSTAT_GLOB = DATA_DIR / "understat" / "*" / "*" / "matches.parquet"
+PROMOTED_TEAMS_PATH = DATA_DIR / "promoted_teams.json"
 
 
 def get_teams_per_league_season(lf: pl.LazyFrame) -> dict[str, dict[str, set[str]]]:

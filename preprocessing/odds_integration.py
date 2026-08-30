@@ -1,9 +1,9 @@
 import polars as pl
 import json
 from pathlib import Path
-from utils.paths import MAPPINGS_DIR
+from utils.paths import DATA_DIR, MAPPINGS_DIR
 
-MATCH_HISTORY_PATH = Path("data/match_history/matches.parquet")
+MATCH_HISTORY_PATH = DATA_DIR / "match_history" / "matches.parquet"
 FOOTBALLDATA_MAPPING_PATH = MAPPINGS_DIR / "footballdata_to_canonical.json"
 
 

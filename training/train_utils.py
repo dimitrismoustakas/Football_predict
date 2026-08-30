@@ -9,10 +9,9 @@ Categorical features:
 Continuous features are scaled with `StandardScaler`.
 """
 
-import hashlib
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import polars as pl
@@ -26,25 +25,6 @@ from utils.paths import PROJECT_ROOT
 
 CAT_COLS = ["league_idx", "home_promoted", "away_promoted"]
 RESULT_FEATURES_PATH = PROJECT_ROOT / "training" / "configs" / "main_models" / "result_features.json"
-FINGERPRINT_PRIORITY_COLS = [
-	"season",
-	"date",
-	"match_id",
-	"game_id",
-	"league",
-	"league_id",
-	"team",
-	"home_team",
-	"away_team",
-	"team_id",
-	"home_team_id",
-	"away_team_id",
-	"home_goals",
-	"away_goals",
-	"odds_home",
-	"odds_draw",
-	"odds_away",
-]
 
 
 def load_frame(parquet_path: Path) -> pl.DataFrame:
@@ -287,41 +267,8 @@ def prepare_data(
 	}
 
 
-def _stable_hash_value(value: Any) -> str:
-	"""Serialize scalar values consistently for snapshot fingerprinting."""
-
-	if value is None:
-		return "<null>"
-	if isinstance(value, float):
-		return format(value, ".12g")
-	return str(value)
-
-
-def compute_frame_fingerprint(df: pl.DataFrame, fingerprint_cols: List[str] | None = None) -> str:
-	"""Compute a stable content fingerprint for a Polars frame."""
-
-	if df.height == 0:
-		return hashlib.sha256(b"empty").hexdigest()
-
-	if fingerprint_cols is None:
-		fingerprint_cols = [col for col in FINGERPRINT_PRIORITY_COLS if col in df.columns]
-	if not fingerprint_cols:
-		fingerprint_cols = list(df.columns)
-
-	sort_cols = [col for col in ["season", "date", "match_id", "game_id", "team", "home_team", "away_team"] if col in fingerprint_cols]
-	if not sort_cols:
-		sort_cols = fingerprint_cols
-
-	fingerprint_df = df.select(fingerprint_cols).sort(sort_cols)
-	hasher = hashlib.sha256()
-	for row in fingerprint_df.iter_rows(named=False):
-		hasher.update("|".join(_stable_hash_value(value) for value in row).encode("utf-8"))
-		hasher.update(b"\n")
-	return hasher.hexdigest()
-
-
-def build_data_snapshot(df: pl.DataFrame, test_season: str) -> Dict[str, Any]:
-	"""Build versioning metadata for the canonical evaluation dataset."""
+def build_data_snapshot(df: pl.DataFrame, test_season: str) -> Dict[str, object]:
+	"""Build a compact summary of the canonical evaluation dataset."""
 
 	season_counts_df = (
 		df.with_columns(pl.col("season").cast(pl.Utf8).alias("season"))
@@ -334,7 +281,6 @@ def build_data_snapshot(df: pl.DataFrame, test_season: str) -> Dict[str, Any]:
 	return {
 		"row_count": int(df.height),
 		"season_row_counts": season_row_counts,
-		"data_fingerprint": compute_frame_fingerprint(df),
 		"test_season": test_season,
 		"test_row_count": int(test_df.height),
 	}

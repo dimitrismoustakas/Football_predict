@@ -1,13 +1,12 @@
 import polars as pl
 import json
 from pathlib import Path
-from utils.paths import MAPPINGS_DIR
+from utils.paths import DATA_DIR, MAPPINGS_DIR
 
 # ---------- Constants ----------
 ROLL_WINDOWS = [3, 5, 10]
 ADJUSTMENT_WINDOW = 10  # Window for computing opponent baseline strength
-PROJECT_ROOT = Path(__file__).parent.parent
-PROMOTED_TEAMS_PATH = PROJECT_ROOT / "data" / "promoted_teams.json"
+PROMOTED_TEAMS_PATH = DATA_DIR / "promoted_teams.json"
 
 # League IDs for embedding lookup (consistent ordering)
 LEAGUE_IDS = {
@@ -19,7 +18,7 @@ LEAGUE_IDS = {
 }
 
 # FBRef schedule path for week/round data
-FBREF_SCHEDULE_PATH = PROJECT_ROOT / "data" / "full_schedule" / "domestic_all.csv"
+FBREF_SCHEDULE_PATH = DATA_DIR / "full_schedule" / "domestic_all.csv"
 
 # Updated stats based on available soccerdata columns
 # Missing: shots_for, sot_for (commented out)

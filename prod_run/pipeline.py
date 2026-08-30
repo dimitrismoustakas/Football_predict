@@ -21,17 +21,17 @@ from prod_run.generate_html_report import generate_html_report
 from training.inference import predict_probabilities
 from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
 from utils import send_email
+from utils.paths import DATA_DIR, PROJECT_ROOT, project_path
 from utils.portfolio import DEFAULT_KELLY_FRACTION, allocate_bankroll_kelly, select_best_result_value
 
 load_dotenv()
 
-DATA_DIR = Path("data")
 PROD_DIR = DATA_DIR / "prod"
 PREDICTIONS_DIR = DATA_DIR / "predictions"
 PROD_FEATURES_PATH = PROD_DIR / "features_season.parquet"
 OUTPUT_CSV_PATH = PREDICTIONS_DIR / "upcoming_predictions.csv"
 OUTPUT_HTML_PATH = PREDICTIONS_DIR / "upcoming_predictions.html"
-STATIC_REPORT_PATH = Path("site") / "index.html"
+STATIC_REPORT_PATH = PROJECT_ROOT / "site" / "index.html"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RESULT_LABELS = np.array(["Home", "Draw", "Away"])
 DEFAULT_MIN_BET_AMOUNT = 0.1
@@ -56,7 +56,7 @@ def _env_path(name: str, default: Path) -> Path:
 	value = os.environ.get(name)
 	if value is None or not value.strip():
 		return default
-	return Path(value)
+	return project_path(value)
 
 
 def load_model():

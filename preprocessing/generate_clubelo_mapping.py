@@ -1,10 +1,15 @@
 import json
-import difflib
 from pathlib import Path
+import sys
 import pandas as pd
-from utils.paths import MAPPINGS_DIR
 
-ELO_UNIVERSE_PATH = Path("data/eloscores/team_universe.parquet")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+	sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.paths import DATA_DIR, MAPPINGS_DIR
+
+ELO_UNIVERSE_PATH = DATA_DIR / "eloscores" / "team_universe.parquet"
 UNDERSTAT_MAPPING_PATH = MAPPINGS_DIR / "understat_to_canonical.json"
 OUTPUT_MAPPING_PATH = MAPPINGS_DIR / "clubelo_to_canonical.json"
 
@@ -133,7 +138,7 @@ def main():
         "Bremen": "Werder Bremen",
         "West Brom": "West Bromwich Albion",
         "Newcastle": "Newcastle United",
-        "Spal": "SPAL",
+        "Spal": "SPAL 2013",
         "Verona": "Verona",
         "Parma": "Parma",
         "Inter": "Inter",
@@ -213,24 +218,13 @@ def main():
     for team in clubelo_teams:
         if team in canonical_teams:
             mapping[team] = team
-        elif team in manual_map:
-            if manual_map[team] in canonical_teams:
-                mapping[team] = manual_map[team]
-            else:
-                # Try to find close match for manual map result?
-                # Or just assume manual map is correct but maybe canonical list is incomplete?
-                # For now, trust manual map if target is in canonical
-                pass
+        elif manual_map.get(team) in canonical_teams:
+            mapping[team] = manual_map[team]
         else:
-            # Fuzzy match - Stricter cutoff
-            matches = difflib.get_close_matches(team, list(canonical_teams), n=1, cutoff=0.85)
-            if matches:
-                mapping[team] = matches[0]
-                # print(f"Fuzzy match: {team} -> {matches[0]}")
-            else:
-                unmatched.append(team)
+            unmatched.append(team)
 
     # Save mapping
+    MAPPINGS_DIR.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_MAPPING_PATH, "w") as f:
         json.dump(mapping, f, indent=4, sort_keys=True)
     

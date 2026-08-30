@@ -18,11 +18,12 @@ if __package__ is None or __package__ == "":
 from prod_run.generate_html_report import generate_html_report
 from prod_run.pipeline import build_prediction_outputs, score_result_predictions
 from training.train_utils import load_feature_manifest
+from utils.paths import DATA_DIR
 
-PREDICTIONS_DIR = Path("data/predictions")
+PREDICTIONS_DIR = DATA_DIR / "predictions"
 SMOKE_CSV_PATH = PREDICTIONS_DIR / "smoke_upcoming_predictions.csv"
 SMOKE_HTML_PATH = PREDICTIONS_DIR / "smoke_upcoming_predictions.html"
-PROD_FEATURES_PATH = Path("data/prod/features_season.parquet")
+PROD_FEATURES_PATH = DATA_DIR / "prod" / "features_season.parquet"
 PREDICTION_WINDOW_DAYS = 5
 FIXED_BUDGET = 100.0
 
@@ -70,7 +71,7 @@ def _load_upcoming_features() -> pd.DataFrame:
 	window_end_utc = today_utc + pd.Timedelta(days=PREDICTION_WINDOW_DAYS)
 	upcoming = features_df[(features_df["date"] >= today_utc) & (features_df["date"] < window_end_utc)].copy()
 	if upcoming.empty:
-		raise RuntimeError("No upcoming fixtures found in data/prod/features_season.parquet for the smoke-test window.")
+		raise RuntimeError(f"No upcoming fixtures found in {PROD_FEATURES_PATH} for the smoke-test window.")
 	return upcoming
 
 

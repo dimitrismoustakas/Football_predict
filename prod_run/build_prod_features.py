@@ -4,17 +4,19 @@ import polars as pl
 from pathlib import Path
 from datetime import datetime
 import sys
-import os
 import json
 
-# Add project root to path
-sys.path.append(os.getcwd())
+# Add project root to path when this file is run directly.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+	sys.path.insert(0, str(PROJECT_ROOT))
 
 from data_collection.collect_full_schedule import (
     ensure_league_config,
     european_leagues_for_season,
     fetch_league_schedule,
 )
+from data_collection.collect_elo import ELO_HISTORY_PATH, collect_elo
 
 from preprocessing.feature_engineering import rename_and_cast
 from preprocessing.match_feature_pipeline import (
@@ -26,15 +28,13 @@ from preprocessing.match_feature_pipeline import (
 from preprocessing.odds_integration import load_match_history_and_map, join_odds
 from preprocessing.elo_integration import merge_elo_features
 from preprocessing.player_feature_engineering import build_player_team_features, load_all_player_data
-from prod_run.elo_scrap import build_prod_elo
-from utils.paths import MAPPINGS_DIR
+from utils.paths import DATA_DIR, MAPPINGS_DIR
 
 LEAGUES = ["ENG-Premier League", "ESP-La Liga", "GER-Bundesliga", "ITA-Serie A", "FRA-Ligue 1"]
-OUTPUT_DIR = Path("data/prod")
+OUTPUT_DIR = DATA_DIR / "prod"
 OUTPUT_PARQUET = OUTPUT_DIR / "features_season.parquet"
 PROD_EUROPEAN_SCHEDULE_PATH = OUTPUT_DIR / "european_schedule_current.csv"
 PROD_MATCH_HISTORY_PATH = OUTPUT_DIR / "match_history_current.parquet"
-PROD_ELO_COUNTRIES = {"ENG", "ESP", "GER", "ITA", "FRA"}
 
 
 def get_current_season_key():
@@ -247,16 +247,6 @@ def load_production_player_features() -> pl.DataFrame:
     return build_player_team_features(combined_player_data)
 
 
-def refresh_production_elo_inputs() -> tuple[Path, pl.DataFrame]:
-    print("Refreshing production Elo inputs...")
-    elo_paths = build_prod_elo(target_countries=PROD_ELO_COUNTRIES, write_histories=True)
-    if "elo_history" not in elo_paths:
-        raise RuntimeError("Production Elo refresh did not return an elo_history artifact")
-    elo_history_path = Path(elo_paths["elo_history"])
-    elo_current = pl.read_parquet(elo_paths["elo_asof"])
-    return elo_history_path, elo_current
-
-
 def map_current_elo(elo_current: pl.DataFrame) -> pl.DataFrame:
     with open(MAPPINGS_DIR / "clubelo_to_canonical.json", "r") as f:
         mapping = json.load(f)
@@ -398,9 +388,9 @@ def main(upcoming_fixtures: pd.DataFrame | None = None):
 
     # --- Elo Integration ---
     print("Merging Elo ratings...")
-    elo_history_path, elo_current = refresh_production_elo_inputs()
     df_temp = lf.collect()
-    df_temp = merge_elo_features(df_temp, elo_history_path=elo_history_path)
+    elo_current = collect_elo(df_temp)
+    df_temp = merge_elo_features(df_temp, elo_history_path=ELO_HISTORY_PATH)
     
     # Fill missing Elo for future fixtures only, using current ratings.
     missing_mask = df_temp["home_elo"].is_null() | df_temp["away_elo"].is_null()

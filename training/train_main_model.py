@@ -43,9 +43,11 @@ from training.train_utils import (
 	select_feature_columns,
 	to_loader,
 )
-from utils.paths import EXPERIMENT_METRICS_DIR, MODELS_DIR, PROJECT_ROOT
+from utils.paths import DATA_DIR, EXPERIMENT_METRICS_DIR, MODELS_DIR, PROJECT_ROOT, project_path
 
-DEFAULT_PARQUET = Path(os.environ.get("PARQUET_PATH", "data/training/understat_df.parquet"))
+DEFAULT_PARQUET = project_path(
+	os.environ.get("PARQUET_PATH") or DATA_DIR / "training" / "understat_df.parquet"
+)
 LATEST_MAIN_METRICS_PATH = MODELS_DIR / "latest_main_model_metrics.json"
 EXPERIMENT_LOG_PATH = EXPERIMENT_METRICS_DIR / "result_main_runs.tsv"
 DISPLAY_NAME = "Match Result"
@@ -431,7 +433,7 @@ def compute_delta(
 
 
 def print_data_snapshot(data_snapshot: dict):
-	print(f"Data fingerprint: {data_snapshot['data_fingerprint']}")
+	print(f"Data rows: {data_snapshot['row_count']}")
 	print(f"Season rows: {data_snapshot['season_row_counts']}")
 
 
@@ -609,9 +611,6 @@ def train_main_model(description: str = "") -> dict:
 		"comparison_metric": comparison_metric,
 		"objective_name": f"cv_mean_{comparison_metric}",
 		"objective_value": objective_value,
-		"training_config_source": str(TRAINING_CONFIG_PATH.relative_to(PROJECT_ROOT)),
-		"feature_manifest_source": str(FEATURE_MANIFEST_PATH.relative_to(PROJECT_ROOT)),
-		"evaluation_config_source": str(EVALUATION_CONFIG_PATH.relative_to(PROJECT_ROOT)),
 		"model_name": MODEL_NAME,
 		"objective_fold_count": len(objective_folds),
 		"objective_val_seasons": objective_val_seasons,

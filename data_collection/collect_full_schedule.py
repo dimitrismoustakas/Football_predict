@@ -35,8 +35,12 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Project directories
-PROJECT_ROOT = Path(__file__).parent.parent
-DATA_DIR = PROJECT_ROOT / "data"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+	sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.paths import DATA_DIR
+
 OUTPUT_DIR = DATA_DIR / "full_schedule"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 

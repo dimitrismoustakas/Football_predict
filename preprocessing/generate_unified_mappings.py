@@ -3,10 +3,16 @@ import pandas as pd
 import json
 from pathlib import Path
 import difflib
-from utils.paths import MAPPINGS_DIR
+import sys
 
-UNDERSTAT_FILE = Path("data/training/understat_df.parquet")
-MATCH_HISTORY_FILE = Path("data/match_history/matches.parquet")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+	sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.paths import DATA_DIR, MAPPINGS_DIR
+
+UNDERSTAT_FILE = DATA_DIR / "training" / "understat_df.parquet"
+MATCH_HISTORY_FILE = DATA_DIR / "match_history" / "matches.parquet"
 UNDERSTAT_MAPPING_FILE = MAPPINGS_DIR / "understat_to_canonical.json"
 FOOTBALLDATA_MAPPING_FILE = MAPPINGS_DIR / "footballdata_to_canonical.json"
 
@@ -182,6 +188,7 @@ def main():
         m_mapping[team] = canonical
 
     # 4. Save Mappings
+    MAPPINGS_DIR.mkdir(parents=True, exist_ok=True)
     with open(UNDERSTAT_MAPPING_FILE, "w") as f:
         json.dump(u_mapping, f, indent=4)
     print(f"Saved Understat mapping to {UNDERSTAT_MAPPING_FILE}")

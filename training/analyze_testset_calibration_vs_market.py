@@ -15,10 +15,10 @@ if __package__ is None or __package__ == "":
 from training.inference import predict_probabilities
 from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
 from training.train_utils import add_targets_and_implied, filter_min_history, load_frame, prepare_data, resolve_test_season
-from utils.paths import PROJECT_ROOT, TRACKED_ASSETS_DIR
+from utils.paths import ARTIFACTS_DIR, DATA_DIR, PROJECT_ROOT
 
-DEFAULT_PARQUET = PROJECT_ROOT / "data" / "training" / "understat_df.parquet"
-DEFAULT_OUTPUT_DIR = TRACKED_ASSETS_DIR / "tmp" / "testset_calibration_review"
+DEFAULT_PARQUET = DATA_DIR / "training" / "understat_df.parquet"
+DEFAULT_OUTPUT_DIR = ARTIFACTS_DIR / "tmp" / "testset_calibration_review"
 OUTCOME_LABELS = ["home", "draw", "away"]
 
 

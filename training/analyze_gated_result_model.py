@@ -31,9 +31,9 @@ from preprocessing.feature_engineering import LEAGUE_IDS
 from training.evaluation.metrics import ranked_probability_score
 from training.model_bundle import RESULT_MODEL_BUNDLE_PATHS, load_model_bundle
 from training.train_utils import add_targets_and_implied, filter_min_history, load_frame, prepare_data, resolve_test_season
-from utils.paths import MODELS_DIR, PROJECT_ROOT
+from utils.paths import DATA_DIR, MODELS_DIR, PROJECT_ROOT
 
-DEFAULT_PARQUET = PROJECT_ROOT / "data" / "training" / "understat_df.parquet"
+DEFAULT_PARQUET = DATA_DIR / "training" / "understat_df.parquet"
 DEFAULT_OUTPUT = MODELS_DIR / "result_model_analysis.json"
 
 OUTCOME_LABELS = ["home", "draw", "away"]

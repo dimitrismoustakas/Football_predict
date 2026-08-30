@@ -21,7 +21,7 @@ Current rules:
 - the last pre-test season is reserved for epoch selection
 - the fixed test season is a consulted acceptance set, not an untouched statistical holdout
 - compare against the latest kept ledger row: prefer lower CV `log_loss`, reject regressions on the acceptance season, and allow a practical CV tie when acceptance-season `log_loss` improves
-- every run records a dataset fingerprint and per-season row counts so comparisons across data refreshes are explicit
+- every run records per-season row counts so comparisons across data refreshes are explicit
 - local prescreens should mirror the canonical split as closely as practical: use the epoch-selection season to choose training length, then score the objective folds without appending to the ledger
 - do not trust the epoch-selection season alone for close experiment decisions
 

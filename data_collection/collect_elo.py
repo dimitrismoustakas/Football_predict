@@ -1,156 +1,147 @@
-# -*- coding: utf-8 -*-
-import warnings
-from datetime import datetime, timedelta
+"""Fill required historical Elo dates and fetch current ratings from clubelo.com."""
+
+import json
+import re
+import sys
+from datetime import datetime, timezone
+from html import unescape
 from pathlib import Path
-import time
+from urllib.parse import quote
+from urllib.request import urlopen
+
 import pandas as pd
-from tqdm import tqdm
-from soccerdata import ClubElo
+import polars as pl
 
-warnings.simplefilter(action="ignore", category=FutureWarning)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+	sys.path.insert(0, str(PROJECT_ROOT))
 
-# --------------------------
-# Config
-# --------------------------
-START_DATE = datetime(2014, 1, 1)
-END_DATE = datetime.today()
-STEP_DAYS = 120
-LEAGUES_TO_KEEP = {"GER", "ESP", "ENG", "ITA", "FRA"}
+from utils.paths import DATA_DIR, MAPPINGS_DIR
 
-DATA_DIR = Path("data/eloscores")
-SNAPSHOT_DIR = DATA_DIR / "snapshots"
-TEAM_UNIVERSE_PATH = DATA_DIR / "team_universe.parquet"
-ELO_HISTORY_PATH = DATA_DIR / "elo_history.parquet"
+ELO_HISTORY_PATH = DATA_DIR / "eloscores" / "elo_history.parquet"
+TEAM_UNIVERSE_PATH = DATA_DIR / "eloscores" / "team_universe.parquet"
+UNDERSTAT_GLOB = str(DATA_DIR / "understat" / "*" / "*" / "matches.parquet")
+PAGE_SLUGS = {
+	"Atalanta": "atalanta",
+	"Atletico": "atletico",
+	"Bilbao": "athletic-club",
+	"Celta": "rc-celta",
+	"Parma": "parma-calcio-1913",
+	"Real Madrid": "realmadrid",
+	"Saint-Etienne": "SaintEtienne",
+	"Venezia": "venezia-fc",
+}
+
+
+def _club_slug(team: str) -> str:
+	return PAGE_SLUGS.get(team, team.replace(" ", ""))
+
+
+def _read_page(slug: str) -> str:
+	url = f"https://clubelo.com/{quote(slug)}"
+	with urlopen(url, timeout=20) as response:
+		if response.geturl().rstrip("/") != url:
+			raise ValueError(f"ClubElo redirected {url} to {response.geturl()}; no club data returned")
+		return response.read().decode("utf-8")
+
+
+def _vega_rows(page: str, fields: set[str]) -> list[dict]:
+	match = re.search(r"\bvar\s+vegaJson\s*=\s*", page)
+	if match is None:
+		raise ValueError("ClubElo page has no vegaJson data")
+	chart = json.JSONDecoder().raw_decode(page[match.end():].lstrip())[0]
+	for rows in chart["datasets"].values():
+		if rows and fields.issubset(rows[0]):
+			return rows
+	raise ValueError(f"ClubElo page has no rating data with fields {sorted(fields)}")
+
+
+def fetch_team_history(team: str) -> pd.DataFrame:
+	page = _read_page(_club_slug(team))
+	points = pd.DataFrame(_vega_rows(page, {"Date", "Elo"}))
+	points = points.rename(columns={"Date": "date", "Elo": "elo"})
+	points["date"] = pd.to_datetime(points["date"], utc=True).dt.tz_localize(None).astype("datetime64[ns]")
+	return points[["date", "elo"]].sort_values("date")
+
+
+def fetch_current_elo(teams: pd.DataFrame) -> pl.DataFrame:
+	current = []
+	for country, group in teams.groupby("country", sort=True):
+		page = _read_page(country)
+		ratings = {row["Name"]: row["Elo"] for row in _vega_rows(page, {"Name", "Elo"})}
+		names = {
+			slug: unescape(name)
+			for slug, name in re.findall(r'<a href="/([^"/]+)">([^<]+)', page)
+		}
+		for team in group["team"]:
+			name = names.get(_club_slug(team))
+			if name not in ratings:
+				raise ValueError(f"ClubElo has no full-precision current rating for {team} in {country}")
+			current.append({"team_clubelo": team, "elo": ratings[name]})
+	return pl.DataFrame(current, schema={"team_clubelo": pl.String, "elo": pl.Float64})
+
+
+def collect_elo(matches: pl.DataFrame, history_path: Path = ELO_HISTORY_PATH) -> pl.DataFrame:
+	"""Keep saved ratings, append uncovered past dates, and return live future-fixture ratings."""
+	history = pd.read_parquet(history_path)
+	with open(MAPPINGS_DIR / "clubelo_to_canonical.json", encoding="utf-8") as file:
+		club_names = {canonical: club for club, canonical in json.load(file).items()}
+	frame = matches.select("league", "date", "home_team", "away_team").to_pandas()
+	requests = pd.concat([
+		frame[["league", "date", f"{side}_team"]].rename(columns={f"{side}_team": "team"})
+		for side in ("home", "away")
+	], ignore_index=True)
+	unmapped = sorted(set(requests["team"]) - club_names.keys())
+	if unmapped:
+		raise ValueError(f"Missing ClubElo mappings for: {', '.join(unmapped)}")
+	requests["team"] = requests["team"].map(club_names)
+	requests["country"] = requests["league"].str.split("-").str[0]
+	requests["date"] = (
+		pd.to_datetime(requests["date"], utc=True).dt.tz_localize(None)
+		.astype("datetime64[ns]").dt.normalize() - pd.Timedelta(days=1)
+	)
+	requests = requests[["team", "country", "date"]].drop_duplicates()
+	today = pd.Timestamp(datetime.now(timezone.utc)).tz_localize(None).normalize()
+	additions = []
+	for team, wanted in requests[requests["date"] < today].groupby("team", sort=True):
+		saved = history.loc[history["team"] == team, ["from", "to", "elo"]].sort_values("from")
+		covered = pd.merge_asof(wanted.sort_values("date"), saved, left_on="date", right_on="from")
+		missing = covered.loc[
+			covered["elo"].isna() | (covered["date"] > covered["to"]), ["date", "country"]
+		]
+		if missing.empty:
+			continue
+		points = fetch_team_history(team)
+		values = pd.merge_asof(missing, points, on="date", direction="backward")
+		if values["elo"].isna().any():
+			dates = values.loc[values["elo"].isna(), "date"].dt.strftime("%Y-%m-%d").tolist()
+			raise ValueError(f"ClubElo's available history does not cover {team}: {', '.join(dates)}")
+		values["team"] = team
+		values["from"] = values["to"] = values["date"]
+		additions.append(values[["team", "country", "from", "to", "elo"]])
+		print(f"Fetched {len(values)} missing Elo dates for {team}")
+
+	# Today's rating is still changing; never cache it as a completed historical day.
+	live_teams = requests.loc[requests["date"] >= today, ["team", "country"]].drop_duplicates()
+	current = fetch_current_elo(live_teams)
+	if additions:
+		updated = pd.concat([history, *additions], ignore_index=True).sort_values(["team", "from"])
+		updated.to_parquet(history_path, index=False)
+		print(f"Added {sum(len(rows) for rows in additions)} Elo observations to {history_path}")
+	else:
+		print("All required historical Elo dates are already saved.")
+	return current
+
 
 def main():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+	matches = pl.scan_parquet(UNDERSTAT_GLOB).select("league", "date", "home_team", "away_team").collect()
+	with open(MAPPINGS_DIR / "understat_to_canonical.json", encoding="utf-8") as file:
+		mapping = json.load(file)
+	matches = matches.with_columns(pl.col("home_team", "away_team").replace(mapping))
+	collect_elo(matches)
+	history = pd.read_parquet(ELO_HISTORY_PATH, columns=["team", "country"])
+	history.drop_duplicates("team").sort_values("team").to_parquet(TEAM_UNIVERSE_PATH, index=False)
 
-    club_elo = ClubElo()
-
-    # --------------------------
-    # 1) Snapshots and team universe
-    # --------------------------
-    snapshots = []
-    current_date = START_DATE
-    print("Collecting snapshots to build team universe...")
-    while current_date <= END_DATE:
-        try:
-            df = club_elo.read_by_date(current_date).reset_index()
-            df = df.assign(snapshot_date=pd.to_datetime(current_date))
-            if "country" in df.columns:
-                df = df[df["country"].isin(LEAGUES_TO_KEEP)]
-            
-            # Save snapshot
-            snapshot_path = SNAPSHOT_DIR / f"clubelo_snapshot_{current_date.date()}.parquet"
-            df.to_parquet(snapshot_path, index=False)
-            
-            snapshots.append(df)
-        except Exception as e:
-            print(f"Error fetching snapshot for {current_date.date()}: {e}")
-        
-        current_date += timedelta(days=STEP_DAYS)
-
-    if not snapshots:
-        print("No snapshots collected.")
-        return
-
-    snapshots_df = pd.concat(snapshots, ignore_index=True)
-
-    # de-duplicated team universe
-    cols = ["team"] + (["country"] if "country" in snapshots_df.columns else [])
-    team_universe = (
-        snapshots_df[cols]
-        .drop_duplicates(subset=["team"])
-        .sort_values("team")
-        .reset_index(drop=True)
-    )
-    team_universe.to_parquet(TEAM_UNIVERSE_PATH, index=False)
-    print(f"Saved team universe with {len(team_universe)} teams to {TEAM_UNIVERSE_PATH}")
-
-    # --------------------------
-    # 2) Pull each team's full Elo history
-    # --------------------------
-    def fetch_team_history(team, retries=3, backoff=1.0):
-        for attempt in range(1, retries + 1):
-            try:
-                return club_elo.read_team_history(team, max_age=1)
-            except Exception:
-                if attempt == retries:
-                    raise
-                time.sleep(backoff * attempt)
-
-    histories = []
-    teams_list = team_universe["team"].tolist()
-    
-    print("Fetching full history for each team...")
-    for team in tqdm(teams_list, desc="Fetching team Elo histories"):
-        try:
-            hist = fetch_team_history(team)
-            # Reset index to convert 'from' to a column
-            if hist.index.name == "from":
-                hist = hist.reset_index()
-            # Attach country if missing
-            if "country" not in hist.columns and "country" in team_universe.columns:
-                c = team_universe.loc[team_universe["team"] == team, "country"]
-                if not c.empty:
-                    hist = hist.assign(country=c.iloc[0])
-            histories.append(hist)
-        except Exception as e:
-            # Fallback: use snapshot data for this team
-            team_snapshots = snapshots_df[snapshots_df["team"] == team].copy()
-            if not team_snapshots.empty:
-                # Convert to history format with from/to intervals
-                # Keep only relevant columns and rename snapshot_date to from
-                cols_to_keep = ["team", "elo", "snapshot_date"]
-                if "country" in team_snapshots.columns:
-                    cols_to_keep.append("country")
-                team_snapshots = team_snapshots[cols_to_keep].copy()
-                team_snapshots = team_snapshots.rename(columns={"snapshot_date": "from"})
-                team_snapshots = team_snapshots.sort_values("from")
-                team_snapshots["to"] = team_snapshots["from"].shift(-1) - pd.Timedelta(days=1)
-                team_snapshots["to"] = team_snapshots["to"].fillna(pd.Timestamp.today())
-                histories.append(team_snapshots)
-                print(f"Using snapshot data for {team} (full history unavailable)")
-            else:
-                print(f"Failed to fetch history for {team}: {e}")
-
-    if not histories:
-        print("No histories collected.")
-        return
-
-    elo_history = pd.concat(histories, ignore_index=True)
-
-    # Clean and filter
-    for col in ("from", "to"):
-        if col in elo_history.columns:
-            elo_history[col] = pd.to_datetime(elo_history[col], errors="coerce")
-    if "elo" in elo_history.columns:
-        elo_history["elo"] = pd.to_numeric(elo_history["elo"], errors="coerce")
-
-    # Sort to ensure correct interval calculation
-    elo_history = elo_history.sort_values(["team", "from"])
-
-    # Generate 'to' column if missing
-    if "to" not in elo_history.columns:
-        # 'to' is the day before the next 'from'
-        elo_history["to"] = elo_history.groupby("team")["from"].shift(-1) - pd.Timedelta(days=1)
-        # Fill the last 'to' with today (or a future date)
-        elo_history["to"] = elo_history["to"].fillna(pd.Timestamp.today())
-
-    cutoff = pd.to_datetime(START_DATE)
-    if {"from", "to"}.issubset(elo_history.columns):
-        elo_history = elo_history[(elo_history["from"] >= cutoff) | (elo_history["to"] >= cutoff)]
-
-    # Keep interval schema for efficient “elo before date” later
-    keep = [c for c in ["team", "country", "from", "to", "elo"] if c in elo_history.columns]
-    elo_history = elo_history[keep].reset_index(drop=True)
-
-    # --------------------------
-    # 3) Persist
-    # --------------------------
-    elo_history.to_parquet(ELO_HISTORY_PATH, index=False)
-    print(f"Saved Elo history to {ELO_HISTORY_PATH}")
 
 if __name__ == "__main__":
-    main()
+	main()

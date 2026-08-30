@@ -1,8 +1,9 @@
 from pathlib import Path
 import sys
-import os
 
-sys.path.append(os.getcwd())
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+	sys.path.insert(0, str(PROJECT_ROOT))
 
 import polars as pl
 from preprocessing.feature_engineering import rename_and_cast
@@ -15,14 +16,14 @@ from preprocessing.match_feature_pipeline import (
 )
 from preprocessing.odds_integration import load_match_history_and_map, join_odds
 from preprocessing.elo_integration import merge_elo_features
-from utils.paths import MAPPINGS_DIR
+from utils.paths import DATA_DIR, MAPPINGS_DIR
 
 # ---------- Config ----------
-INPUT_GLOB = "data/understat/*/*/matches.parquet"
-OUTPUT_DIR = Path("data/training")
+INPUT_GLOB = str(DATA_DIR / "understat" / "*" / "*" / "matches.parquet")
+OUTPUT_DIR = DATA_DIR / "training"
 OUTPUT_PARQUET = OUTPUT_DIR / "understat_df.parquet"
 UNDERSTAT_MAPPING_PATH = MAPPINGS_DIR / "understat_to_canonical.json"
-EUROPEAN_SCHEDULE_PATH = Path("data/full_schedule/european_all.csv")
+EUROPEAN_SCHEDULE_PATH = DATA_DIR / "full_schedule" / "european_all.csv"
 
 def main():
     pl.enable_string_cache()

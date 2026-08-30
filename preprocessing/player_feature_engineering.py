@@ -13,6 +13,12 @@ Feature Categories:
 
 import polars as pl
 from pathlib import Path
+import sys
+
+if __package__ is None or __package__ == "":
+	sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from utils.paths import DATA_DIR
 
 
 # Configuration
@@ -20,7 +26,7 @@ MAX_WINDOW = 15  # Maximum games to look back
 MIN_GAMES = 2    # Minimum games required to compute features (matches base features)
 
 
-def load_all_player_data(data_root: Path = Path("data/understat")) -> pl.DataFrame:
+def load_all_player_data(data_root: Path = DATA_DIR / "understat") -> pl.DataFrame:
 	"""Load all player match stats from parquet files."""
 	player_files = list(data_root.rglob("player_match_stats.parquet"))
 	
