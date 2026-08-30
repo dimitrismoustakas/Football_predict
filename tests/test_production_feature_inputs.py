@@ -1,15 +1,91 @@
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
 import pandas as pd
 import polars as pl
+from polars.testing import assert_frame_equal
 
+from preprocessing.match_feature_pipeline import (
+	get_player_feature_columns,
+	join_player_features_asof,
+	join_player_features_by_game_id,
+)
 from preprocessing.odds_integration import join_odds
-from prod_run.build_prod_features import fetch_current_data, fill_missing_future_elo
+from preprocessing.player_feature_engineering import build_player_team_features
+from prod_run.build_prod_features import fetch_current_data, fill_missing_future_elo, load_production_player_features
+
+
+def player_match_history(n_matches: int) -> tuple[pl.DataFrame, pl.DataFrame]:
+	matches = []
+	players = []
+	for game in range(n_matches):
+		date = datetime(2025, 8, 1, 17) + timedelta(days=7 * game)
+		match = {"league": "ENG-Premier League", "season": "2526", "game_id": str(game), "date": date}
+		matches.append({**match, "home_team_id": 1, "away_team_id": 2})
+		for team_id in (1, 2):
+			for player in range(11 + (2 * game + team_id - 1) % 7):
+				players.append({
+					**match,
+					"match_id": f"{date:%Y-%m-%d} Team A-Team B",
+					"team_id": team_id,
+					"team": f"Team {team_id}",
+					"player_id": player,
+					"minutes": 90 - player,
+					"goals": int(player == 0),
+					"xg": (player + 1) * (game + 1) / 100,
+					"xa": (player + 1) / (game + 1),
+					"assists": int(player == 1),
+					"shots": player % 3,
+					"key_passes": player % 2,
+				})
+	return pl.DataFrame(players), pl.DataFrame(matches)
 
 
 class ProductionFeatureInputTests(unittest.TestCase):
+	def test_production_player_features_include_latest_completed_match(self):
+		players, matches = player_match_history(4)
+		completed = players.filter(pl.col("game_id") != "3")
+		prediction_time = matches["date"][2] + timedelta(hours=3)
+		with (
+			patch("prod_run.build_prod_features.load_all_player_data", return_value=completed),
+			patch("prod_run.build_prod_features.fetch_current_player_data", return_value=completed),
+			patch("prod_run.build_prod_features.get_current_season_key", return_value="2526"),
+			patch("prod_run.build_prod_features.datetime") as clock,
+		):
+			clock.utcnow.return_value = prediction_time
+			production_features = load_production_player_features()
+
+		actual = join_player_features_asof(matches, production_features).sort("date")
+		expected = join_player_features_by_game_id(matches, build_player_team_features(players)).sort("date")
+		assert_frame_equal(actual, expected)
+		# The completed match keeps its pre-match average; the next match uses all 11, 13, 15 players.
+		self.assertEqual(actual["home_unique_players_r15"].to_list(), [None, None, 12.0, 13.0])
+
+	def test_upcoming_player_features_preserve_history_and_rolling_windows(self):
+		players, matches = player_match_history(19)
+		reference = build_player_team_features(players)
+		feature_columns = [
+			f"{side}_{column}"
+			for side in ("home", "away")
+			for column in get_player_feature_columns(reference)
+		]
+		for n_completed in (1, 2, 17):
+			with self.subTest(n_completed=n_completed):
+				completed = players.filter(pl.col("game_id").cast(pl.Int64) < n_completed)
+				production_features = build_player_team_features(
+					completed, prediction_time=matches["date"][n_completed - 1] + timedelta(hours=3),
+				)
+				assert_frame_equal(
+					production_features.filter(pl.col("game_id").is_not_null()),
+					build_player_team_features(completed),
+				)
+				upcoming = matches.slice(n_completed)
+				actual = join_player_features_asof(upcoming, production_features).select(feature_columns)
+				expected = join_player_features_by_game_id(upcoming.head(1), reference).select(feature_columns)
+				# All upcoming fixtures reuse the same completed history, including the capped windows.
+				assert_frame_equal(actual, pl.concat([expected] * upcoming.height))
+
 	def test_join_odds_preserves_understat_stats_when_match_history_missing(self):
 		understat = pl.DataFrame({
 			"season": ["2526"],

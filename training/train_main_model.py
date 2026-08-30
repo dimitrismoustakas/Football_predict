@@ -207,7 +207,6 @@ def build_train_config(
 		epochs=epochs,
 		patience=training_config["patience"],
 		batch_size=training_config["batch_size"],
-		scheduler_min_lr_ratio=0.01,
 		gate_mean_weight=training_config["gate_mean_weight"],
 		gate_sat_weight=training_config["gate_sat_weight"],
 		lambda_repulsion=training_config["lambda_repulsion"],

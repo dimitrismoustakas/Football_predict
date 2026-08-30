@@ -1,13 +1,73 @@
 import unittest
+from unittest.mock import patch
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from training.models.neural_net import TrainConfig
-from training.training_loop import _entropy_curriculum_weights, build_model, create_optimizer, run_train_epoch
+from training.training_loop import (
+	_entropy_curriculum_weights,
+	build_model,
+	create_optimizer,
+	run_train_epoch,
+	train_fixed_epochs,
+	train_with_early_stopping,
+)
 
 
 class TrainingLoopTests(unittest.TestCase):
+	def fit_synthetic_epochs(self, epochs, val_losses=None):
+		config = TrainConfig(input_dim=1, lr=0.0016, weight_decay=0.0, epochs=epochs, patience=3)
+		model = torch.nn.Linear(1, 1, bias=False)
+		learning_rates = []
+
+		def train_epoch(model, loader, optimizer, device, config):
+			learning_rates.append(optimizer.param_groups[0]["lr"])
+			optimizer.step()
+			with torch.no_grad():
+				model.weight.fill_(len(learning_rates))
+			return 1.0
+
+		validation = [(loss, [0.0] * 3, [0.0] * 3) for loss in val_losses or []]
+		with (
+			patch("training.training_loop.build_model", return_value=model),
+			patch("training.training_loop.run_train_epoch", side_effect=train_epoch),
+			patch("training.training_loop.run_validation_epoch", side_effect=validation),
+		):
+			if val_losses is None:
+				model, history, best_loss = train_fixed_epochs(config, None, device=torch.device("cpu"), verbose=False)
+			else:
+				model, history, best_loss = train_with_early_stopping(
+					config, None, object(), device=torch.device("cpu"), verbose=False,
+				)
+		return model.weight.item(), history, best_loss, learning_rates
+
+	def test_learning_rate_is_constant_for_selection_and_fixed_epoch_budgets(self):
+		for epochs in (1, 4):
+			for use_validation in (False, True):
+				with self.subTest(epochs=epochs, use_validation=use_validation):
+					losses = [1.0 - 0.01 * epoch for epoch in range(epochs)] if use_validation else None
+					_, _, _, learning_rates = self.fit_synthetic_epochs(epochs, losses)
+					self.assertEqual(learning_rates, [0.0016] * epochs)
+
+	def test_tiny_improvement_updates_checkpoint_but_not_patience(self):
+		losses = [0.970000, 0.969950, 0.969950, 0.970200, 0.5]
+		checkpoint_epoch, history, best_loss, _ = self.fit_synthetic_epochs(10, losses)
+		best_epoch = history["val_loss"].index(min(history["val_loss"])) + 1
+
+		self.assertEqual(history["val_loss"], losses[:4])
+		self.assertEqual(best_loss, 0.969950)
+		self.assertEqual(best_epoch, 2)
+		self.assertEqual(checkpoint_epoch, best_epoch)
+
+	def test_patience_compares_against_last_meaningful_improvement(self):
+		losses = [1.0, 0.99994, 0.99988, 0.99987, 0.99989, 0.99991, 0.5]
+		checkpoint_epoch, history, best_loss, _ = self.fit_synthetic_epochs(10, losses)
+
+		self.assertEqual(history["val_loss"], losses[:6])
+		self.assertEqual(checkpoint_epoch, 4)
+		self.assertEqual(best_loss, 0.99987)
+
 	def test_run_train_epoch_updates_weights(self):
 		config = TrainConfig(
 			input_dim=2,

@@ -222,29 +222,21 @@ def fetch_current_player_data() -> pl.DataFrame:
 
 
 def load_production_player_features() -> pl.DataFrame:
-    current_season_key = get_current_season_key()
-    try:
-        local_player_data = load_all_player_data()
-    except FileNotFoundError as e:
-        raise RuntimeError("Local historical player data is required for production features") from e
+	current_season_key = get_current_season_key()
+	local_player_data = load_all_player_data()
+	fresh_player_data = fetch_current_player_data()
 
-    try:
-        fresh_player_data = fetch_current_player_data()
-    except Exception as e:
-        raise RuntimeError("Failed to refresh current-season player data") from e
-
-    print("Merging fresh current-season player data into production player features...")
-    fresh_player_data = fresh_player_data.with_columns(pl.col("season").cast(pl.Utf8))
-    local_player_data = local_player_data.with_columns(pl.col("season").cast(pl.Utf8))
-    local_player_data = local_player_data.filter(
-        ~(
-            pl.col("league").is_in(LEAGUES)
-            & (pl.col("season") == current_season_key)
-        )
-    )
-    combined_player_data = pl.concat([local_player_data, fresh_player_data], how="diagonal_relaxed")
-
-    return build_player_team_features(combined_player_data)
+	print("Merging fresh current-season player data into production player features...")
+	fresh_player_data = fresh_player_data.with_columns(pl.col("season").cast(pl.Utf8))
+	local_player_data = local_player_data.with_columns(pl.col("season").cast(pl.Utf8))
+	local_player_data = local_player_data.filter(
+		~(
+			pl.col("league").is_in(LEAGUES)
+			& (pl.col("season") == current_season_key)
+		)
+	)
+	combined_player_data = pl.concat([local_player_data, fresh_player_data], how="diagonal_relaxed")
+	return build_player_team_features(combined_player_data, prediction_time=datetime.utcnow())
 
 
 def map_current_elo(elo_current: pl.DataFrame) -> pl.DataFrame:

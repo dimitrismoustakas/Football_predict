@@ -373,7 +373,6 @@ class TrainConfig:
 	epochs: int = 100
 	patience: int = 15
 	batch_size: int = 128
-	scheduler_min_lr_ratio: float = 0.01
 	gate_mean_weight: float = 0.01
 	gate_sat_weight: float = 0.001
 	lambda_repulsion: float = 0.0

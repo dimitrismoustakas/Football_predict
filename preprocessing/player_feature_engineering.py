@@ -2,7 +2,7 @@
 Player-level feature engineering for team ability estimation.
 
 Features are computed using player performance data aggregated at the team level.
-All features use a 15-game lookback window with a minimum of 5 games to compute.
+Rolling features require two observations and use up to 15 completed games.
 
 Feature Categories:
 1. Expected Abilities (xG90, xA90) - minute-weighted team averages
@@ -12,6 +12,7 @@ Feature Categories:
 """
 
 import polars as pl
+from datetime import datetime
 from pathlib import Path
 import sys
 
@@ -37,12 +38,6 @@ def load_all_player_data(data_root: Path = DATA_DIR / "understat") -> pl.DataFra
 	df = pl.concat(dfs, how="diagonal")
 	
 	return df
-
-
-def extract_match_date(match_id: str) -> str:
-	"""Extract date from match_id format: '2024-08-16 Manchester United-Fulham'."""
-	# The match_id format is: "YYYY-MM-DD TeamA-TeamB"
-	return match_id[:10]
 
 
 def prepare_player_data(df: pl.DataFrame) -> pl.DataFrame:
@@ -140,16 +135,7 @@ def compute_team_match_aggregates(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def compute_rolling_features(team_match: pl.DataFrame) -> pl.DataFrame:
-	"""
-	Compute rolling features with 15-game window and 5-game minimum.
-	
-	Uses an "expanding then capped" approach:
-	- Games 1-4: null (insufficient data)
-	- Games 5-14: use all available history (expanding window)
-	- Games 15+: use last 15 games (rolling window)
-	
-	All features are shifted by 1 to prevent data leakage.
-	"""
+	"""Compute pre-match rolling features, excluding the row's own match."""
 	
 	# Sort by date within each team
 	team_match = team_match.sort(["league", "team_id", "date"])
@@ -161,99 +147,39 @@ def compute_rolling_features(team_match: pl.DataFrame) -> pl.DataFrame:
 		"xg_hhi", "xa_hhi", "minutes_hhi", "unique_players"
 	]
 	
-	# Create rolling features using Polars rolling functions
-	# We use rolling_mean with window size of MAX_WINDOW and min_periods of MIN_GAMES
-	rolling_exprs = []
-	
-	for stat in stats_to_roll:
-		if stat in team_match.columns:
-			# Shift by 1 first, then compute rolling mean
-			rolling_exprs.append(
-				pl.col(stat)
-				.shift(1)
-				.rolling_mean(window_size=MAX_WINDOW, min_samples=MIN_GAMES)
-				.over(["league", "team_id"])
-				.alias(f"{stat}_r{MAX_WINDOW}")
-			)
-			
-			# Also compute rolling sum for some stats (like unique_players as cumulative)
-			if stat in ["unique_players"]:
-				rolling_exprs.append(
-					pl.col(stat)
-					.shift(1)
-					.rolling_sum(window_size=5, min_samples=MIN_GAMES)
-					.over(["league", "team_id"])
-					.alias(f"{stat}_r5_sum")
-				)
-	
-	# Apply rolling computations
-	team_match = team_match.with_columns(rolling_exprs)
-	
-	return team_match
-
-
-def build_player_team_features(df: pl.DataFrame) -> pl.DataFrame:
-	"""
-	Main function to build player-derived team features.
-	
-	Returns a DataFrame with one row per (team, match) with rolling features.
-	"""
-	# Prepare data
-	df = prepare_player_data(df)
-	
-	# Aggregate to team-match level
-	team_match = compute_team_match_aggregates(df)
-	
-	# Compute rolling features
-	team_match = compute_rolling_features(team_match)
-	
-	return team_match
-
-
-def merge_with_match_data(
-	player_features: pl.DataFrame,
-	match_data: pl.DataFrame
-) -> pl.DataFrame:
-	"""
-	Merge player-derived team features with match-level data.
-	
-	This joins the rolling player features for both home and away teams
-	to each match row.
-	
-	Args:
-		player_features: Output from build_player_team_features()
-		match_data: Match-level DataFrame with home_team_id and away_team_id
-	
-	Returns:
-		Match data with player features for both teams
-	"""
-	# Select only the rolling feature columns for merging
-	feature_cols = [c for c in player_features.columns if c.endswith(f"_r{MAX_WINDOW}") or c.endswith("_r5_sum")]
-	
-	# Create home team features
-	home_features = player_features.select(
-		["league", "team_id", "game_id"] + feature_cols
-	).rename({col: f"home_{col}" for col in feature_cols})
-	home_features = home_features.rename({"team_id": "home_team_id"})
-	
-	# Create away team features
-	away_features = player_features.select(
-		["league", "team_id", "game_id"] + feature_cols
-	).rename({col: f"away_{col}" for col in feature_cols})
-	away_features = away_features.rename({"team_id": "away_team_id"})
-	
-	# Merge with match data
-	result = match_data.join(
-		home_features,
-		on=["league", "home_team_id", "game_id"],
-		how="left"
-	).join(
-		away_features,
-		on=["league", "away_team_id", "game_id"],
-		how="left"
+	rolling_exprs = [
+		pl.col(stat)
+		.shift(1)
+		.rolling_mean(window_size=MAX_WINDOW, min_samples=MIN_GAMES)
+		.over(["league", "team_id"])
+		.alias(f"{stat}_r{MAX_WINDOW}")
+		for stat in stats_to_roll
+	]
+	rolling_exprs.append(
+		pl.col("unique_players")
+		.shift(1)
+		.rolling_sum(window_size=5, min_samples=MIN_GAMES)
+		.over(["league", "team_id"])
+		.alias("unique_players_r5_sum")
 	)
-	
-	return result
+	return team_match.with_columns(rolling_exprs)
+
+
+def build_player_team_features(
+	df: pl.DataFrame,
+	*,
+	prediction_time: datetime | None = None,
+) -> pl.DataFrame:
+	"""Build historical pre-match features and, optionally, a current state for upcoming fixtures."""
+	team_match = compute_team_match_aggregates(prepare_player_data(df))
+	if prediction_time is not None:
+		# One next-match row per team includes every completed match in the shifted window.
+		# It becomes available now, never on a completed match's pre-match row.
+		next_matches = team_match.select("league", "team_id").unique().with_columns(
+			pl.lit(prediction_time).alias("date")
+		)
+		team_match = pl.concat([team_match, next_matches], how="diagonal")
+	return compute_rolling_features(team_match)
 
 
 def main():

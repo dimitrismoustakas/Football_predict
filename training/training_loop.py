@@ -35,17 +35,6 @@ def create_optimizer(model: nn.Module, config: TrainConfig) -> torch.optim.Optim
 		eps=config.optimizer_eps,
 	)
 
-def create_scheduler(optimizer: torch.optim.Optimizer, config: TrainConfig) -> torch.optim.lr_scheduler.CosineAnnealingLR:
-	"""Create the fixed scheduler used by the canonical model."""
-
-	min_lr = config.lr * config.scheduler_min_lr_ratio
-	return torch.optim.lr_scheduler.CosineAnnealingLR(
-		optimizer,
-		T_max=max(1, config.epochs),
-		eta_min=min_lr,
-	)
-
-
 
 def _entropy_curriculum_weights(
 	implied_probs: torch.Tensor,
@@ -222,11 +211,11 @@ def _fit_model(
 
 	model = build_model(config, device)
 	optimizer = create_optimizer(model, config)
-	scheduler = create_scheduler(optimizer, config)
 	use_validation = val_loader is not None
 	history = {"train_loss": [], "val_loss": [], "gate_mean": [], "gate_std": []}
 	best_val_loss = float("inf")
 	best_model_state = None
+	patience_loss = float("inf")
 	stalled_epochs = 0
 
 	for epoch in range(1, config.epochs + 1):
@@ -234,7 +223,6 @@ def _fit_model(
 		history["train_loss"].append(avg_train_loss)
 
 		if not use_validation:
-			scheduler.step()
 			if verbose and (epoch % 10 == 0 or epoch == 1):
 				print(f"Epoch {epoch:03d} | Train: {avg_train_loss:.5f}")
 			continue
@@ -243,16 +231,18 @@ def _fit_model(
 		history["val_loss"].append(avg_val_loss)
 		history["gate_mean"].append(gate_mean)
 		history["gate_std"].append(gate_std)
-		scheduler.step()
 
 		if verbose and (epoch % 10 == 0 or epoch == 1):
 			print(
 				f"Epoch {epoch:03d} | Train: {avg_train_loss:.5f} | Val: {avg_val_loss:.5f} | Gate: [{gate_mean[0]:.3f}, {gate_mean[1]:.3f}, {gate_mean[2]:.3f}]"
 			)
 
-		if avg_val_loss < best_val_loss - 1e-4:
+		if avg_val_loss < best_val_loss:
 			best_val_loss = avg_val_loss
 			best_model_state = _clone_state_dict(model)
+
+		if avg_val_loss < patience_loss - 1e-4:
+			patience_loss = avg_val_loss
 			stalled_epochs = 0
 		else:
 			stalled_epochs += 1
